@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header, tstatus, progress, ticket_link, empty %}
+{% block title %}{{ t.key }}{% endblock %}
+{% block content %}
+{% set crumbs = [] %}
+{% if t.parent %}{% set _ = crumbs.append((t.parent.key, url_for('ui.ticket', key=t.parent.key))) %}{% endif %}
+{% set _ = crumbs.append((t.key, None)) %}
+{% call page_header(t.key ~ (": " ~ t.summary if t.summary else ""), None, crumbs) %}
+  {% if t.type %}<span class="badge badge-outline">{{ t.type }}</span>{% endif %}
+  {{ tstatus(t, "") }}
+{% endcall %}
+
+<div class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full">
+  {% if t.csc %}
+  <div class="stat"><div class="stat-title">CSC</div><div class="stat-value text-lg">{{ t.csc }}</div>
+    <div class="stat-desc"><a class="link" href="{{ url_for('ui.ci', ref=t.ci) }}">{{ t.ci }}</a>{% if t.team %} · {{ t.team }}{% endif %}</div></div>
+  <div class="stat"><div class="stat-title">Fix versions</div><div class="stat-value text-lg font-mono">
+    {% for v in t.versions %}<a class="link link-hover" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{{ ", " if not loop.last }}{% else %}—{% endfor %}</div></div>
+  {% endif %}
+  {% if t.children %}
+  <div class="stat"><div class="stat-title">CSC tickets</div><div class="stat-value text-2xl">{{ t.progress.done }}/{{ t.progress.total }}</div>
+    <div class="stat-desc">{{ progress(t.progress, "w-40 mt-1") }}</div></div>
+  {% endif %}
+  <div class="stat"><div class="stat-title">Assignee</div><div class="stat-value text-lg">{{ t.assignee or "—" }}</div></div>
+  <div class="stat"><div class="stat-title">Source</div><div class="stat-value text-lg">{{ t.source }}{% if t.url %} <a class="link text-base" href="{{ t.url }}" target="_blank" rel="noopener" hx-boost="false">open ↗</a>{% endif %}</div>
+    <div class="stat-desc">synced {{ t.synced_at | ts or "never (stub)" }}</div></div>
+</div>
+
+{% if t.children %}
+<div class="card bg-base-100 shadow-sm">
+  <div class="card-body">
+    <h2 class="card-title">How each CSC implemented it</h2>
+    {% for g in t.children %}
+    <div class="mt-2">
+      <div class="flex items-center gap-3">
+        <div class="font-semibold">{% if g.ci %}<a class="link link-hover" href="{{ url_for('ui.ci', ref=g.ci) }}">{{ g.ci }}</a> / {% endif %}{{ g.csc or "No CSC mapped" }}
+          {% if g.team %}<span class="font-normal text-base-content/60">· {{ g.team }}</span>{% endif %}</div>
+        {{ progress(g.progress, "w-24") }} <span class="text-sm text-base-content/60">{{ g.progress.done }}/{{ g.progress.total }}</span>
+      </div>
+      <table class="table table-sm">
+        <tbody>
+        {% for c in g.tickets %}
+          <tr class="hover">
+            <td class="whitespace-nowrap w-32">{{ ticket_link(c) }}</td>
+            <td>{{ c.summary or "" }}</td>
+            <td class="w-28">{{ tstatus(c) }}</td>
+            <td class="text-right whitespace-nowrap">{% for v in c.versions %}<a class="badge badge-ghost badge-sm font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a> {% endfor %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% elif not t.csc %}
+<p class="text-base-content/60">No CSC tickets reference this ticket yet.</p>
+{% endif %}
+
+{% if t.attributes %}
+<div class="card bg-base-100 shadow-sm"><div class="card-body">
+  <h2 class="card-title">Attributes</h2>
+  <pre class="text-xs bg-base-200 rounded p-2 overflow-x-auto">{{ t.attributes | tojson(indent=2) }}</pre>
+</div></div>
+{% endif %}
+{% endblock %}

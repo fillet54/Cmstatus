@@ -12,7 +12,10 @@
   <div class="lg:col-span-3 space-y-6">
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body">
-        <h2 class="card-title">Releases</h2>
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="card-title">Releases</h2>
+          <a class="btn btn-sm btn-primary btn-outline" href="{{ url_for('ui.work', ref=ci.name) }}">Work items</a>
+        </div>
         <p class="text-sm text-base-content/60 -mt-1">Patch and emergency releases are nested under the release they were spawned from. Click a release for details.</p>
         <div class="overflow-x-auto">
           <table class="table table-sm">

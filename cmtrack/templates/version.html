@@ -17,6 +17,13 @@
 </div>
 
 <div class="grid lg:grid-cols-2 gap-6 items-start">
+  <div class="card bg-base-100 shadow-sm lg:col-span-2">
+    <div class="card-body">
+      <h2 class="card-title">Fixed in this version <span class="badge badge-ghost">{{ report.progress.total }}</span></h2>
+      {% include "_work_items.html" %}
+    </div>
+  </div>
+
   {% if ci.kind == "composite" %}
   <div class="card bg-base-100 shadow-sm">
     <div class="card-body">
@@ -36,6 +43,28 @@
     </div>
   </div>
   {% endif %}
+
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="card-title">Lineage</h2>
+        <span class="badge {{ 'badge-warning' if lineage.lineage == 'manual' else 'badge-ghost' }} badge-sm"
+              title="{{ 'parents set by hand (PUT /api/versions/' ~ v.id ~ '/parents)' if lineage.lineage == 'manual' else 'parents derived from the release plan' }}">{{ lineage.lineage }}</span>
+      </div>
+      <div class="grid grid-cols-2 gap-4 text-sm">
+        {% for label, items in (("Built from", lineage.parents), ("Built on by", lineage.children)) %}
+        <div>
+          <div class="text-base-content/60 mb-1">{{ label }}</div>
+          {% for p in items %}
+            <div><a class="link link-primary font-mono" href="{{ url_for('ui.version', vid=p.id) }}">{{ p.name }}</a>
+              {% if p.release_kind != 'planned' %}{{ badge(p.release_kind, "badge-xs") }}{% endif %}</div>
+          {% else %}<div class="text-base-content/50">—</div>{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+      <a class="link link-hover text-sm mt-1" href="{{ url_for('ui.work', ref=ci.name, to=v.name) }}">All work up to {{ v.name }} →</a>
+    </div>
+  </div>
 
   <div class="card bg-base-100 shadow-sm">
     <div class="card-body">

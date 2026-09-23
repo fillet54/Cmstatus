@@ -140,7 +140,7 @@ def ci(ref):
 def release(rid):
     conn = get_db()
     return page("release.html", "_release.html", r=svc.release_detail(conn, rid),
-                ci=svc.get_ci(conn, svc.get_release(conn, rid)["ci_id"]))
+                ci=svc.get_ci(conn, svc.get_release(conn, rid)["ci_id"]), work_range=svc.release_range(conn, rid))
 
 
 @bp.get("/versions/<int:vid>")
@@ -149,8 +149,40 @@ def version(vid):
     ver = svc.to_dict(svc.get_version(conn, vid))
     return render_template(
         "version.html", v=ver, ci=svc.get_ci(conn, ver["ci_id"]), rel=svc.get_release(conn, ver["release_id"]),
-        manifest=svc.manifest(conn, vid), used=svc.where_used(conn, vid),
+        manifest=svc.manifest(conn, vid), used=svc.where_used(conn, vid), lineage=svc.lineage(conn, vid),
+        report=svc.work_report(conn, ver["ci_id"], versions=[vid]),
         events=svc.to_dicts(svc.list_events(conn, "version", vid, 50)))
+
+
+# ----------------------------------------------------------------------------- work items
+
+@bp.get("/cis/<ref>/work")
+def work(ref):
+    """Parent tickets -> CSC -> CSC tickets for a version range (from..to over the lineage DAG)."""
+    conn = get_db()
+    ci = svc.get_ci(conn, ref)
+    versions = svc.ci_versions(conn, ci["id"])
+    presets = []
+    for root, kids in release_families(svc.list_releases(conn, ci["id"])):
+        for rel in [root] + kids:
+            if rel["kind"] == "external" or rel["status"] == "cancelled":
+                continue
+            rng = svc.release_range(conn, rel["id"])
+            if rng:
+                presets.append({"release": rel["name"], "kind": rel["kind"], "status": rel["status"], **rng})
+    frm, to = request.args.get("from") or None, request.args.get("to") or None
+    if to is None and "to" not in request.args:
+        # default: what's new in the latest release that has shipped, else the next one planned
+        shipped = [p for p in presets if p["status"] == "released" and p["kind"] == "planned"]
+        pick = shipped[-1] if shipped else (presets or [None])[0]
+        frm, to = (pick["from"], pick["to"]) if pick else (None, None)
+    report = svc.work_report(conn, ci["id"], to, frm) if to else None
+    return page("work.html", "_work.html", ci=ci, versions=versions, presets=presets, frm=frm, to=to, report=report)
+
+
+@bp.get("/tickets/<key>")
+def ticket(key):
+    return render_template("ticket.html", t=svc.ticket_detail(get_db(), key, request.args.get("source")))
 
 
 # ----------------------------------------------------------------------------- IFCs & baselines

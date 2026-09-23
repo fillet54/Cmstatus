@@ -19,9 +19,11 @@ Env: `CMTRACK_DB` (SQLite path), `CMTRACK_POLICY_DIR` (where manual plan files l
 | CSC | `csc` | Part of a CSCI. Unique Jira `(project, affected product)` pair; many CSCs → one CSCI. |
 | Release | `release` | `planned` (from policy), `patch`/`emergency` (spawned onto the root release: `parent_id` + `base_version_id`), `external` (scraped). |
 | Version | `version` | A build within a release. `planned=1` if the policy created it, `0` if ad hoc (variance). One is promoted to be the release. |
+| Lineage | `version_parent` | DAG of what each build was built from. Derived from the plan (`lineage=auto`) or set by hand for merges (`manual`). |
 | Manifest | `manifest_entry` | Composite CI version → pinned child versions. |
 | IFC | `ifc` | Capability, with `parent_id` hierarchy. |
 | Baseline | `baseline` + `baseline_entry` | The HSCM list: one version per CI. draft → approved → superseded. |
+| Ticket | `ticket` + `ticket_version` | Work items. A parent ticket (feature / CR) has CSC tickets under it; each CSC ticket resolves to its CSC by the Jira pair and carries fix versions of that CSC's CSCI. |
 | Event | `event` | Append-only log of every change (status accounting). |
 
 **Rules enforced**
@@ -38,6 +40,40 @@ Env: `CMTRACK_DB` (SQLite path), `CMTRACK_POLICY_DIR` (where manual plan files l
   `baselines_behind` = approved HSCMs still fielding an older one.
 - Approving a baseline requires every entry to be `released` or `external`; approved baselines are frozen (clone to change).
 - Scraped HSCMs create placeholder CIs and `external` versions as needed and are approved as-is, returning warnings.
+
+## Version lineage and ranges
+
+Every version has parents in `version_parent`, maintained automatically as releases are planned, built,
+spawned and cancelled:
+
+- a build's parent is the previous build of its release (rejected ones included, since the next build was made from them);
+- the first build of a patch/emergency builds on its base version;
+- the first build of a planned release builds on the previous planned release's head (its released version, else its latest non-rejected build).
+
+When a fix is folded into a later release, record the merge: `PUT /api/versions/<id>/parents
+{"parents": ["2026.Q4-b4", "2026.Q4.ER1"]}` (that version is then `manual`; `DELETE` reverts it).
+Ranges use git semantics: `from..to` = `to` and everything it was built from, minus `from` and everything
+*it* was built from. So `2026.Q4-b4..2027.Q1-b2` includes `2026.Q4.ER1` once it has been merged into Q1.
+A planned release whose lineage is missing an earlier release line's released patch/emergency lists it
+under `unabsorbed` (and the UI flags it).
+
+## Work items (tickets)
+
+Parent tickets are what reports show. CSC tickets under them are how each CSC team did the work, so each
+team can split or implement it differently. Tickets come in through one of two paths, which share
+`service.upsert_tickets`:
+
+- **pull**: implement `cmtrack.tickets.TicketSource` (`fetch_for_versions(ci, cscs, versions)` and
+  `fetch_by_keys(keys)`, both returning `TicketRecord`s) around your Jira client, then register it:
+  `create_app({"TICKET_SOURCES": {"jira": JiraSource()}})` or `CMTRACK_TICKET_SOURCES=jira=mypkg.jira:JiraSource`.
+  `POST /api/cis/<ci>/tickets/sync {to, from?}` pulls the CSC tickets for that range, then any parents they reference.
+- **push**: `POST /api/tickets {source?, records: [TicketRecord, ...]}` from another system.
+
+`TicketRecord`: `key`, `summary`, `type`, `status`, `status_category` (Jira's `new`/`indeterminate`/`done` or
+`todo`/`in_progress`/`done`), `parent_key`, `project` + `affected_product` (resolved to the CSC), `fix_versions`
+(cmtrack version names of that CSC's CSCI; omit to leave links alone, `[]` to clear them), `url`, `assignee`,
+`updated`, `attributes`. Unknown keys go into `attributes`. Unmapped Jira pairs and unknown fix versions are
+returned as warnings, not errors. Parents referenced before they're fetched are kept as stubs (`missing_parents`).
 
 ## Policies
 
@@ -81,6 +117,12 @@ POST /ifcs/<ifc>/hscm              JSON {name, rows:[{ci, version, type?}], sour
                                    or text/csv (ci,version[,type]) with ?name=&source_ref=
 PUT  /baselines/<id>/entries   POST /baselines/<id>/clone   POST /baselines/<id>/approve
 GET  /baselines/<a>/diff/<b>
+GET  /versions/<id>/lineage        PUT /versions/<id>/parents {parents}   DELETE /versions/<id>/parents
+GET  /cis/<ci>/versions?to=&from=  range over the lineage DAG, oldest first
+GET  /cis/<ci>/work?to=&from=      or ?versions=a,b   parent tickets -> CSC -> CSC tickets, with progress
+POST /cis/<ci>/tickets/sync        {source?, to, from?} or {source?, versions}   pull from a TicketSource
+POST /tickets                      {source?, records: [...]}                    push
+GET  /tickets/<key>                parent + CSC tickets grouped by CI/CSC, or a CSC ticket's fix versions
 GET  /events?entity=&entity_id=
 ```
 
@@ -98,8 +140,11 @@ every URL works as a plain link.
                       HSCM entries behind their effective version, recent activity (polls every 30s)
 /cis                  CI list; search + type/managed filters re-render the rows via htmx
 /cis/<ci>             releases grouped by family (click one to load its panel), where fielded, policy, CSCs
-/releases/<id>        versions, released vs effective version, baselines behind
-/versions/<id>        manifest (composites), where-used, history
+/cis/<ci>/work        work items for a from..to range ("what's new in <release>" presets); parent tickets
+                      expand to each CSC's tickets
+/releases/<id>        versions, released vs effective version, baselines behind, unabsorbed fixes, work link
+/versions/<id>        tickets fixed in it, lineage (built from / built on by), manifest, where-used, history
+/tickets/<key>        a parent ticket and how each CSC implemented it, across CIs
 /ifcs                 IFC tree with each IFC's current HSCM
 /ifcs/<ifc>           current HSCM entries (stale ones flagged), baseline history
 /baselines/<id>       entries, compare with another baseline of the IFC (diff loaded via htmx)
@@ -107,7 +152,6 @@ every URL works as a plain link.
 ```
 
 ## Not yet built (next iterations)
-- Jira sync: product tickets via the CSC pair mapping, discrepancy/feature trace, missing-ticket findings.
+- Jira: the `TicketSource` for your Jira client, discrepancy/feature trace, missing-ticket findings.
 - Verification events as a first-class record behind the `tested` gate.
-- Emergency reconciliation: flag when a later planned release (e.g. 2027.Q1) hasn't absorbed a Q4 emergency fix.
 - HW revisions beyond "a version of an HWCI"; per-CSC versions (only if a product needs them).

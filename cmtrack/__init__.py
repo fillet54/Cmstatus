@@ -4,8 +4,8 @@ import sqlite3
 
 from flask import Flask, jsonify, render_template, request
 
-from . import db
-from .service import CMError
+from . import db, tickets
+from .service import CMError, backfill_lineage
 
 
 def create_app(config=None):
@@ -13,12 +13,17 @@ def create_app(config=None):
     app.config.update(
         DATABASE=os.environ.get("CMTRACK_DB", "cmtrack.db"),
         POLICY_DIR=os.environ.get("CMTRACK_POLICY_DIR", "policies"),
+        TICKET_SOURCES=None,       # {name: TicketSource}; defaults to CMTRACK_TICKET_SOURCES
     )
     app.config.update(config or {})
+    if app.config["TICKET_SOURCES"] is None:
+        app.config["TICKET_SOURCES"] = tickets.load_sources(os.environ.get("CMTRACK_TICKET_SOURCES"))
     app.json.sort_keys = False
 
     conn = db.connect(app.config["DATABASE"])
     db.init_db(conn)
+    with conn:
+        backfill_lineage(conn)
     conn.close()
 
     from .api import bp

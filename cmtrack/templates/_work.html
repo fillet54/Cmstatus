@@ -1,0 +1,58 @@
+{% from "macros.html" import progress %}
+<form class="card bg-base-100 shadow-sm" action="{{ url_for('ui.work', ref=ci.name) }}"
+      hx-get="{{ url_for('ui.work', ref=ci.name) }}" hx-target="#work" hx-push-url="true" hx-trigger="change">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-end gap-3">
+      <label class="form-control">
+        <span class="label-text text-xs mb-1">From (exclusive)</span>
+        <select name="from" class="select select-bordered select-sm font-mono">
+          <option value="">(beginning)</option>
+          {% for v in versions %}<option {{ 'selected' if v.name == frm }}>{{ v.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <span class="pb-1.5 font-mono text-base-content/50">..</span>
+      <label class="form-control">
+        <span class="label-text text-xs mb-1">To (inclusive)</span>
+        <select name="to" class="select select-bordered select-sm font-mono">
+          <option value="">choose…</option>
+          {% for v in versions %}<option {{ 'selected' if v.name == to }}>{{ v.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <span class="loading loading-spinner loading-sm htmx-indicator mb-1.5"></span>
+    </div>
+    {% if presets %}
+    <div class="flex flex-wrap items-center gap-1 text-sm">
+      <span class="text-base-content/60 mr-1">What's new in:</span>
+      {% for p in presets %}
+        <a class="btn btn-xs {{ 'btn-primary' if p.to == to and p['from'] == frm else 'btn-ghost' }} font-mono"
+           href="{{ url_for('ui.work', ref=ci.name, to=p.to, **({'from': p['from']} if p['from'] else {})) }}"
+           hx-get="{{ url_for('ui.work', ref=ci.name, to=p.to, **({'from': p['from']} if p['from'] else {})) }}"
+           hx-target="#work" hx-push-url="true">{{ p.release }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</form>
+
+{% if report %}
+<div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+  <div class="text-sm">
+    <span class="font-semibold">{{ report.parents }}</span> parent ticket{{ 's' if report.parents != 1 }},
+    <span class="font-semibold">{{ report.progress.total }}</span> CSC ticket{{ 's' if report.progress.total != 1 }}
+    <span class="text-base-content/60">({{ report.progress.done }} done · {{ report.progress.in_progress }} in progress · {{ report.progress.todo }} to do)</span>
+  </div>
+  {{ progress(report.progress, "w-48") }}
+  <span class="flex-1"></span>
+  <button type="button" class="btn btn-ghost btn-xs" onclick="document.querySelectorAll('#work details').forEach(d => d.open = true)">Expand all</button>
+  <button type="button" class="btn btn-ghost btn-xs" onclick="document.querySelectorAll('#work details').forEach(d => d.open = false)">Collapse all</button>
+</div>
+<details class="text-sm">
+  <summary class="cursor-pointer text-base-content/70">{{ report.versions | length }} version{{ 's' if report.versions | length != 1 }} in range</summary>
+  <div class="flex flex-wrap gap-1 mt-2">
+    {% for v in report.versions %}<a class="badge badge-outline font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{% endfor %}
+  </div>
+</details>
+{% include "_work_items.html" %}
+{% else %}
+<p class="text-base-content/60">Pick a version range.</p>
+{% endif %}

@@ -31,3 +31,24 @@
 <span class="mr-2"><span class="text-base-content/60">{{ k }}:</span> {{ v | join(", ") if v is iterable and v is not string and v is not mapping else v }}</span>
 {%- endfor -%}
 {%- endmacro %}
+
+{% macro tstatus(t, size="badge-sm") -%}
+{%- set cls = {"todo": "badge-ghost", "in_progress": "badge-info", "done": "badge-success"}[t.status_category] -%}
+<span class="badge {{ cls }} {{ size }} whitespace-nowrap">{{ t.status or t.status_category }}</span>
+{%- endmacro %}
+
+{% macro progress(p, cls="w-32") -%}
+{# stacked done / in progress / todo bar #}
+{%- if p.total -%}
+<div class="flex h-2 rounded-full overflow-hidden bg-base-300 {{ cls }}" title="{{ p.done }} done · {{ p.in_progress }} in progress · {{ p.todo }} to do">
+  <div class="bg-success" style="width: {{ 100 * p.done / p.total }}%"></div>
+  <div class="bg-info" style="width: {{ 100 * p.in_progress / p.total }}%"></div>
+</div>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro ticket_link(t) -%}
+{%- if t.synced_at -%}<a class="link link-primary font-mono" href="{{ url_for('ui.ticket', key=t.key, source=t.source if t.source != 'jira' else None) }}">{{ t.key }}</a>
+{%- else -%}<span class="font-mono" title="referenced as a parent but not synced yet">{{ t.key }}</span>{%- endif -%}
+{%- if t.url %} <a class="link link-hover text-base-content/50 text-xs" href="{{ t.url }}" target="_blank" rel="noopener" hx-boost="false" title="open in {{ t.source }}">↗</a>{% endif -%}
+{%- endmacro %}

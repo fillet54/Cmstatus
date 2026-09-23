@@ -8,7 +8,7 @@ import datetime as dt
 import json
 import sqlite3
 
-from . import policies
+from . import policies, tickets
 from .policies import PolicyError, add_months, parse_date
 
 RELEASED = ("released", "external")          # version states a baseline may reference
@@ -258,6 +258,7 @@ def plan_ci(conn, ci_ref, start=None, end=None, base_dir=None):
                 conn.execute("UPDATE version SET planned_date = ? WHERE id = ?", (pv.planned_date, ver["id"]))
                 summary["updated_versions"].append(pv.name)
 
+    rebuild_lineage(conn, ci["id"])
     log(conn, "ci", ci["id"], "planned", start=start, end=end,
         **{k: v for k, v in summary.items() if k.startswith(("created", "updated"))})
     return summary
@@ -308,6 +309,7 @@ def release_detail(conn, release_id):
     eff = effective_version(conn, rel["id"])
     out["effective_version"] = eff["name"] if eff else None
     out["baselines_behind"] = behind_effective(conn, rel["id"])
+    out["unabsorbed"] = unabsorbed_fixes(conn, rel["id"])
     return out
 
 
@@ -335,7 +337,9 @@ def add_version(conn, release_id, name=None, planned_date=None, base_dir=None):
                            (rel["id"],)).fetchone()[0]
         name = policy_for(conn, get_ci(conn, rel["ci_id"]), base_dir).version_name(rel, seq)
     planned_date = _date(planned_date, "planned_date")
-    return _insert_version(conn, rel, name, planned_date.isoformat() if planned_date else None)
+    ver = _insert_version(conn, rel, name, planned_date.isoformat() if planned_date else None)
+    rebuild_lineage(conn, rel["ci_id"])
+    return ver
 
 
 def update_version(conn, version_id, status=None, artifact_ref=None, built_at=None):
@@ -384,6 +388,7 @@ def release_version(conn, version_id, base_dir=None):
     conn.execute("UPDATE release SET status = 'released', released_version_id = ?, released_at = ? WHERE id = ?",
                  (ver["id"], now(), rel["id"]))
     log(conn, "release", rel["id"], "released", version=ver["name"])
+    rebuild_lineage(conn, ci["id"])
     return release_detail(conn, rel["id"])
 
 
@@ -490,6 +495,7 @@ def spawn_release(conn, release_id, kind, reason=None, base_version=None, target
     rel = get_release(conn, cur.lastrowid)
     log(conn, "release", rel["id"], "spawned", kind=kind, parent=parent["name"], base=base["name"], reason=reason)
     _insert_version(conn, rel, name, rel["target_date"])
+    rebuild_lineage(conn, ci["id"])
     out = release_detail(conn, rel["id"])
     out["spawned"] = True
     return out
@@ -508,6 +514,7 @@ def cancel_release(conn, release_id, note=None):
     conn.execute("UPDATE version SET status = 'rejected' WHERE release_id = ? AND status IN ('planned', 'built', 'tested')",
                  (rel["id"],))
     log(conn, "release", rel["id"], "cancelled", note=note)
+    rebuild_lineage(conn, rel["ci_id"])
     return release_detail(conn, rel["id"])
 
 
@@ -556,6 +563,195 @@ def where_used(conn, version_id):
              "JOIN baseline_entry e ON e.version_id = up.vid JOIN baseline b ON b.id = e.baseline_id "
              "JOIN ifc i ON i.id = b.ifc_id JOIN version v ON v.id = up.vid ORDER BY i.name, b.id", (ver["id"],))
     return {"version": ver["name"], "composites": to_dicts(composites), "baselines": to_dicts(baselines)}
+
+
+# ----------------------------------------------------------------------------- lineage (version DAG)
+
+def release_head(conn, rel):
+    """The version a successor release builds on: the released one, else the latest non-rejected build."""
+    if rel["released_version_id"]:
+        return get_version(conn, rel["released_version_id"])
+    return conn.execute("SELECT * FROM version WHERE release_id = ? ORDER BY status = 'rejected', seq DESC LIMIT 1",
+                        (rel["id"],)).fetchone()
+
+
+def rebuild_lineage(conn, ci_id):
+    """Recompute the automatic parent edges of a CI's versions. Versions with manual lineage are untouched.
+
+    - a build's parent is the previous build of its release;
+    - the first build of a patch/emergency builds on its base version;
+    - the first build of a planned release builds on the previous planned release's head
+      (cancelled releases are skipped). External (scraped) versions have no lineage.
+    """
+    auto = {r[0] for r in conn.execute("SELECT id FROM version WHERE ci_id = ? AND lineage = 'auto'", (ci_id,))}
+    by_release = {}
+    for v in conn.execute("SELECT id, release_id FROM version WHERE ci_id = ? ORDER BY release_id, seq", (ci_id,)):
+        by_release.setdefault(v["release_id"], []).append(v["id"])
+    edges = []
+
+    def chain(rel, first_parent):
+        prev = first_parent
+        for vid in by_release.get(rel["id"], []):
+            if prev is not None and vid in auto:
+                edges.append((vid, prev))
+            prev = vid
+
+    prev_head = None
+    for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND kind = 'planned' "
+                            "ORDER BY target_date IS NULL, target_date, id", (ci_id,)).fetchall():
+        chain(rel, prev_head)
+        if rel["status"] != "cancelled":
+            head = release_head(conn, rel)
+            prev_head = head["id"] if head else prev_head
+    for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND parent_id IS NOT NULL", (ci_id,)).fetchall():
+        chain(rel, rel["base_version_id"])
+
+    conn.execute("DELETE FROM version_parent WHERE version_id IN "
+                 "(SELECT id FROM version WHERE ci_id = ? AND lineage = 'auto')", (ci_id,))
+    conn.executemany("INSERT OR IGNORE INTO version_parent (version_id, parent_id) VALUES (?, ?)", edges)
+
+
+def backfill_lineage(conn):
+    """Build lineage for databases created before the version DAG existed."""
+    if conn.execute("SELECT 1 FROM version_parent LIMIT 1").fetchone() is None:
+        for (ci_id,) in conn.execute("SELECT DISTINCT ci_id FROM version").fetchall():
+            rebuild_lineage(conn, ci_id)
+
+
+def _closure(conn, version_id, direction):
+    """Ids of ``version_id`` and all its ancestors (direction='up') or descendants ('down')."""
+    near, far = ("version_id", "parent_id") if direction == "up" else ("parent_id", "version_id")
+    rows = conn.execute(
+        f"WITH RECURSIVE c(id) AS (SELECT ? UNION SELECT p.{far} FROM version_parent p JOIN c ON p.{near} = c.id) "
+        "SELECT id FROM c", (version_id,))
+    return {r[0] for r in rows}
+
+
+def ancestor_ids(conn, version_id):
+    return _closure(conn, version_id, "up")
+
+
+def descendant_ids(conn, version_id):
+    return _closure(conn, version_id, "down")
+
+
+def version_parents(conn, version_id, direction="up"):
+    near, far = ("version_id", "parent_id") if direction == "up" else ("parent_id", "version_id")
+    return to_dicts(conn.execute(
+        f"SELECT v.id, v.name, v.status, r.id AS release_id, r.name AS release, r.kind AS release_kind "
+        f"FROM version_parent p JOIN version v ON v.id = p.{far} JOIN release r ON r.id = v.release_id "
+        f"WHERE p.{near} = ? ORDER BY v.id", (version_id,)))
+
+
+def lineage(conn, version_id):
+    ver = get_version(conn, version_id)
+    return {"version": ver["name"], "lineage": ver["lineage"],
+            "parents": version_parents(conn, ver["id"], "up"),
+            "children": version_parents(conn, ver["id"], "down")}
+
+
+def set_version_parents(conn, version_id, parents):
+    """Set a version's parents by hand (e.g. a merge: [2026.Q4-b4, 2026.Q4.ER1]); ``None`` reverts to automatic."""
+    ver = get_version(conn, version_id)
+    ci = get_ci(conn, ver["ci_id"])
+    if parents is None:
+        conn.execute("UPDATE version SET lineage = 'auto' WHERE id = ?", (ver["id"],))
+        rebuild_lineage(conn, ci["id"])
+        log(conn, "version", ver["id"], "lineage_reset")
+        return lineage(conn, ver["id"])
+    if not isinstance(parents, list):
+        raise CMError("parents must be a list of version names or ids")
+    resolved = {p["id"]: p for p in (find_version(conn, ci, ref) for ref in parents)}
+    below = descendant_ids(conn, ver["id"])
+    loops = [p["name"] for p in resolved.values() if p["id"] in below]
+    if loops:
+        raise CMError(f"{', '.join(loops)} would make {ver['name']} its own ancestor")
+    conn.execute("DELETE FROM version_parent WHERE version_id = ?", (ver["id"],))
+    conn.executemany("INSERT INTO version_parent (version_id, parent_id) VALUES (?, ?)",
+                     [(ver["id"], pid) for pid in resolved])
+    conn.execute("UPDATE version SET lineage = 'manual' WHERE id = ?", (ver["id"],))
+    log(conn, "version", ver["id"], "lineage_set", parents=[p["name"] for p in resolved.values()])
+    return lineage(conn, ver["id"])
+
+
+def version_range(conn, ci_ref, to, frm=None):
+    """Versions in ``frm..to``: ``to`` and its ancestors, minus ``frm`` and its ancestors (git semantics).
+
+    Without ``frm``, everything ``to`` was built from. Ordered oldest first.
+    """
+    ci = get_ci(conn, ci_ref)
+    head = find_version(conn, ci, to)
+    ids = ancestor_ids(conn, head["id"])
+    if frm not in (None, ""):
+        ids -= ancestor_ids(conn, find_version(conn, ci, frm)["id"])
+    ids_json = json.dumps(sorted(ids))
+    rows = {r["id"]: r for r in conn.execute(
+        "SELECT v.*, r.name AS release FROM version v JOIN release r ON r.id = v.release_id "
+        "WHERE v.id IN (SELECT value FROM json_each(?))", (ids_json,))}
+    edges = conn.execute("SELECT version_id, parent_id FROM version_parent WHERE version_id IN "
+                         "(SELECT value FROM json_each(?))", (ids_json,)).fetchall()
+    return [rows[i] for i in _topo_order(rows, edges)]
+
+
+def _topo_order(ids, edges):
+    """Parents before children; ties broken by id (creation order)."""
+    waiting = {i: 0 for i in ids}
+    children = {}
+    for child, parent in edges:
+        if parent in waiting and child in waiting:
+            waiting[child] += 1
+            children.setdefault(parent, []).append(child)
+    ready = sorted(i for i, n in waiting.items() if n == 0)
+    order = []
+    while ready:
+        i = ready.pop(0)
+        order.append(i)
+        for c in children.get(i, []):
+            waiting[c] -= 1
+            if waiting[c] == 0:
+                ready.append(c)
+        ready.sort()
+    return order + sorted(set(ids) - set(order))   # anything left is on a cycle
+
+
+def ci_versions(conn, ci_ref):
+    """All of a CI's (non-external) versions, parents before children."""
+    ci = get_ci(conn, ci_ref)
+    rows = {r["id"]: r for r in conn.execute(
+        "SELECT v.*, r.name AS release FROM version v JOIN release r ON r.id = v.release_id "
+        "WHERE v.ci_id = ? AND r.kind != 'external'", (ci["id"],))}
+    edges = conn.execute("SELECT p.version_id, p.parent_id FROM version_parent p JOIN version v ON v.id = p.version_id "
+                         "WHERE v.ci_id = ?", (ci["id"],)).fetchall()
+    return [rows[i] for i in _topo_order(rows, edges)]
+
+
+def release_range(conn, release_id):
+    """{from, to} for "what's new in this release": its head, minus what its first build was built from
+    outside the release (the previous release's head, or a patch's base version)."""
+    rel = get_release(conn, release_id)
+    head = release_head(conn, rel)
+    if head is None:
+        return None
+    first = conn.execute("SELECT id FROM version WHERE release_id = ? ORDER BY seq LIMIT 1", (rel["id"],)).fetchone()
+    outside = [p for p in version_parents(conn, first["id"]) if p["release_id"] != rel["id"]]
+    return {"from": outside[0]["name"] if outside else None, "to": head["name"]}
+
+
+def unabsorbed_fixes(conn, release_id):
+    """Released patch/emergency fixes of earlier release lines that this planned release does not build on."""
+    rel = get_release(conn, release_id)
+    if rel["kind"] != "planned" or not rel["target_date"]:
+        return []
+    head = release_head(conn, rel)
+    if head is None:
+        return []
+    have = ancestor_ids(conn, head["id"])
+    rows = conn.execute(
+        "SELECT v.id, v.name, r.id AS release_id, r.kind, r.reason, root.name AS root FROM release r "
+        "JOIN version v ON v.id = r.released_version_id JOIN release root ON root.id = r.parent_id "
+        "WHERE r.ci_id = ? AND r.status = 'released' AND root.target_date < ? ORDER BY r.released_at",
+        (rel["ci_id"], rel["target_date"]))
+    return [dict(r) for r in rows if r["id"] not in have]
 
 
 # ----------------------------------------------------------------------------- IFCs
@@ -781,6 +977,180 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
         _approve(conn, get_baseline(conn, cur.lastrowid))
     return {"baseline": baseline_detail(conn, cur.lastrowid), "placeholders_created": created_cis,
             "warnings": warnings}
+
+
+# ----------------------------------------------------------------------------- tickets (work items)
+
+_TICKET_COLS = ("summary", "type", "status", "status_category", "url", "assignee", "updated_at", "attributes")
+
+
+def _ticket_stub(conn, source, key):
+    conn.execute("INSERT OR IGNORE INTO ticket (source, key) VALUES (?, ?)", (source, key))
+    return conn.execute("SELECT id FROM ticket WHERE source = ? AND key = ?", (source, key)).fetchone()["id"]
+
+
+def upsert_tickets(conn, records, source="jira"):
+    """Insert or update tickets from a source. Returns what changed plus warnings.
+
+    A CSC ticket resolves to its CSC by (project, affected_product) and its fix versions by name within
+    that CSC's CSCI. Parents referenced but not supplied become stubs, listed in ``missing_parents``.
+    """
+    try:
+        recs = [r if isinstance(r, tickets.TicketRecord) else tickets.TicketRecord.from_dict(r) for r in records]
+    except (TypeError, ValueError) as e:
+        raise CMError(f"bad ticket record: {e}") from None
+    out = {"source": source, "created": [], "updated": [], "warnings": [], "missing_parents": []}
+    stamp = now()
+    for rec in recs:
+        csc = None
+        if rec.project or rec.affected_product:
+            csc = conn.execute("SELECT * FROM csc WHERE jira_project = ? AND affected_product = ?",
+                               (rec.project, rec.affected_product)).fetchone()
+            if csc is None:
+                out["warnings"].append(f"{rec.key}: no CSC mapped to ({rec.project}, {rec.affected_product})")
+        parent_id = _ticket_stub(conn, source, rec.parent_key) if rec.parent_key else None
+        values = (rec.summary, rec.type, rec.status, rec.status_category, rec.url, rec.assignee, rec.updated,
+                  json.dumps(rec.attributes or {}))
+        row = conn.execute("SELECT id, synced_at FROM ticket WHERE source = ? AND key = ?", (source, rec.key)).fetchone()
+        if row is None:
+            tid = conn.execute(
+                f"INSERT INTO ticket (source, key, parent_id, csc_id, {', '.join(_TICKET_COLS)}, synced_at) "
+                f"VALUES (?, ?, ?, ?, {', '.join('?' * len(_TICKET_COLS))}, ?)",
+                (source, rec.key, parent_id, csc["id"] if csc else None, *values, stamp)).lastrowid
+            out["created"].append(rec.key)
+        else:
+            tid = row["id"]
+            conn.execute(
+                f"UPDATE ticket SET parent_id = ?, csc_id = ?, {', '.join(c + ' = ?' for c in _TICKET_COLS)}, "
+                f"synced_at = ? WHERE id = ?", (parent_id, csc["id"] if csc else None, *values, stamp, tid))
+            (out["updated"] if row["synced_at"] else out["created"]).append(rec.key)
+        if rec.fix_versions is not None:
+            if csc is None and rec.fix_versions:
+                out["warnings"].append(f"{rec.key}: fix versions {rec.fix_versions} ignored (no CSC, so no CSCI)")
+            vids = []
+            for name in rec.fix_versions if csc else []:
+                v = conn.execute("SELECT id FROM version WHERE ci_id = ? AND name = ?", (csc["ci_id"], name)).fetchone()
+                if v is None:
+                    out["warnings"].append(f"{rec.key}: fix version {name!r} is not a version of "
+                                           f"{get_ci(conn, csc['ci_id'])['name']}")
+                else:
+                    vids.append(v["id"])
+            conn.execute("DELETE FROM ticket_version WHERE ticket_id = ?", (tid,))
+            conn.executemany("INSERT OR IGNORE INTO ticket_version VALUES (?, ?)", [(tid, vid) for vid in vids])
+    out["missing_parents"] = [r["key"] for r in conn.execute(
+        "SELECT DISTINCT p.key FROM ticket t JOIN ticket p ON p.id = t.parent_id "
+        "WHERE p.source = ? AND p.synced_at IS NULL ORDER BY p.key", (source,))]
+    if recs:
+        log(conn, "ticket", None, "upserted", source=source, created=len(out["created"]),
+            updated=len(out["updated"]), warnings=len(out["warnings"]))
+    return out
+
+
+def sync_tickets(conn, source, ci_ref, versions):
+    """Pull CSC tickets for ``versions`` of a CI from a ``TicketSource``, then the parents they reference."""
+    ci = get_ci(conn, ci_ref)
+    cscs = to_dicts(conn.execute("SELECT * FROM csc WHERE ci_id = ? ORDER BY name", (ci["id"],)))
+    names = [v["name"] for v in versions]
+    if not names:
+        raise CMError("no versions to sync")
+    out = upsert_tickets(conn, list(source.fetch_for_versions(to_dict(ci), cscs, names)), source.name)
+    if out["missing_parents"]:
+        more = upsert_tickets(conn, list(source.fetch_by_keys(out["missing_parents"])), source.name)
+        out["created"] += more["created"]
+        out["updated"] += more["updated"]
+        out["warnings"] += more["warnings"]
+        out["missing_parents"] = more["missing_parents"]
+    out.update(ci=ci["name"], versions=names)
+    log(conn, "ci", ci["id"], "tickets_synced", source=source.name, versions=names,
+        tickets=len(out["created"]) + len(out["updated"]))
+    return out
+
+
+def _progress(rows):
+    counts = {c: 0 for c in tickets.STATUS_CATEGORIES}
+    for r in rows:
+        counts[r["status_category"]] += 1
+    return {**counts, "total": len(rows)}
+
+
+def _ticket_rows(conn, where, args, version_filter=None):
+    """CSC tickets with CSC/CI names and their fix versions (limited to ``version_filter`` ids if given)."""
+    vf = "AND tv.version_id IN (SELECT value FROM json_each(?))" if version_filter is not None else ""
+    vargs = [json.dumps(sorted(version_filter))] if version_filter is not None else []
+    rows = conn.execute(
+        f"""SELECT t.*, cs.name AS csc, cs.team, c.name AS ci,
+                   json_group_array(json_object('id', v.id, 'name', v.name)) AS versions
+            FROM ticket t LEFT JOIN csc cs ON cs.id = t.csc_id LEFT JOIN ci c ON c.id = cs.ci_id
+            LEFT JOIN ticket_version tv ON tv.ticket_id = t.id {vf}
+            LEFT JOIN version v ON v.id = tv.version_id
+            WHERE {where} GROUP BY t.id ORDER BY c.name, cs.name, t.key""", (*vargs, *args))
+    out = []
+    for r in rows:
+        d = to_dict(r)
+        d["versions"] = [v for v in json.loads(d["versions"]) if v["id"] is not None]
+        out.append(d)
+    return out
+
+
+def _group_by_csc(rows):
+    groups = {}
+    for r in rows:
+        groups.setdefault((r["ci"], r["csc"]), []).append(r)
+    return [{"ci": ci, "csc": csc, "team": ts[0]["team"], "tickets": ts, "progress": _progress(ts)}
+            for (ci, csc), ts in groups.items()]
+
+
+def work_report(conn, ci_ref, to=None, frm=None, versions=None):
+    """CSC tickets fixed in a set of versions, grouped under their parent tickets and then by CSC.
+
+    The set is ``frm..to`` over the version DAG, or an explicit list of ``versions``.
+    """
+    ci = get_ci(conn, ci_ref)
+    if versions:
+        vs = [find_version(conn, ci, v) for v in versions]
+    elif to:
+        vs = version_range(conn, ci["id"], to, frm)
+    else:
+        raise CMError("give 'to' (and optionally 'from'), or 'versions'")
+    vids = {v["id"] for v in vs}
+    rows = [r for r in _ticket_rows(conn, "t.id IN (SELECT tv.ticket_id FROM ticket_version tv "
+                                          "WHERE tv.version_id IN (SELECT value FROM json_each(?)))",
+                                    [json.dumps(sorted(vids))], vids)]
+    parents = {r["id"]: to_dict(r) for r in conn.execute(
+        "SELECT * FROM ticket WHERE id IN (SELECT value FROM json_each(?))",
+        (json.dumps(sorted({r["parent_id"] for r in rows if r["parent_id"]})),))}
+    by_parent = {}
+    for r in rows:
+        by_parent.setdefault(r["parent_id"], []).append(r)
+    items = [{"parent": parents.get(pid), "progress": _progress(ts), "cscs": _group_by_csc(ts)}
+             for pid, ts in sorted(by_parent.items(), key=lambda kv: (kv[0] is None, parents.get(kv[0], {}).get("key") or ""))]
+    return {"ci": ci["name"], "from": frm or None, "to": to if not versions else None,
+            "versions": [{"id": v["id"], "name": v["name"], "status": v["status"]} for v in vs],
+            "progress": _progress(rows), "parents": len([p for p in by_parent if p]), "items": items}
+
+
+def get_ticket(conn, key, source=None):
+    sql, args = "SELECT * FROM ticket WHERE key = ?", [key]
+    if source:
+        sql += " AND source = ?"
+        args.append(source)
+    rows = conn.execute(sql + " ORDER BY id", args).fetchall()
+    if not rows:
+        raise NotFound(f"ticket {key!r} not found")
+    if len(rows) > 1:
+        raise CMError(f"ticket {key!r} exists in several sources; pass ?source=")
+    return rows[0]
+
+
+def ticket_detail(conn, key, source=None):
+    t = get_ticket(conn, key, source)
+    out = _ticket_rows(conn, "t.id = ?", [t["id"]])[0]
+    out["parent"] = to_dict(conn.execute("SELECT * FROM ticket WHERE id = ?", (t["parent_id"],)).fetchone()) \
+        if t["parent_id"] else None
+    children = _ticket_rows(conn, "t.parent_id = ?", [t["id"]])
+    out["children"] = _group_by_csc(children)
+    out["progress"] = _progress(children)
+    return out
 
 
 # ----------------------------------------------------------------------------- events

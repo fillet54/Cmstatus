@@ -4,7 +4,12 @@
 --              │
 --              └──< release ──< version         (a release is planned by policy or spawned as patch/emergency;
 --                     │   ▲          │           its versions are the builds; one version gets promoted to "released")
---                     └───┘ parent    └──< manifest_entry >── version   (composite CIs pin child versions)
+--                     └───┘ parent    ├──< manifest_entry >── version   (composite CIs pin child versions)
+--                                     └──< version_parent >── version   (lineage DAG: what each build was built from)
+--
+--   ticket ──< ticket (parent/child)             (a parent ticket is what reports show; CSC tickets are how each team did it)
+--     │ └──> csc                                  (CSC tickets resolve to a CSC by Jira project/affected product)
+--     └──< ticket_version >── version            (fix versions of the CSC's CSCI)
 --
 --   ifc ──< ifc (parent/child)
 --    └──< baseline ──< baseline_entry >── ci, version     (the HSCM list: one version per CI)
@@ -74,6 +79,7 @@ CREATE TABLE IF NOT EXISTS version (
     planned_date TEXT,
     built_at     TEXT,
     artifact_ref TEXT,
+    lineage      TEXT NOT NULL DEFAULT 'auto',             -- auto = parents derived from the release plan; manual = set by hand
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (ci_id, name),
     UNIQUE (release_id, seq)
@@ -83,6 +89,14 @@ CREATE TABLE IF NOT EXISTS manifest_entry (
     parent_version_id INTEGER NOT NULL REFERENCES version(id),
     child_version_id  INTEGER NOT NULL REFERENCES version(id),
     PRIMARY KEY (parent_version_id, child_version_id)
+);
+
+-- Lineage DAG over one CI's versions. Usually a chain; a merge (e.g. an emergency fix folded into
+-- the next quarter) gives a version two parents. Range x..y = ancestors(y) - ancestors(x), as in git.
+CREATE TABLE IF NOT EXISTS version_parent (
+    version_id INTEGER NOT NULL REFERENCES version(id),
+    parent_id  INTEGER NOT NULL REFERENCES version(id),
+    PRIMARY KEY (version_id, parent_id)
 );
 
 CREATE TABLE IF NOT EXISTS ifc (
@@ -122,11 +136,39 @@ CREATE TABLE IF NOT EXISTS event (
     detail    TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS ticket (
+    id              INTEGER PRIMARY KEY,
+    source          TEXT NOT NULL DEFAULT 'jira',       -- which TicketSource it came from
+    key             TEXT NOT NULL,                      -- e.g. NAVL-123
+    parent_id       INTEGER REFERENCES ticket(id),      -- the parent (feature / CR) a CSC ticket implements
+    csc_id          INTEGER REFERENCES csc(id),         -- set for CSC tickets; NULL for parent tickets
+    summary         TEXT,
+    type            TEXT,                               -- source's issue type: Story, Bug, Feature, ...
+    status          TEXT,                               -- source's status name
+    status_category TEXT NOT NULL DEFAULT 'todo' CHECK (status_category IN ('todo', 'in_progress', 'done')),
+    url             TEXT,
+    assignee        TEXT,
+    updated_at      TEXT,                               -- last change in the source
+    attributes      TEXT NOT NULL DEFAULT '{}',         -- JSON, anything else the source wants to keep
+    synced_at       TEXT,                               -- NULL = stub (referenced as a parent, not fetched yet)
+    UNIQUE (source, key)
+);
+
+CREATE TABLE IF NOT EXISTS ticket_version (
+    ticket_id  INTEGER NOT NULL REFERENCES ticket(id),
+    version_id INTEGER NOT NULL REFERENCES version(id),
+    PRIMARY KEY (ticket_id, version_id)
+);
+
 CREATE INDEX IF NOT EXISTS ix_version_release  ON version(release_id);
 CREATE INDEX IF NOT EXISTS ix_release_parent   ON release(parent_id);
 CREATE INDEX IF NOT EXISTS ix_entry_version    ON baseline_entry(version_id);
 CREATE INDEX IF NOT EXISTS ix_manifest_child   ON manifest_entry(child_version_id);
 CREATE INDEX IF NOT EXISTS ix_event_entity     ON event(entity, entity_id);
+CREATE INDEX IF NOT EXISTS ix_vparent_parent   ON version_parent(parent_id);
+CREATE INDEX IF NOT EXISTS ix_ticket_parent    ON ticket(parent_id);
+CREATE INDEX IF NOT EXISTS ix_ticket_csc       ON ticket(csc_id);
+CREATE INDEX IF NOT EXISTS ix_tv_version       ON ticket_version(version_id);
 
 -- Backstop for duplicate spawns: one live patch/emergency per change request per release line.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_release_child_reason ON release(parent_id, kind, reason)

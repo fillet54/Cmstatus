@@ -1,0 +1,55 @@
+{# report = service.work_report(...): parent tickets, each with its CSC tickets grouped by CSC #}
+{% from "macros.html" import tstatus, progress, ticket_link %}
+{% if not report['items'] %}
+<p class="text-base-content/60 text-sm">No CSC tickets are fixed in {{ 'this version' if report.versions | length == 1 else 'these versions' }}.</p>
+{% else %}
+<div class="space-y-2">
+{% for item in report['items'] %}
+  {% set p = item.parent %}
+  <details class="collapse collapse-arrow bg-base-100 border border-base-300" {{ 'open' if open_all }}>
+    <summary class="collapse-title pr-12">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {% if p %}
+          <span onclick="event.stopPropagation()">{{ ticket_link(p) }}</span>
+          <span class="font-semibold">{{ p.summary or "" }}</span>
+          {% if p.type %}<span class="badge badge-outline badge-sm">{{ p.type }}</span>{% endif %}
+          {{ tstatus(p) }}
+        {% else %}
+          <span class="font-semibold text-base-content/70">No parent ticket</span>
+        {% endif %}
+        <span class="flex-1"></span>
+        <span class="flex items-center gap-2 text-sm text-base-content/70">
+          {{ progress(item.progress, "w-24") }} {{ item.progress.done }}/{{ item.progress.total }}
+        </span>
+      </div>
+      <div class="flex flex-wrap gap-1 mt-1">
+        {% for g in item.cscs %}<span class="badge badge-ghost badge-sm">{{ g.csc or "unmapped" }} · {{ g.progress.done }}/{{ g.progress.total }}</span>{% endfor %}
+      </div>
+    </summary>
+    <div class="collapse-content">
+      {% for g in item.cscs %}
+      <div class="mt-2">
+        <div class="text-sm font-semibold">{{ g.csc or "No CSC mapped" }}{% if g.team %} <span class="font-normal text-base-content/60">· {{ g.team }}</span>{% endif %}</div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <tbody>
+            {% for t in g.tickets %}
+              <tr class="hover">
+                <td class="whitespace-nowrap w-32">{{ ticket_link(t) }}</td>
+                <td>{{ t.summary or "" }}{% if t.type and t.type != "Story" %} <span class="badge badge-outline badge-xs">{{ t.type }}</span>{% endif %}</td>
+                <td class="w-28">{{ tstatus(t) }}</td>
+                <td class="text-right whitespace-nowrap">
+                  {% for v in t.versions %}<a class="badge badge-ghost badge-sm font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a> {% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+{% endfor %}
+</div>
+{% endif %}

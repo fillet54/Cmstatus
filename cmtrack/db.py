@@ -17,6 +17,7 @@ def connect(path):
 # CREATE TABLE IF NOT EXISTS won't add them to an existing DB, so add them here.
 MIGRATIONS = [
     ("release", "released_at", "TEXT"),
+    ("version", "lineage", "TEXT NOT NULL DEFAULT 'auto'"),
 ]
 
 

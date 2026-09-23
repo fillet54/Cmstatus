@@ -2,7 +2,9 @@
 
 Two planned CIs, a composite suite, a failed build and an ad hoc respin, patch and emergency
 releases, an IFC hierarchy, a scraped HSCM with placeholder CIs and a hand-made successor
-baseline. Uses CMTRACK_POLICY_DIR (default ./policies) for the manual DISPLAY-SW plan.
+baseline, and Jira-style work items: parent tickets with CSC tickets under them, including an
+emergency fix merged into the next quarter (a two-parent version in the lineage DAG).
+Uses CMTRACK_POLICY_DIR (default ./policies) for the manual DISPLAY-SW plan.
 """
 import argparse
 import os
@@ -76,6 +78,37 @@ def seed(client):
 
     # ship the emergency after the baselines were approved, so both now field an older NAV version
     ship(er1["versions"][0]["id"])
+    # ...and fold it into the next quarter: 2027.Q1-b1 builds on Q4's release *and* the emergency fix
+    q1 = next(r["id"] for r in call("get", "/cis/NAV-SW/releases") if r["name"] == "2027.Q1")
+    call("put", f"/versions/{version(q1, '2027.Q1-b1')}/parents", {"parents": ["2026.Q4-b4", "2026.Q4.ER1"]})
+    call("post", "/tickets", {"source": "jira", "records": DEMO_TICKETS})
+
+
+def _t(key, summary, parent=None, pair=None, versions=None, cat="done", type="Story", status=None):
+    project, product = pair or (None, None)
+    return {"key": key, "summary": summary, "type": type, "parent_key": parent, "project": project,
+            "affected_product": product, "fix_versions": versions, "status_category": cat,
+            "status": status or {"done": "Done", "in_progress": "In Progress", "todo": "To Do"}[cat],
+            "url": f"https://jira.example.com/browse/{key}"}
+
+
+CORE, MAPS, HUD = ("NAVL", "core"), ("NAVX", "maps"), ("DSP", "hud")
+DEMO_TICKETS = [
+    _t("PRG-10", "GPS-denied navigation", type="Feature", cat="in_progress"),
+    _t("PRG-12", "Terrain database refresh", type="Feature"),
+    _t("PRG-15", "CR-1234: heading drift after cold start", type="Change Request"),
+    _t("PRG-18", "Moving map declutter", type="Feature", cat="todo"),
+    _t("NAVL-101", "Inertial-only dead reckoning mode", "PRG-10", CORE, ["2026.Q4-b1"]),
+    _t("NAVL-105", "Blend terrain-referenced fixes into the filter", "PRG-10", CORE, ["2027.Q1-b1"], "in_progress"),
+    _t("NAVX-201", "Terrain correlation service", "PRG-10", MAPS, ["2026.Q4-b2"]),
+    _t("DSP-31", "GPS-denied annunciator on PFD", "PRG-10", HUD, ["3.2.0"]),
+    _t("NAVX-210", "Load 2026 terrain tiles", "PRG-12", MAPS, ["2026.Q4-b3"]),
+    _t("NAVX-211", "Fix tile index overflow found in b3", "PRG-12", MAPS, ["2026.Q4-b4"], type="Bug"),
+    _t("NAVL-120", "Re-seed heading from magnetometer on cold start", "PRG-15", CORE, ["2026.Q4.ER1"], type="Bug"),
+    _t("NAVX-220", "Declutter levels for moving map", "PRG-18", MAPS, ["2027.Q1-b2"], "todo"),
+    _t("DSP-40", "Declutter softkey", "PRG-18", HUD, ["3.3.0-rc1"], "todo"),
+    _t("NAVL-130", "Log spam in nav filter", None, CORE, ["2027.Q1-b1"], type="Bug"),
+]
 
 
 if __name__ == "__main__":

@@ -25,6 +25,30 @@
       <div><div class="text-base-content/60">Source</div><div>{{ r.source }}</div></div>
     </div>
 
+    {% if work_range %}
+    <a class="btn btn-sm btn-outline btn-primary self-start"
+       href="{{ url_for('ui.work', ref=r.ci, to=work_range.to, **({'from': work_range['from']} if work_range['from'] else {})) }}"
+       hx-boost="true" hx-target="body" hx-push-url="true">
+      Work items: <span class="font-mono">{{ work_range['from'] or "start" }}..{{ work_range.to }}</span>
+    </a>
+    {% endif %}
+
+    {% if r.unabsorbed %}
+    <div role="alert" class="alert alert-error text-sm">
+      <div>
+        <div class="font-semibold">Not built on {{ r.unabsorbed | length }} earlier fix{{ 'es' if r.unabsorbed | length != 1 }}</div>
+        <p class="opacity-80">This release's lineage doesn't include these released patch/emergency versions. Merge them
+          (set a build's parents) or accept the regression.</p>
+        <ul class="mt-1">
+        {% for u in r.unabsorbed %}
+          <li><a class="link font-mono" href="{{ url_for('ui.version', vid=u.id) }}">{{ u.name }}</a>
+            <span class="opacity-80">{{ u.kind }} on {{ u.root }}{% if u.reason %} · {{ u.reason }}{% endif %}</span></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
     {% if r.baselines_behind %}
     <div role="alert" class="alert alert-warning text-sm">
       <div>
