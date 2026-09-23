@@ -1,0 +1,449 @@
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% block title %}UI components{% endblock %}
+
+{% block head %}
+<style>
+  /* style-guide-only helpers */
+  .sg-section { scroll-margin-top: 40px; }
+  .sg-h { font-size: 20px; font-weight: 600; margin: 8px 0 4px; }
+  .sg-lead { color: var(--ui-muted); margin: 0 0 8px; max-width: 80ch; }
+  .sg-demo { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .sg-code { margin: 0; padding: 10px 14px; background: #F7F6F2; border-top: 1px solid var(--ui-line-soft); font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre; color: #3D4B59; }
+  .sg-swatch { width: 132px; border: 1px solid var(--ui-line); border-radius: var(--ui-radius); overflow: hidden; background: var(--ui-surface); font-size: 12px; }
+  .sg-swatch > div:first-child { height: 40px; }
+  .sg-swatch > div:last-child { padding: 6px 8px; }
+</style>
+{% endblock %}
+
+{% macro example(title, code=None) -%}
+<section class="ui-card ui-card--flush">
+  {{ ui.card_header(title, level=3) }}
+  <div class="ui-card__body">{{ caller() }}</div>
+  {%- if code %}<pre class="sg-code">{{ code | trim | forceescape }}</pre>{% endif %}
+</section>
+{%- endmacro %}
+
+{% block content %}
+{% call ui.page_header("UI components", "templates/ui/components.html · static/ui.css",
+                        crumbs=[("cmtrack", url_for('ui.dashboard')), ("UI components", None)]) %}
+  {{ ui.button("Macro source", href="#usage", variant="secondary", icon="list") }}
+{% endcall %}
+
+{{ ui.tabs([
+  {"label": "Foundations", "href": "#foundations"}, {"label": "Structure", "href": "#structure"},
+  {"label": "Identifiers", "href": "#identifiers"}, {"label": "Status", "href": "#status"},
+  {"label": "Feedback", "href": "#feedback"}, {"label": "Actions", "href": "#actions"},
+  {"label": "Forms", "href": "#forms"}, {"label": "Data", "href": "#data"},
+  {"label": "Tickets & backlog", "href": "#tickets"}, {"label": "Pattern: CI overview", "href": "#pattern"},
+], label="Style guide sections") }}
+
+{# ------------------------------------------------------------------------------------------ usage #}
+<section class="sg-section ui-stack" id="usage">
+  <h2 class="sg-h">Using the components</h2>
+  {% set code %}{% raw %}
+{% extends "ui/layout.html" %}
+{% set nav_current = "cis" %}
+{% block title %}NAV-SW{% endblock %}
+{% block content %}
+  {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", url_for("ui.cis")), ("NAV-SW", None)]) %}
+    {{ ui.button("Work items", variant="primary", href=url_for("ui.work", ref="NAV-SW")) }}
+  {% endcall %}
+{% endblock %}
+
+{# in a fragment or any template that doesn't extend the layout: #}
+{% import "ui/components.html" as ui %}
+{% endraw %}{% endset %}
+  {% call example("Page shell and import", code) %}
+    <p class="ui-muted" style="margin: 0;">The layout draws the marking banners (config, not per page), the header and the main column.
+      Extra HTML attributes (hx-*, data-*, aria-*) go in <code>attrs={...}</code>; CSS classes in <code>cls</code>.</p>
+  {% endcall %}
+</section>
+
+{# ------------------------------------------------------------------------------------------ foundations #}
+<section class="sg-section ui-stack" id="foundations">
+  <h2 class="sg-h">Foundations</h2>
+  <p class="sg-lead">Tokens live at the top of ui.css. Components only read tokens, so changing the look is a token edit.</p>
+  {% call example("Colour tokens") %}
+    <div class="sg-demo">
+      {% for name, var in [("ground", "--ui-bg"), ("surface", "--ui-surface"), ("ink", "--ui-ink"), ("muted", "--ui-muted"),
+                           ("line", "--ui-line"), ("accent", "--ui-accent"), ("info", "--ui-info"), ("success", "--ui-success"),
+                           ("warning", "--ui-warning"), ("danger", "--ui-danger"), ("review", "--ui-review"), ("verify", "--ui-verify")] %}
+      <div class="sg-swatch"><div style="background: var({{ var }});"></div><div><b>{{ name }}</b><br><code>{{ var }}</code></div></div>
+      {% endfor %}
+    </div>
+  {% endcall %}
+  <div class="ui-grid">
+    {% call example("Type") %}
+      <div class="ui-stack" style="--ui-gap: 10px;">
+        <div class="ui-page-header__title">Page title 28/600</div>
+        <div class="ui-card__title">Card title 14/600</div>
+        <div>Body 14/400: descriptions, reasons and explanations. Sentence case, plain words.</div>
+        <div class="ui-section-label">Section label</div>
+        <div class="ui-display" style="font-size: 28px;">Briefing title (display serif)</div>
+        <div class="ui-mono">2027.Q1-b2 · NAVL-106 · CR-1234</div>
+      </div>
+    {% endcall %}
+    {% set code %}{% raw %}
+{{ ui.marking_banner({"text": "CUI", "bg": "#502B85", "fg": "#FFFFFF"}) }}
+{{ ui.marking_banner(None) }}   {# not configured: deliberately obvious #}
+{% endraw %}{% endset %}
+    {% call example("Marking banners", code) %}
+      <div class="ui-stack" style="--ui-gap: 8px;">
+        {{ ui.marking_banner({"text": "UNCLASSIFIED", "bg": "#007A33", "fg": "#FFFFFF"}, "inline") }}
+        {{ ui.marking_banner({"text": "CUI", "bg": "#502B85", "fg": "#FFFFFF"}, "inline") }}
+        {{ ui.marking_banner(None, "inline") }}
+        <p class="ui-muted" style="margin: 0; font-size: 13px;">Set with <code>CMTRACK_MARKING</code> (and <code>CMTRACK_MARKING_COLORS</code>); shown top and bottom of every page and print.</p>
+      </div>
+    {% endcall %}
+  </div>
+</section>
+
+{# ------------------------------------------------------------------------------------------ structure #}
+<section class="sg-section ui-stack" id="structure">
+  <h2 class="sg-h">Page structure</h2>
+  {% set code %}{% raw %}
+{% call ui.page_header("NAV-SW", "Navigation software",
+                       crumbs=[("Configuration items", url_for("ui.cis")), ("NAV-SW", None)],
+                       meta=["CSCI", "Policy quarterly-monthly", "2 CSCs"]) %}
+  {{ ui.button("Release notes") }}{{ ui.button("Work items", variant="primary") }}
+{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("page_header · breadcrumbs", code) %}
+    {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", "#"), ("NAV-SW", None)],
+                           meta=["CSCI", "Policy quarterly-monthly", "2 CSCs · nav-core, nav-maps"]) %}
+      {{ ui.button("Release notes") }}{{ ui.button("Work items", variant="primary") }}
+    {% endcall %}
+  {% endcall %}
+
+  {% set code %}{% raw %}
+{% call ui.stats("NAV-SW at a glance") %}
+  {{ ui.stat("Fielded (effective)", "2026.Q4.ER1", "release 2026.Q4 shipped as b4", mono=True) }}
+  {% call ui.stat("Work in 2027.Q1", "2 of 7 done") %}{{ ui.state_bar(progress) }}{% endcall %}
+  {{ ui.stat("Baselines", "1 behind", "IFC-2.1 / HSCM-B fields b4", tone="warning", icon="alert-triangle") }}
+{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("stats · stat", code) %}
+    {% call ui.stats("NAV-SW at a glance") %}
+      {{ ui.stat("Fielded (effective)", "2026.Q4.ER1", "release 2026.Q4 shipped as b4", mono=True) }}
+      {{ ui.stat("Next release", "2027.Q1", "target 2027-03-15 · b2 of 3 built", mono=True) }}
+      {% call ui.stat("Work in 2027.Q1", "2 of 7 done") %}{{ ui.state_bar(progress) }}{% endcall %}
+      {{ ui.stat("Baselines", "1 behind", "IFC-2.1 / HSCM-B fields b4", tone="warning", icon="alert-triangle") }}
+    {% endcall %}
+  {% endcall %}
+
+  {% set code %}{% raw %}
+{% call ui.card() %}
+  {% call ui.card_header("Release 2027.Q1", "NAV-SW") %}{{ ui.badge("Active", "info", outline=True, strong=True) }}{% endcall %}
+  {% call ui.card_section("Built from") %}...{% endcall %}
+  {% call ui.card_section("Versions") %}...{% endcall %}
+  {% call ui.card_footer() %}Last change · 2027.Q1-b2 built · j.doe · 2026-09-23 14:24Z{% endcall %}
+{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("card · card_header · card_section · card_footer", code) %}
+    <div style="max-width: 460px;">
+    {% call ui.card() %}
+      {% call ui.card_header("Release 2027.Q1", "NAV-SW") %}{{ ui.badge("Active", "info", outline=True, strong=True) }}{% endcall %}
+      {% call ui.card_section("Built from") %}{{ ui.lineage([{"name": "2026.Q4-b4", "href": "#"}, {"name": "2026.Q4.ER1", "merge": True}]) }}{% endcall %}
+      {% call ui.card_section("Details") %}{{ ui.dl([("Target", "2027-03-15"), ("Policy", "quarterly-monthly")]) }}{% endcall %}
+      {% call ui.card_footer() %}Last change · 2027.Q1-b2 built · j.doe · 2026-09-23 14:24Z{% endcall %}
+    {% endcall %}
+    </div>
+  {% endcall %}
+</section>
+
+{# ------------------------------------------------------------------------------------------ identifiers #}
+<section class="sg-section ui-stack" id="identifiers">
+  <h2 class="sg-h">Identifiers, chips, badges, time</h2>
+  {% set code %}{% raw %}
+{{ ui.ident("2027.Q1-b2", href=url_for("ui.version", vid=v.id)) }}   {{ ui.ident("CR-1234") }}
+{{ ui.chip("quarterly-monthly", mono=True) }}   {{ ui.badge("emergency", "danger") }}
+{{ ui.kbd("/") }}   {{ ui.timestamp(v.built_at) }}   {{ "2026-09-23 14:24:00" | utc }}
+{% endraw %}{% endset %}
+  {% call example("ident · chip · badge · kbd · timestamp", code) %}
+    <div class="ui-stack" style="--ui-gap: 12px;">
+      <div class="sg-demo">{{ ui.ident("NAV-SW", href="#") }} {{ ui.ident("2027.Q1-b2") }} {{ ui.ident("NAVL-106", href="#") }} {{ ui.ident("CR-1234") }}</div>
+      <div class="sg-demo">{{ ui.chip("CSCI") }} {{ ui.chip("quarterly-monthly", mono=True) }} {{ ui.chip("2 CSCs", icon="layers") }}</div>
+      <div class="sg-demo">
+        {% for tone in ["neutral", "info", "success", "warning", "danger", "accent"] %}{{ ui.badge(tone, tone) }}{% endfor %}
+        {{ ui.badge("patch", "warning", outline=True) }} {{ ui.badge("Active", "info", outline=True, strong=True) }}
+      </div>
+      <div class="sg-demo">{{ ui.kbd("/") }} search · {{ ui.timestamp("2026-09-23 14:24:00") }} · {{ ui.timestamp("2026-09-23T14:24:07+00:00", seconds=True) }} · {{ ui.timestamp(None) }}</div>
+    </div>
+  {% endcall %}
+</section>
+
+{# ------------------------------------------------------------------------------------------ status #}
+<section class="sg-section ui-stack" id="status">
+  <h2 class="sg-h">Status</h2>
+  <p class="sg-lead">Every status is a shape and a word as well as a colour, so it survives colour blindness, greyscale print and 508 review.</p>
+  <div class="ui-grid">
+    {% set code %}{% raw %}
+{{ ui.version_status(v.status) }}     {# planned built tested released rejected external #}
+{{ ui.version_status(r.status) }}     {# releases too: active, cancelled #}
+{{ ui.version_glyph("released") }}
+{% endraw %}{% endset %}
+    {% call example("version_status · version_glyph", code) %}
+      <div class="ui-stack" style="--ui-gap: 10px;">
+        {% for s in ["planned", "built", "tested", "released", "rejected", "external", "active", "cancelled"] %}
+        <div>{{ ui.version_status(s) }}</div>
+        {% endfor %}
+      </div>
+    {% endcall %}
+    {% set code %}{% raw %}
+{{ ui.state_pill(t.state, title="Source status: " ~ t.status) }}
+{{ ui.state_reason(t) }}      {# only for error / merge_blocked #}
+{% endraw %}{% endset %}
+    {% call example("state_pill (ticket workflow states)", code) %}
+      <div class="ui-stack" style="--ui-gap: 10px;">
+        {% for s in ui_states %}<div>{{ ui.state_pill(s) }}</div>{% endfor %}
+      </div>
+    {% endcall %}
+  </div>
+  {% set code %}{% raw %}
+{{ ui.state_bar(report.progress, size="lg") }}
+{{ ui.state_counts(report.progress) }}
+{% endraw %}{% endset %}
+  {% call example("state_bar · state_counts", code) %}
+    <div class="ui-stack" style="--ui-gap: 12px; max-width: 420px;">
+      {{ ui.state_bar(progress, size="lg") }}
+      {{ ui.state_counts(progress) }}
+    </div>
+  {% endcall %}
+</section>
+
+{# ------------------------------------------------------------------------------------------ feedback #}
+<section class="sg-section ui-stack" id="feedback">
+  <h2 class="sg-h">Feedback</h2>
+  {% set code %}{% raw %}
+{% call ui.alert("danger", "Couldn't get tickets") %}ticket source 'jira' failed: timeout{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("alert", code) %}
+    <div class="ui-stack" style="--ui-gap: 8px;">
+      {% call ui.alert("info") %}Includes every released fix from earlier release lines.{% endcall %}
+      {% call ui.alert("success", "Added 3 from jira") %}PRG-20, PRG-21, PRG-22{% endcall %}
+      {% call ui.alert("warning", "1 approved baseline still fields an older version") %}IFC-2.1 / HSCM-B: 2026.Q4-b4{% endcall %}
+      {% call ui.alert("danger", "Couldn't get tickets") %}ticket source 'jira' failed in tickets_for_versions: timeout{% endcall %}
+      {% call ui.alert("warning", icon="clock") %}Session ends in 4:59 for inactivity. {{ ui.button("Stay signed in", size="sm") }}{% endcall %}
+    </div>
+  {% endcall %}
+  {% set code %}{% raw %}
+{% call ui.empty("Nothing on this backlog yet.") %}{{ ui.button("Pull from Jira", variant="primary") }}{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("empty", code) %}
+    {% call ui.empty("Nothing on this backlog yet.") %}{{ ui.button("Pull from Jira", variant="primary", icon="download") }}{% endcall %}
+  {% endcall %}
+</section>
+
+{# ------------------------------------------------------------------------------------------ actions #}
+<section class="sg-section ui-stack" id="actions">
+  <h2 class="sg-h">Actions and icons</h2>
+  {% set code %}{% raw %}
+{{ ui.button("Open work items", variant="primary", href=url_for("ui.work", ref=ci.name)) }}
+{{ ui.button("Pull from Jira", variant="primary", icon="download", attrs={"hx-post": url, "hx-target": "#items"}) }}
+{{ ui.button("Remove", variant="danger", size="sm") }}
+{{ ui.icon_button("refresh", "Refresh from Jira") }}      {# the label is required: it is the aria-label #}
+{% call ui.button_group("Move") %}{{ ui.button("Up", size="sm") }}{{ ui.button("Down", size="sm") }}{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("button · icon_button · button_group", code) %}
+    <div class="ui-stack" style="--ui-gap: 12px;">
+      <div class="sg-demo">
+        {{ ui.button("Open work items", variant="primary") }} {{ ui.button("Release notes") }}
+        {{ ui.button("Remove from backlog", variant="danger") }} {{ ui.button("Cancel", variant="ghost") }}
+        {{ ui.button("Approve", variant="primary", disabled=True) }}
+      </div>
+      <div class="sg-demo">
+        {{ ui.button("Pull from Jira", variant="primary", icon="download") }} {{ ui.button("Export", icon="download", size="sm") }}
+        {{ ui.icon_button("refresh", "Refresh from Jira") }} {{ ui.icon_button("copy", "Copy link", variant="secondary") }}
+        {% call ui.button_group("Move") %}{{ ui.button("Top", size="sm", icon="arrow-top") }}{{ ui.button("Up", size="sm", icon="arrow-up") }}{{ ui.button("Down", size="sm", icon="arrow-down") }}{% endcall %}
+      </div>
+    </div>
+  {% endcall %}
+  {% set code %}{% raw %}
+{{ ui.icon("alert-triangle") }}   {{ ui.icon("lock", 14, label="Locked") }}   {# label = meaningful icon #}
+{% endraw %}{% endset %}
+  {% call example("icon", code) %}
+    <div class="sg-demo">
+      {% for name in ["search", "check", "x", "plus", "alert-triangle", "alert-circle", "info", "clock", "external", "chevron-down",
+                      "chevron-right", "arrow-up", "arrow-down", "arrow-top", "download", "refresh", "lock", "branch", "copy", "list", "layers", "grip"] %}
+      <span class="ui-chip" title="{{ name }}">{{ ui.icon(name) }} <code style="font-size: 11px;">{{ name }}</code></span>
+      {% endfor %}
+    </div>
+  {% endcall %}
+</section>
+
+{# ------------------------------------------------------------------------------------------ forms #}
+<section class="sg-section ui-stack" id="forms">
+  <h2 class="sg-h">Forms and navigation</h2>
+  <div class="ui-grid">
+    {% set code %}{% raw %}
+{% call ui.field("Backlog name", "name", hint="Shown in the nav and on CI pages") %}
+  {{ ui.input("name", form.name, required=True) }}
+{% endcall %}
+{% call ui.field("From (exclusive)", "from") %}
+  {{ ui.select("from", [("", "(beginning)")] + versions, selected=frm, mono=True) }}
+{% endcall %}
+{{ ui.checkbox("cis", "NAV-SW", value="NAV-SW", checked=True) }}
+{% endraw %}{% endset %}
+    {% call example("field · input · select · checkbox", code) %}
+      <div class="ui-stack" style="--ui-gap: 14px; max-width: 360px;">
+        {% call ui.field("Backlog name", "sg-name", hint="Shown in the nav and on CI pages") %}{{ ui.input("name", "Nav & Display", id="sg-name", required=True) }}{% endcall %}
+        {% call ui.field("Ticket key", "sg-key", error="PRG-99 not found in jira") %}{{ ui.input("key", "PRG-99", id="sg-key", mono=True, invalid=True) }}{% endcall %}
+        {% call ui.field("From (exclusive)", "sg-from") %}{{ ui.select("from", [("", "(beginning)"), "2026.Q4-b4", "2026.Q4.ER1", "2027.Q1-b1"], selected="2026.Q4-b4", id="sg-from", mono=True) }}{% endcall %}
+        <div class="ui-row" style="--ui-gap: 16px;">{{ ui.checkbox("cis", "NAV-SW", checked=True, value="NAV-SW") }}{{ ui.checkbox("cis", "DISPLAY-SW", value="DISPLAY-SW") }}</div>
+      </div>
+    {% endcall %}
+    {% set code %}{% raw %}
+{{ ui.search_box("q", filters.q, "Search CIs, versions, tickets", action=url_for("ui.cis")) }}
+{{ ui.segmented([{"label": "All", "count": 7, "active": True, "href": "?"},
+                 {"label": "Open", "count": 6, "href": "?state=open"}]) }}
+{{ ui.tabs([{"label": "Releases", "href": "#", "active": True}, {"label": "Work items", "href": "..."}]) }}
+{% endraw %}{% endset %}
+    {% call example("search_box · segmented · tabs", code) %}
+      <div class="ui-stack" style="--ui-gap: 16px;">
+        {{ ui.search_box("q", "", "Search CIs, versions, tickets") }}
+        {{ ui.segmented([{"label": "All", "count": 7, "active": True}, {"label": "Open", "count": 6}, {"label": "Needs attention", "count": 1}]) }}
+        {{ ui.segmented([{"label": "Q4", "href": "#"}, {"label": "Q4.ER1", "href": "#"}, {"label": "Q1", "href": "#", "active": True}, {"label": "Q2", "href": "#"}], label="Release presets") }}
+        {{ ui.tabs([{"label": "Releases", "href": "#forms", "active": True}, {"label": "Work items", "href": "#forms"}, {"label": "CSCs", "href": "#forms"}]) }}
+      </div>
+    {% endcall %}
+  </div>
+</section>
+
+{# ------------------------------------------------------------------------------------------ data #}
+<section class="sg-section ui-stack" id="data">
+  <h2 class="sg-h">Data</h2>
+  {% set code %}{% raw %}
+{% call ui.card(flush=True) %}
+  {% call ui.card_header("Releases") %}{{ ui.button("Plan", size="sm") }}{% endcall %}
+  {% call ui.table(["Release", "Kind", "Status", "Target", {"label": "Versions", "align": "end"}]) %}
+    {% for r in releases %}
+    <tr class="{{ 'ui-row--child' if r.parent_id }}">
+      <td>{{ ui.ident(r.name, href=url_for("ui.release", rid=r.id), plain=True) }}</td>
+      <td>{{ r.kind }}</td><td>{{ ui.version_status(r.status) }}</td>
+      <td>{{ ui.timestamp(r.target_date) }}</td><td class="ui-end">{{ r.planned_versions }}</td>
+    </tr>
+    {% else %}{{ ui.empty_row("No releases yet", 5) }}{% endfor %}
+  {% endcall %}
+{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("table (in a flush card) · empty_row", code) %}
+    {% call ui.card(flush=True) %}
+      {% call ui.card_header("Releases", "versions shown as planned + ad hoc") %}{{ ui.button("Plan", size="sm") }}{% endcall %}
+      {% call ui.table(["Release", "Kind", "Status", "Target", "Released as", {"label": "Versions", "align": "end"}]) %}
+        <tr><td>{{ ui.ident("2026.Q4", href="#", plain=True) }}</td><td class="ui-muted">planned</td><td>{{ ui.version_status("released") }}</td><td class="ui-mono">2026-12-15</td><td>{{ ui.ident("2026.Q4-b4", plain=True) }}</td><td class="ui-end">3 <span class="ui-tone-warning">+1</span></td></tr>
+        <tr class="ui-row--child"><td><span class="ui-tree-mark">└</span>{{ ui.ident("2026.Q4.ER1", href="#", plain=True) }}</td><td>{{ ui.badge("emergency", "danger") }}</td><td>{{ ui.version_status("released") }}</td><td>{{ ui.ident("CR-1234", plain=True) }}</td><td>{{ ui.ident("2026.Q4.ER1", plain=True) }}</td><td class="ui-end">1</td></tr>
+        <tr class="ui-row--child"><td><span class="ui-tree-mark">└</span>{{ ui.ident("2026.Q4.P1", href="#", plain=True) }}</td><td>{{ ui.badge("patch", "warning") }}</td><td>{{ ui.version_status("planned") }}</td><td>{{ ui.ident("CR-1301", plain=True) }}</td><td></td><td class="ui-end">1</td></tr>
+        <tr class="ui-row--selected"><td>{{ ui.ident("2027.Q1", href="#", plain=True) }}</td><td class="ui-muted">planned</td><td>{{ ui.version_status("active") }}</td><td class="ui-mono">2027-03-15</td><td></td><td class="ui-end">3</td></tr>
+        {{ ui.empty_row("(empty_row renders like this)", 6) }}
+      {% endcall %}
+    {% endcall %}
+  {% endcall %}
+  <div class="ui-grid">
+    {% set code %}{% raw %}
+{{ ui.dl([("Target", r.target_date), ("Reason", r.reason)]) }}
+{{ ui.dl([...], cols=True) }}        {# label over value, two columns #}
+{% endraw %}{% endset %}
+    {% call example("dl", code) %}
+      <div class="ui-stack">
+        {{ ui.dl([("Target", "2027-03-15"), ("Released as", "—"), ("Built on", "2026.Q4-b4"), ("Source", "policy")]) }}
+        {{ ui.dl([("Released version", "2026.Q4-b4"), ("Effective version", "2026.Q4.ER1"), ("Reason / CR", "CR-1234"), ("Released at", "2026-09-23 14:24Z")], cols=True) }}
+      </div>
+    {% endcall %}
+    {% set code %}{% raw %}
+{{ ui.audit_list([{"at": e.at, "who": e.user, "what": e.summary} for e in events]) }}
+{{ ui.stamp("2027.Q1-b2 built", "j.doe", v.built_at) }}
+{% endraw %}{% endset %}
+    {% call example("audit_list · stamp", code) %}
+      <div class="ui-stack">
+        {{ ui.audit_list(audit) }}
+        {{ ui.stamp("Last change · 2027.Q1-b2 built", "j.doe", "2026-09-23 14:24:00") }}
+      </div>
+    {% endcall %}
+  </div>
+</section>
+
+{# ------------------------------------------------------------------------------------------ tickets #}
+<section class="sg-section ui-stack" id="tickets">
+  <h2 class="sg-h">Tickets and backlog</h2>
+  {% set code %}{% raw %}
+<ul class="ui-tickets">
+  {{ ui.group_label("NAV-CORE · NAV TEAM") }}
+  {% for t in group.tickets %}{{ ui.ticket_line(t, href=url_for("ui.ticket", key=t.key)) }}{% endfor %}
+</ul>
+{{ ui.ticket_ref("PRG-10", href=url_for("ui.ticket", key="PRG-10"), url=t.url) }}
+{% endraw %}{% endset %}
+  {% call example("ticket_line · group_label · ticket_ref", code) %}
+    {% call ui.card(flush=True) %}
+      {% call ui.card_header("PRG-10 · GPS-denied navigation") %}{{ ui.state_pill("in_progress") }}{{ ui.state_bar(progress, width="120px") }}{% endcall %}
+      <ul class="ui-tickets">
+        {{ ui.group_label("NAV-CORE · NAV TEAM") }}
+        {% for t in tickets %}{{ ui.ticket_line(t, href="#") }}{% endfor %}
+      </ul>
+    {% endcall %}
+  {% endcall %}
+  {% set code %}{% raw %}
+<ol id="backlog-list" class="ui-rank-list">
+  {% for t in b["items"] %}
+  {{ ui.rank_item(t, loop.index, href=url_for("ui.ticket", key=t.key),
+                  remove_attrs={"hx-post": url_for("ui.backlog_remove", ref=b.name, key=t.key),
+                                "hx-target": "#backlog-items", "hx-confirm": "Remove " ~ t.key ~ "?"}) }}
+  {% endfor %}
+</ol>
+{# keeps backlog.html's drag-and-drop contract: data-key/-rank/-state, [data-pos], [data-move] #}
+{% endraw %}{% endset %}
+  {% call example("rank_item · drop_line (backlog)", code) %}
+    <ol class="ui-rank-list">
+      {{ ui.rank_item(backlog[0], 1, href="#", remove_attrs={"data-demo": "remove"}) }}
+      {{ ui.drop_line() }}
+      {% call ui.rank_item(backlog[1], 2, href="#", remove_attrs={"data-demo": "remove"}) %}{{ ui.state_bar(progress, width="120px") }}<span>3 of 6 CSC tickets done</span>{% endcall %}
+      {{ ui.rank_item(backlog[2], 3, href="#", lifted=True) }}
+      {{ ui.rank_item(backlog[3], 4, href="#", remove_attrs={"data-demo": "remove"}) }}
+    </ol>
+  {% endcall %}
+</section>
+
+{# ------------------------------------------------------------------------------------------ pattern #}
+<section class="sg-section ui-stack" id="pattern">
+  <h2 class="sg-h">Pattern: CI overview (Engineering Ledger)</h2>
+  <p class="sg-lead">The whole page below is composed from the macros above, with no page-specific CSS.</p>
+  {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", "#"), ("NAV-SW", None)],
+                         meta=["CSCI", "Policy quarterly-monthly", "2 CSCs · nav-core, nav-maps"]) %}
+    {{ ui.button("Release notes") }}{{ ui.button("Work items", variant="primary") }}
+  {% endcall %}
+  {% call ui.stats("NAV-SW at a glance") %}
+    {{ ui.stat("Fielded (effective)", "2026.Q4.ER1", "release 2026.Q4 shipped as b4", mono=True) }}
+    {{ ui.stat("Next release", "2027.Q1", "target 2027-03-15 · b2 of 3 built", mono=True) }}
+    {% call ui.stat("Work in 2027.Q1", "2 of 7 done") %}{{ ui.state_bar(progress) }}{% endcall %}
+    {{ ui.stat("Baselines", "1 behind", "IFC-2.1 / HSCM-B fields b4", tone="warning", icon="alert-triangle") }}
+  {% endcall %}
+  <div class="ui-split">
+    {% call ui.card(flush=True) %}
+      {% call ui.card_header("Releases") %}{{ ui.segmented([{"label": "All", "active": True}, {"label": "Open"}], label="Show") }}{% endcall %}
+      {% call ui.table(["Release", "Kind", "Status", "Target", {"label": "Versions", "align": "end"}]) %}
+        <tr><td>{{ ui.ident("2026.Q4", href="#", plain=True) }}</td><td class="ui-muted">planned</td><td>{{ ui.version_status("released") }}</td><td class="ui-mono">2026-12-15</td><td class="ui-end">3 <span class="ui-tone-warning">+1</span></td></tr>
+        <tr class="ui-row--child"><td><span class="ui-tree-mark">└</span>{{ ui.ident("2026.Q4.ER1", href="#", plain=True) }}</td><td>{{ ui.badge("emergency", "danger") }}</td><td>{{ ui.version_status("released") }}</td><td>{{ ui.ident("CR-1234", plain=True) }}</td><td class="ui-end">1</td></tr>
+        <tr class="ui-row--selected"><td>{{ ui.ident("2027.Q1", href="#", plain=True) }}</td><td class="ui-muted">planned</td><td>{{ ui.version_status("active") }}</td><td class="ui-mono">2027-03-15</td><td class="ui-end">3</td></tr>
+        <tr><td>{{ ui.ident("2027.Q2", href="#", plain=True) }}</td><td class="ui-muted">planned</td><td>{{ ui.version_status("planned") }}</td><td class="ui-mono">2027-06-15</td><td class="ui-end">3</td></tr>
+      {% endcall %}
+    {% endcall %}
+    {% call ui.card() %}
+      {% call ui.card_header("2027.Q1", "NAV-SW release") %}{{ ui.badge("Active", "info", outline=True, strong=True) }}{% endcall %}
+      {% call ui.card_section("Built from") %}
+        {{ ui.lineage([{"name": "2026.Q4-b4", "href": "#"}, {"name": "2026.Q4.ER1", "merge": True}]) }}
+        <div class="ui-status ui-tone-success" style="font-size: 12px;">{{ ui.icon("check", 14) }}Includes every released fix from earlier release lines</div>
+      {% endcall %}
+      {% call ui.card_section("Versions") %}
+        {{ ui.dl([(ui.version_status("built", "2027.Q1-b1"), "2027-01-15"), (ui.version_status("built", "2027.Q1-b2"), "2027-02-15"), (ui.version_status("planned", "2027.Q1-b3"), "2027-03-15")]) }}
+      {% endcall %}
+      {% call ui.card_section("Work since 2026.Q4-b4") %}
+        {{ ui.state_bar(progress, size="lg") }}
+        {{ ui.state_counts(progress) }}
+        {% call ui.alert("danger") %}{{ ui.ident("NAVX-221", plain=True) }} closed as Done but its sub-task NAVX-222 is still open (fix in Jira){% endcall %}
+      {% endcall %}
+      {% call ui.card_section() %}<div class="ui-row">{{ ui.button("Open work items", variant="primary") }}{{ ui.button("Release notes (draft)") }}</div>{% endcall %}
+      {% call ui.card_footer() %}Last change · 2027.Q1-b2 built · j.doe · {{ "2026-09-23 14:24:00" | utc }}{% endcall %}
+    {% endcall %}
+  </div>
+</section>
+{% endblock %}

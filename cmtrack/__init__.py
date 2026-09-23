@@ -4,7 +4,7 @@ import sqlite3
 
 from flask import Flask, jsonify, render_template, request
 
-from . import db, tickets
+from . import db, tickets, ui
 from .service import CMError, backfill_lineage
 
 
@@ -26,10 +26,12 @@ def create_app(config=None):
         backfill_lineage(conn)
     conn.close()
 
+    ui.init_app(app)
+
     from .api import bp
-    from .views import bp as ui
+    from .views import bp as ui_bp
     app.register_blueprint(bp, url_prefix="/api")
-    app.register_blueprint(ui)
+    app.register_blueprint(ui_bp)
     app.teardown_appcontext(db.close_db)
 
     @app.errorhandler(CMError)

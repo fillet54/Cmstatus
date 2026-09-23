@@ -198,6 +198,38 @@ every URL works as a plain link.
 /events               audit log, entity filter, infinite scroll
 ```
 
+## UI component library (`/ui`)
+
+A design system for new pages, independent of daisyUI/Tailwind (the existing pages still use those until they are
+migrated): plain CSS tokens and components in `static/ui.css`, Jinja macros in `templates/ui/components.html`, and a
+page shell in `templates/ui/layout.html`. **`/ui` is the living reference**: every macro rendered with a usage
+snippet, plus a CI overview page built only from macros.
+
+```jinja
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "cis" %}
+{% block content %}
+  {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", url_for("ui.cis")), ("NAV-SW", None)]) %}
+    {{ ui.button("Work items", variant="primary", href=url_for("ui.work", ref="NAV-SW")) }}
+  {% endcall %}
+  {% call ui.card(flush=True) %}{% call ui.table(["Release", "Status"]) %}...{% endcall %}{% endcall %}
+{% endblock %}
+```
+
+Macros: shell (`marking_banner`, `app_header`), structure (`page_header`, `breadcrumbs`, `card`, `card_header`,
+`card_section`, `card_footer`, `stats`/`stat`, `section_label`), identifiers (`ident`, `chip`, `badge`, `kbd`,
+`timestamp`), status (`version_status`, `version_glyph`, `state_pill`, `state_glyph`, `state_reason`, `state_bar`,
+`state_counts`), feedback (`alert`, `empty`), actions (`button`, `icon_button`, `button_group`, `icon`), forms
+(`field`, `input`, `select`, `checkbox`, `search_box`, `segmented`, `tabs`), data (`table`, `empty_row`, `dl`,
+`audit_list`, `stamp`), tickets and backlogs (`ticket_ref`, `ticket_line`, `group_label`, `rank_item`, `drop_line`,
+`lineage`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
+
+Every status is a glyph and a word as well as a colour. Identifiers are monospace, times always UTC (`utc` filter:
+`2026-09-23 14:24Z`), focus is always visible. Config in `cmtrack/ui.py`: `CMTRACK_MARKING` (+
+`CMTRACK_MARKING_COLORS`) for the top/bottom banners, which read "[Marking not configured]" until set;
+`CMTRACK_PROGRAM`; `CMTRACK_UI_FONTS_CSS` / `CMTRACK_UI_HTMX_JS` to self-host fonts and htmx on a closed network.
+
 ## Not yet built (next iterations)
 - Jira: the `TicketSource` for your Jira client; discrepancy/feature trace; a cross-CI "tickets in error" view
   (needs a source query for it, since nothing is stored).

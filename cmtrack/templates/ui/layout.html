@@ -1,0 +1,38 @@
+{#- Page shell for the cmtrack UI components. Extend it:
+
+    {% extends "ui/layout.html" %}
+    {% set nav_current = "cis" %}              (which header nav item is current: a key of ui.NAV)
+    {% block title %}NAV-SW{% endblock %}
+    {% block content %}...{% endblock %}
+
+    Blocks: title, head (extra <head> tags), header (replace the app header), content, scripts.
+    The marking banners top and bottom come from config (ui.py) and are not overridable per page.
+-#}
+{% import "ui/components.html" as ui %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}cmtrack{% endblock %}{% if ui_marking %} · {{ ui_marking.text }}{% endif %}</title>
+  {%- if ui_fonts_css %}
+  <link rel="stylesheet" href="{{ ui_fonts_css }}">
+  {%- endif %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}">
+  {%- if ui_htmx_js %}
+  <script src="{{ ui_htmx_js }}"></script>
+  {%- endif %}
+  {% block head %}{% endblock %}
+</head>
+<body class="ui" hx-boost="true">
+  <a class="ui-skip" href="#main">Skip to content</a>
+  {{ ui.marking_banner(ui_marking, "top") }}
+  {% block header %}{{ ui.app_header(ui_nav(), nav_current | default(None), ui_program, ui_user) }}{% endblock %}
+  <main id="main" class="ui-main">
+    {% block content %}{% endblock %}
+  </main>
+  {{ ui.marking_banner(ui_marking, "bottom") }}
+  <div id="ui-toasts" class="ui-toasts" aria-live="polite"></div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

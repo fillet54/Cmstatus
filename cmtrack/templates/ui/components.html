@@ -1,0 +1,472 @@
+{#- cmtrack UI components. Styles: static/ui.css. Live reference with examples: /ui
+
+    {% import "ui/components.html" as ui %}
+
+    Conventions
+    - Content-bearing macros take a `caller` block: {% call ui.card() %}...{% endcall %}.
+    - Extra HTML attributes (hx-*, data-*, aria-*, id) go in `attrs`, a dict rendered with xmlattr:
+        ui.button("Pull", attrs={"hx-post": url, "hx-target": "#items"})
+    - `cls` adds CSS classes; `class` is a reserved word in Jinja.
+    - Statuses always render as glyph + word, never colour alone.
+    - Globals used here come from cmtrack/ui.py: ui_states (ticket states, in order), ui_version_statuses,
+      and the filters `utc` and `iso`.
+-#}
+
+{#- ============================================================== icons #}
+
+{% set ICONS = {
+  "search": '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 L14 14"/>',
+  "check": '<path d="M3 8.5 L6.5 12 L13 4.5"/>',
+  "x": '<path d="M4 4 L12 12 M12 4 L4 12"/>',
+  "plus": '<path d="M8 3 L8 13 M3 8 L13 8"/>',
+  "alert-triangle": '<path d="M8 1.5 L15 14 L1 14 Z" stroke-linejoin="round"/><path d="M8 6 L8 9.5 M8 11.6 L8 11.7"/>',
+  "alert-circle": '<circle cx="8" cy="8" r="6.5"/><path d="M8 4.5 L8 8.5 M8 11 L8 11.1"/>',
+  "info": '<circle cx="8" cy="8" r="6.5"/><path d="M8 7 L8 11.5 M8 4.6 L8 4.7"/>',
+  "clock": '<circle cx="8" cy="8" r="6.5"/><path d="M8 4.5 L8 8 L10.5 9.5"/>',
+  "external": '<path d="M9 2.5 L13.5 2.5 L13.5 7 M13.5 2.5 L7 9 M11.5 9.5 L11.5 13.5 L2.5 13.5 L2.5 4.5 L6.5 4.5"/>',
+  "chevron-down": '<path d="M4 6 L8 10 L12 6"/>',
+  "chevron-right": '<path d="M6 4 L10 8 L6 12"/>',
+  "arrow-up": '<path d="M8 13 L8 3 M4 7 L8 3 L12 7"/>',
+  "arrow-down": '<path d="M8 3 L8 13 M4 9 L8 13 L12 9"/>',
+  "arrow-top": '<path d="M3 2.5 L13 2.5 M8 14 L8 5.5 M4.5 9 L8 5.5 L11.5 9"/>',
+  "download": '<path d="M8 2 L8 10.5 M4.5 7 L8 10.5 L11.5 7 M3 13.5 L13 13.5"/>',
+  "refresh": '<path d="M13 8 A5 5 0 1 1 11.5 4.4 M13 2.5 L13 5.5 L10 5.5"/>',
+  "lock": '<rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7 L5.5 5 A2.5 2.5 0 0 1 10.5 5 L10.5 7"/>',
+  "branch": '<circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="5" r="1.5"/><path d="M4 5 L4 11 M12 6.5 C12 9.5 4 8.5 4 11"/>',
+  "copy": '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5 L10.5 3.5 A1 1 0 0 0 9.5 2.5 L3.5 2.5 A1 1 0 0 0 2.5 3.5 L2.5 9.5 A1 1 0 0 0 3.5 10.5 L5.5 10.5"/>',
+  "list": '<path d="M6 4 L14 4 M6 8 L14 8 M6 12 L14 12 M2.5 4 L2.6 4 M2.5 8 L2.6 8 M2.5 12 L2.6 12"/>',
+  "layers": '<path d="M8 2 L14 5 L8 8 L2 5 Z M2 8 L8 11 L14 8 M2 11 L8 14 L14 11" stroke-linejoin="round"/>',
+  "grip": '<g fill="currentColor" stroke="none"><circle cx="5.5" cy="3.5" r="1.2"/><circle cx="10.5" cy="3.5" r="1.2"/><circle cx="5.5" cy="8" r="1.2"/><circle cx="10.5" cy="8" r="1.2"/><circle cx="5.5" cy="12.5" r="1.2"/><circle cx="10.5" cy="12.5" r="1.2"/></g>',
+} %}
+
+{% macro icon(name, size=16, label=None, cls="") -%}
+<svg class="ui-icon {{ cls }}" width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+     stroke-width="1.5" stroke-linecap="round" {% if label %}role="img" aria-label="{{ label }}"{% else %}aria-hidden="true"{% endif %}>
+  {{- ICONS.get(name, ICONS["info"]) | safe -}}
+</svg>
+{%- endmacro %}
+
+{% macro logo(size=22) -%}
+<svg class="ui-icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 22 22" aria-hidden="true" fill="none" stroke="var(--ui-accent)" stroke-width="2" stroke-linecap="round">
+  <rect x="1.5" y="1.5" width="19" height="19" rx="3"/><path d="M6 15 L6 7 M6 11 L11 11 M11 7 L11 15 M15 7 L15 15"/>
+</svg>
+{%- endmacro %}
+
+{#- ============================================================== shell #}
+
+{#- marking: {"text": "CUI", "bg": "#502B85", "fg": "#FFFFFF"} from config; None renders an obvious "not configured" bar. #}
+{% macro marking_banner(marking, position="top") -%}
+{%- if marking -%}
+<div class="ui-marking ui-marking--{{ position }}" role="note" aria-label="Marking: {{ marking.text }}"
+     style="--ui-marking-bg: {{ marking.bg }}; --ui-marking-fg: {{ marking.fg }};">{{ marking.text }}</div>
+{%- else -%}
+<div class="ui-marking ui-marking--{{ position }} ui-marking--unset" role="note">[Marking not configured]</div>
+{%- endif -%}
+{%- endmacro %}
+
+{#- nav: [{"key", "label", "href"}]; user: {"name", "role", "initials"}; search: {"action", "name", "value", "placeholder"} #}
+{% macro app_header(nav=(), current=None, program=None, user=None, search=None, home="/") -%}
+<header class="ui-header">
+  <a class="ui-brand" href="{{ home }}">
+    {{ logo() }}<span class="ui-brand__name">cmtrack</span>
+    {%- if program %}<span class="ui-brand__program">{{ program }}</span>{% endif %}
+  </a>
+  <nav class="ui-nav" aria-label="Primary">
+    {%- for item in nav %}
+    <a class="ui-nav__link" href="{{ item.href }}"{% if item.key == current %} aria-current="page"{% endif %}>{{ item.label }}</a>
+    {%- endfor %}
+  </nav>
+  <span class="ui-spacer"></span>
+  {%- if search %}
+  {{ search_box(search.name or "q", search.value or "", search.placeholder or "Search", action=search.action) }}
+  {%- endif %}
+  {%- if user %}
+  <div class="ui-user">
+    <div><div class="ui-user__name">{{ user.name }}</div>{% if user.role %}<div class="ui-user__role">{{ user.role }}</div>{% endif %}</div>
+    <span class="ui-avatar" aria-hidden="true">{{ user.initials or user.name[:2] | upper }}</span>
+  </div>
+  {%- endif %}
+</header>
+{%- endmacro %}
+
+{#- ============================================================== page structure #}
+
+{#- crumbs: [(label, href), ...]; the last one is the current page (href ignored). #}
+{% macro breadcrumbs(crumbs) -%}
+<nav aria-label="Breadcrumb">
+  <ol class="ui-crumbs">
+    {%- for label, href in crumbs %}
+    <li>{% if href and not loop.last %}<a href="{{ href }}">{{ label }}</a>{% else %}<span{% if loop.last %} aria-current="page"{% endif %}>{{ label }}</span>{% endif %}</li>
+    {%- endfor %}
+  </ol>
+</nav>
+{%- endmacro %}
+
+{#- caller (optional) = actions on the right. meta: list of chip texts (or Markup) under the title. #}
+{% macro page_header(title, subtitle=None, crumbs=None, meta=None, mono=False) -%}
+<div class="ui-page-header">
+  <div>
+    {%- if crumbs %}{{ breadcrumbs(crumbs) }}{% endif %}
+    <h1 class="ui-page-header__title"><span{% if mono %} class="ui-mono"{% endif %}>{{ title }}</span>
+      {%- if subtitle %} <span class="ui-page-header__subtitle">{{ subtitle }}</span>{% endif %}</h1>
+    {%- if meta %}<div class="ui-row ui-page-header__meta">{% for m in meta %}{{ chip(m) }}{% endfor %}</div>{% endif %}
+  </div>
+  {%- if caller %}<div class="ui-row">{{ caller() }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- A bordered surface. With `title`, a header is drawn; use card_header instead when it needs actions.
+    The body is unpadded: put content in card_body / card_section, or a table straight in (flush=True). #}
+{% macro card(title=None, subtitle=None, flush=False, cls="", attrs=None) -%}
+<section class="ui-card{% if flush %} ui-card--flush{% endif %} {{ cls }}"{{ (attrs or {}) | xmlattr }}>
+  {%- if title %}{{ card_header(title, subtitle) }}{% endif %}
+  {{- caller() if caller }}
+</section>
+{%- endmacro %}
+
+{% macro card_header(title, subtitle=None, level=2) -%}
+<div class="ui-card__header">
+  <div><h{{ level }} class="ui-card__title">{{ title }}</h{{ level }}>{% if subtitle %}<div class="ui-card__subtitle">{{ subtitle }}</div>{% endif %}</div>
+  {%- if caller %}<div class="ui-row">{{ caller() }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro card_body(cls="") -%}<div class="ui-card__body {{ cls }}">{{ caller() }}</div>{%- endmacro %}
+
+{% macro card_section(label=None, cls="") -%}
+<div class="ui-card__section {{ cls }}">{% if label %}{{ section_label(label) }}{% endif %}{{ caller() }}</div>
+{%- endmacro %}
+
+{% macro card_footer() -%}<div class="ui-card__footer">{{ caller() }}</div>{%- endmacro %}
+
+{% macro section_label(text) -%}<div class="ui-section-label">{{ text }}</div>{%- endmacro %}
+
+{#- {% call ui.stats() %}{{ ui.stat(...) }}...{% endcall %} #}
+{% macro stats(label=None) -%}
+<div class="ui-stats" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{{ caller() }}</div>
+{%- endmacro %}
+
+{#- tone: None | success | warning | danger. icon: an icon name shown before the value. caller = extra content (e.g. a state_bar). #}
+{% macro stat(label, value, sub=None, mono=False, tone=None, icon=None) -%}
+<div class="ui-stat{% if tone %} ui-stat--{{ tone }}{% endif %}">
+  <div class="ui-stat__label">{{ label }}</div>
+  <div class="ui-stat__value{% if mono %} ui-mono{% endif %}">{% if icon %}{{ ui_icon_inline(icon) }}{% endif %}{{ value }}</div>
+  {%- if sub %}<div class="ui-stat__sub">{{ sub }}</div>{% endif %}
+  {%- if caller %}<div style="margin-top: 6px;">{{ caller() }}</div>{% endif %}
+</div>
+{%- endmacro %}
+{% macro ui_icon_inline(name) %}{{ icon(name, 16) }}{% endmacro %}
+
+{#- ============================================================== small pieces #}
+
+{% macro chip(text, mono=False, icon=None) -%}
+<span class="ui-chip">{% if icon %}{{ ui_icon_inline(icon) }}{% endif %}<span{% if mono %} class="ui-mono"{% endif %}>{{ text }}</span></span>
+{%- endmacro %}
+
+{#- Identifiers (CI names, versions, ticket keys, CRs): monospace, optionally a link. #}
+{% macro ident(text, href=None, plain=False, title=None) -%}
+{%- if href -%}
+<a class="ui-ident{% if plain %} ui-ident--plain{% endif %}" href="{{ href }}"{% if title %} title="{{ title }}"{% endif %}>{{ text }}</a>
+{%- else -%}
+<code class="ui-ident{% if plain %} ui-ident--plain{% endif %}"{% if title %} title="{{ title }}"{% endif %}>{{ text }}</code>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro kbd(key) -%}<kbd class="ui-kbd">{{ key }}</kbd>{%- endmacro %}
+
+{#- Always UTC, always with a Z: <time datetime="2026-09-23T14:24:00Z">2026-09-23 14:24Z</time> #}
+{% macro timestamp(value, seconds=False) -%}
+{%- if value -%}<time class="ui-time" datetime="{{ value | iso }}">{{ value | utc(seconds) }}</time>{%- else -%}<span class="ui-muted">—</span>{%- endif -%}
+{%- endmacro %}
+
+{#- tone: neutral | info | success | warning | danger | accent #}
+{% macro badge(text, tone="neutral", outline=False, strong=False) -%}
+<span class="ui-badge ui-badge--{{ tone }}{% if outline %} ui-badge--outline{% endif %}{% if strong %} ui-badge--strong{% endif %}">{{ text }}</span>
+{%- endmacro %}
+
+{#- ============================================================== status: versions #}
+
+{% set VERSION_TONES = {"planned": "muted", "built": "info", "tested": "info", "released": "success",
+                        "rejected": "danger", "external": "muted"} %}
+
+{% macro version_glyph(status, size=14) -%}
+<svg class="ui-glyph ui-tone-{{ VERSION_TONES.get(status, 'muted') }}" width="{{ size }}" height="{{ size }}" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  {%- if status == "built" %}<circle cx="7" cy="7" r="5.5"/><path d="M7 1.5 A5.5 5.5 0 0 0 7 12.5 Z" fill="currentColor"/>
+  {%- elif status == "tested" %}<circle cx="7" cy="7" r="6" fill="currentColor" stroke="none"/>
+  {%- elif status == "released" %}<circle cx="7" cy="7" r="6" fill="currentColor" stroke="none"/><path d="M4.3 7.2 L6.2 9 L9.7 5.2" stroke="#FFFFFF" stroke-width="1.6"/>
+  {%- elif status == "rejected" %}<circle cx="7" cy="7" r="5.5"/><path d="M5 5 L9 9 M9 5 L5 9"/>
+  {%- elif status == "external" %}<rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke-dasharray="2 2"/>
+  {%- else %}<circle cx="7" cy="7" r="5.5"/>{% endif -%}
+</svg>
+{%- endmacro %}
+
+{#- Version (and release) status: glyph + word. Release statuses map onto the same shapes. #}
+{% macro version_status(status, label=None) -%}
+{%- set shape = {"active": "built", "cancelled": "rejected"}.get(status, status) -%}
+<span class="ui-status ui-tone-{{ VERSION_TONES.get(shape, 'muted') }}">{{ version_glyph(shape) }}{{ label or ui_version_statuses.get(status, status) }}</span>
+{%- endmacro %}
+
+{#- ============================================================== status: tickets #}
+
+{% macro state_glyph(state, size=14) -%}
+<svg class="ui-glyph" width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  {%- if state == "analysis_in_progress" %}<circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.2"/>
+  {%- elif state == "ready_for_work" %}<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none"/>
+  {%- elif state == "in_progress" %}<circle cx="8" cy="8" r="6"/><path d="M8 2 A6 6 0 0 1 8 14 Z" fill="currentColor"/>
+  {%- elif state == "peer_review" %}<path d="M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z"/>
+  {%- elif state == "merge_blocked" %}<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M6 5.5 L6 10.5 M10 5.5 L10 10.5"/>
+  {%- elif state == "verification" %}<path d="M8 1.5 L13.5 3.5 L13.5 8 C13.5 11 11 13.5 8 14.5 C5 13.5 2.5 11 2.5 8 L2.5 3.5 Z" stroke-width="1.5"/><path d="M5.5 8 L7.3 9.8 L10.6 6.3" stroke-width="1.5"/>
+  {%- elif state == "done" %}<circle cx="8" cy="8" r="6.5" fill="currentColor" stroke="none"/><path d="M5 8.2 L7.1 10.2 L11 6" stroke="#FFFFFF" stroke-width="1.7"/>
+  {%- elif state == "error" %}<path d="M8 1.5 L15 14 L1 14 Z"/><path d="M8 6 L8 9.5 M8 11.5 L8 11.6" stroke-width="1.7"/>
+  {%- else %}<circle cx="8" cy="8" r="6"/>{% endif -%}
+</svg>
+{%- endmacro %}
+
+{#- A ticket's workflow state (tickets.STATES). `title` becomes the tooltip, e.g. the raw Jira status. #}
+{% macro state_pill(state, label=None, title=None) -%}
+{%- set state = state if state in ui_states else "error" -%}
+<span class="ui-state ui-state--{{ state }}"{% if title %} title="{{ title }}"{% endif %}>{{ state_glyph(state, 12) }}{{ label or ui_states[state] }}</span>
+{%- endmacro %}
+
+{#- The source's explanation, shown for error and merge_blocked tickets. t: a ticket dict. #}
+{% macro state_reason(t) -%}
+{%- if t.state_reason and t.state in ("error", "merge_blocked") -%}
+<div class="ui-reason ui-reason--{{ t.state }}">{{ t.state_reason }}</div>
+{%- endif -%}
+{%- endmacro %}
+
+{#- progress: {state: count, ..., "total": n} as service._progress returns. size: md | lg; width: CSS length. #}
+{% macro state_bar(progress, size="md", width=None) -%}
+{%- set total = progress.total or 0 -%}
+{%- set parts = [] -%}
+{%- for s, label in ui_states.items() if progress[s] %}{% set _ = parts.append(progress[s] ~ " " ~ label | lower) %}{% endfor -%}
+<div class="ui-statebar{% if size == 'lg' %} ui-statebar--lg{% endif %}" role="img"
+     aria-label="{{ parts | join(', ') if parts else 'no tickets' }}" title="{{ parts | join(' · ') }}"{% if width %} style="--ui-bar-w: {{ width }};"{% endif %}>
+  {%- if total %}{% for s in ui_states if progress[s] %}<span class="ui-statebar__{{ s }}" style="width: {{ '%.2f' | format(100 * progress[s] / total) }}%"></span>{% endfor %}{% endif -%}
+</div>
+{%- endmacro %}
+
+{#- Counts per state; only states that have tickets unless all=True. #}
+{% macro state_counts(progress, all=False) -%}
+<div class="ui-statecounts">
+  {%- for s, label in ui_states.items() if all or progress[s] %}
+  <div><span>{{ label }}</span><b class="{{ 'ui-tone-danger' if s == 'error' else 'ui-tone-warning' if s == 'merge_blocked' else '' }}">{{ progress[s] }}</b></div>
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{#- ============================================================== alerts #}
+
+{#- tone: info | success | warning | danger. caller = the message. #}
+{% macro alert(tone="info", title=None, icon=None) -%}
+{%- set default_icon = {"info": "info", "success": "check", "warning": "alert-triangle", "danger": "alert-circle"}[tone] -%}
+<div class="ui-alert ui-alert--{{ tone }}" role="{{ 'alert' if tone == 'danger' else 'status' }}">
+  {{ ui_icon_inline(icon or default_icon) }}
+  <div>{% if title %}<div class="ui-alert__title">{{ title }}</div>{% endif %}{{ caller() if caller }}</div>
+</div>
+{%- endmacro %}
+
+{#- ============================================================== buttons #}
+
+{#- variant: primary | secondary | danger | ghost. A link when href is given. #}
+{% macro button(label, variant="secondary", href=None, type="button", icon=None, size=None, attrs=None, disabled=False, cls="") -%}
+{%- set classes = "ui-btn ui-btn--" ~ variant ~ (" ui-btn--sm" if size == "sm" else "") ~ (" " ~ cls if cls else "") -%}
+{%- if href -%}
+<a class="{{ classes }}" href="{{ href }}"{% if disabled %} aria-disabled="true"{% endif %}{{ (attrs or {}) | xmlattr }}>{% if icon %}{{ ui_icon_inline(icon) }}{% endif %}{{ label }}</a>
+{%- else -%}
+<button class="{{ classes }}" type="{{ type }}"{% if disabled %} disabled{% endif %}{{ (attrs or {}) | xmlattr }}>{% if icon %}{{ ui_icon_inline(icon) }}{% endif %}{{ label }}</button>
+{%- endif -%}
+{%- endmacro %}
+
+{#- Icon-only button; `label` is required and becomes aria-label and the tooltip. #}
+{% macro icon_button(icon_name, label, variant="ghost", size=None, href=None, attrs=None, cls="") -%}
+{%- set classes = "ui-btn ui-btn--icon ui-btn--" ~ variant ~ (" ui-btn--sm" if size == "sm" else "") ~ (" " ~ cls if cls else "") -%}
+{%- if href -%}
+<a class="{{ classes }}" href="{{ href }}" aria-label="{{ label }}" title="{{ label }}"{{ (attrs or {}) | xmlattr }}>{{ icon(icon_name, 14 if size == 'sm' else 16) }}</a>
+{%- else -%}
+<button class="{{ classes }}" type="button" aria-label="{{ label }}" title="{{ label }}"{{ (attrs or {}) | xmlattr }}>{{ icon(icon_name, 14 if size == 'sm' else 16) }}</button>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro button_group(label=None) -%}
+<div class="ui-btn-group" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{{ caller() }}</div>
+{%- endmacro %}
+
+{#- ============================================================== forms #}
+
+{#- Wraps a control with its label, hint and error. Pass the control's id as `for_id`. #}
+{% macro field(label, for_id, hint=None, error=None) -%}
+<div class="ui-field">
+  <label class="ui-field__label" for="{{ for_id }}">{{ label }}</label>
+  {{ caller() }}
+  {%- if error %}<div class="ui-field__error" id="{{ for_id }}-error">{{ error }}</div>
+  {%- elif hint %}<div class="ui-field__hint" id="{{ for_id }}-hint">{{ hint }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro input(name, value="", type="text", placeholder=None, id=None, mono=False, required=False, invalid=False, attrs=None) -%}
+<input class="ui-input{% if mono %} ui-input--mono{% endif %}" type="{{ type }}" name="{{ name }}" id="{{ id or name }}" value="{{ value if value is not none else '' }}"
+       {%- if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if required %} required{% endif %}
+       {%- if invalid %} aria-invalid="true" aria-describedby="{{ id or name }}-error"{% endif %}{{ (attrs or {}) | xmlattr }}>
+{%- endmacro %}
+
+{#- options: ["a", "b"] or [(value, label), ...]. selected: the selected value. #}
+{% macro select(name, options, selected=None, id=None, mono=False, attrs=None) -%}
+<select class="ui-select{% if mono %} ui-select--mono{% endif %}" name="{{ name }}" id="{{ id or name }}"{{ (attrs or {}) | xmlattr }}>
+  {%- for opt in options %}
+  {%- set value, text = (opt if opt is not string else (opt, opt)) %}
+  <option value="{{ value }}"{% if value == selected %} selected{% endif %}>{{ text }}</option>
+  {%- endfor %}
+</select>
+{%- endmacro %}
+
+{% macro checkbox(name, label, checked=False, value="1", attrs=None) -%}
+<label class="ui-check"><input type="checkbox" name="{{ name }}" value="{{ value }}"{% if checked %} checked{% endif %}{{ (attrs or {}) | xmlattr }}><span>{{ label }}</span></label>
+{%- endmacro %}
+
+{#- A search input with a leading icon and a shortcut hint. With `action`, it is its own GET form. #}
+{% macro search_box(name="q", value="", placeholder="Search", shortcut="/", action=None, width=None, attrs=None) -%}
+{%- if action %}<form role="search" method="get" action="{{ action }}">{% endif %}
+<label class="ui-search"{% if width %} style="--ui-search-w: {{ width }};"{% endif %}>
+  {{ icon("search", 14) }}
+  <span class="ui-sr-only">{{ placeholder }}</span>
+  <input type="search" name="{{ name }}" value="{{ value }}" placeholder="{{ placeholder }}" autocomplete="off"{{ (attrs or {}) | xmlattr }}>
+  {%- if shortcut %}{{ kbd(shortcut) }}{% endif %}
+</label>
+{%- if action %}</form>{% endif %}
+{%- endmacro %}
+
+{#- items: [{"label", "count"?, "active"?, "href"? | "attrs"?}]. Links when href is given, else toggle buttons. #}
+{% macro segmented(items, label="Filter") -%}
+<div class="ui-segmented" role="group" aria-label="{{ label }}">
+  {%- for it in items %}
+  {%- if it.href %}
+  <a class="ui-segmented__item" href="{{ it.href }}"{% if it.active %} aria-current="page"{% endif %}{{ (it.attrs or {}) | xmlattr }}>{{ it.label }}{% if it.count is not none and it.count is defined %}<span class="ui-segmented__count">{{ it.count }}</span>{% endif %}</a>
+  {%- else %}
+  <button class="ui-segmented__item" type="button" aria-pressed="{{ 'true' if it.active else 'false' }}"{{ (it.attrs or {}) | xmlattr }}>{{ it.label }}{% if it.count is not none and it.count is defined %}<span class="ui-segmented__count">{{ it.count }}</span>{% endif %}</button>
+  {%- endif %}
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{#- items: [{"label", "href", "active"?}] #}
+{% macro tabs(items, label="Sections") -%}
+<nav class="ui-tabs" aria-label="{{ label }}">
+  {%- for it in items %}<a class="ui-tabs__link" href="{{ it.href }}"{% if it.active %} aria-current="page"{% endif %}>{{ it.label }}</a>{% endfor %}
+</nav>
+{%- endmacro %}
+
+{#- ============================================================== data display #}
+
+{#- headers: ["Release", {"label": "Versions", "align": "end"}, ...]. caller = the <tr> rows.
+    Rows can use classes ui-row--child (indented family member) and ui-row--selected. #}
+{% macro table(headers, caption=None, dense=False, id=None, attrs=None) -%}
+<table class="ui-table{% if dense %} ui-table--dense{% endif %}"{% if id %} id="{{ id }}"{% endif %}{{ (attrs or {}) | xmlattr }}>
+  {%- if caption %}<caption>{{ caption }}</caption>{% endif %}
+  <thead><tr>
+    {%- for h in headers %}
+    {%- if h is mapping %}<th scope="col"{% if h.align == 'end' %} class="ui-end"{% endif %}>{% if h.sr %}<span class="ui-sr-only">{{ h.label }}</span>{% else %}{{ h.label }}{% endif %}</th>
+    {%- else %}<th scope="col">{{ h }}</th>{% endif %}
+    {%- endfor %}
+  </tr></thead>
+  <tbody>{{ caller() }}</tbody>
+</table>
+{%- endmacro %}
+
+{#- A table row for "nothing here" (colspan = number of columns). #}
+{% macro empty_row(message, cols) -%}
+<tr><td colspan="{{ cols }}">{{ empty(message) }}</td></tr>
+{%- endmacro %}
+
+{#- items: [(term, value), ...]; value may be Markup. cols=True lays out as label-over-value in two columns. #}
+{% macro dl(items, cols=False) -%}
+{%- if cols -%}
+<dl class="ui-dl ui-dl--cols">{% for term, value in items %}<div><dt>{{ term }}</dt><dd>{{ value }}</dd></div>{% endfor %}</dl>
+{%- else -%}
+<dl class="ui-dl">{% for term, value in items %}<dt>{{ term }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+{%- endif -%}
+{%- endmacro %}
+
+{#- caller (optional) = an action under the message. #}
+{% macro empty(message) -%}
+<div class="ui-empty"><div>{{ message }}</div>{% if caller %}<div>{{ caller() }}</div>{% endif %}</div>
+{%- endmacro %}
+
+{#- entries: [{"at", "who", "what"}], newest first. `what` may be Markup. #}
+{% macro audit_list(entries) -%}
+<ol class="ui-audit">
+  {%- for e in entries %}
+  <li>{{ timestamp(e.at) }}<span><span class="ui-audit__who">{{ e.who }}</span> {{ e.what }}</span></li>
+  {%- endfor %}
+</ol>
+{%- endmacro %}
+
+{#- One-line provenance: "2027.Q1-b2 built · j.doe · 2026-09-23 14:24Z" #}
+{% macro stamp(what, who=None, at=None) -%}
+<div class="ui-stamp">{{ what }}{% if who %} · {{ who }}{% endif %}{% if at %} · {{ at | utc }}{% endif %}</div>
+{%- endmacro %}
+
+{#- ============================================================== tickets and backlogs #}
+
+{#- A ticket key linking to its page, plus a ↗ link to the source (Jira) when `url` is known. #}
+{% macro ticket_ref(key, href=None, url=None, source="Jira") -%}
+<span class="ui-row" style="--ui-gap: 4px; display: inline-flex;">
+  {{- ident(key, href, plain=True) -}}
+  {%- if url %}<a href="{{ url }}" target="_blank" rel="noopener" class="ui-muted" aria-label="Open {{ key }} in {{ source }}" title="Open in {{ source }}">{{ icon("external", 12) }}</a>{% endif -%}
+</span>
+{%- endmacro %}
+
+{#- A CSC ticket line for ui-tickets lists. t: ticket dict (key, summary, type, state, state_reason, status, url,
+    versions: [{"name", "href"?}]). href: link for the key. #}
+{% macro ticket_line(t, href=None) -%}
+<li class="ui-ticket ui-ticket--{{ t.state }}">
+  {{ ticket_ref(t.key, href, t.url) }}
+  <div>{{ t.summary or "" }}{% if t.type and t.type not in ("Story",) %} {{ badge(t.type, outline=True) }}{% endif %}{{ state_reason(t) }}</div>
+  {{ state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}
+  <div class="ui-ticket__versions">{% for v in t.versions or [] %}{{ ident(v.name, v.href) }}{% endfor %}</div>
+</li>
+{%- endmacro %}
+
+{% macro group_label(text) -%}<div class="ui-group-label">{{ text }}</div>{%- endmacro %}
+
+{#- One backlog item. Keeps the drag-and-drop contract of backlog.html: data-key / data-rank / data-state,
+    [data-pos] for the number, [data-move="top|up|down"] buttons. remove_attrs: hx-* attrs for the remove button.
+    caller (optional) = extra meta (e.g. a state_bar). #}
+{% macro rank_item(t, position, href=None, movable=True, remove_attrs=None, lifted=False) -%}
+<li class="ui-rank-item{% if lifted %} ui-rank-item--lifted{% endif %}" draggable="{{ 'true' if movable else 'false' }}"
+    data-key="{{ t.key }}" data-rank="{{ t.rank }}" data-state="{{ t.state }}">
+  {%- if movable %}<span class="ui-rank-item__handle" title="Drag to reorder{% if t.rank %} (rank {{ t.rank }}){% endif %}">{{ icon("grip", 16) }}</span>{% endif %}
+  <span class="ui-rank-item__pos" data-pos>{{ position }}</span>
+  <div class="ui-rank-item__body">
+    <div class="ui-rank-item__title">{{ ticket_ref(t.key, href, t.url) }}<span class="ui-rank-item__summary">{{ t.summary or "" }}</span>{% if t.type %}{{ badge(t.type, outline=True) }}{% endif %}</div>
+    {{ state_reason(t) }}
+    <div class="ui-rank-item__meta">
+      {%- for c in t.cis or [] %}{{ ident(c) }}{% endfor %}
+      {{- caller() if caller }}
+    </div>
+  </div>
+  {{ state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}
+  {%- if movable %}
+  <div class="ui-rank-item__actions">
+    {{ icon_button("arrow-top", "Move " ~ t.key ~ " to top", size="sm", attrs={"data-move": "top"}) }}
+    {{ icon_button("arrow-up", "Move " ~ t.key ~ " up", size="sm", attrs={"data-move": "up"}) }}
+    {{ icon_button("arrow-down", "Move " ~ t.key ~ " down", size="sm", attrs={"data-move": "down"}) }}
+    {%- if remove_attrs %}{{ icon_button("x", "Remove " ~ t.key, size="sm", cls="ui-btn--danger", attrs=remove_attrs) }}{% endif %}
+  </div>
+  {%- endif %}
+</li>
+{%- endmacro %}
+
+{#- Drop position marker while dragging. #}
+{% macro drop_line() -%}<li class="ui-drop-line" aria-hidden="true"></li>{%- endmacro %}
+
+{#- "Built from" parents of a version: [{"name", "href"?, "merge"?: True}] #}
+{% macro lineage(parents) -%}
+<div class="ui-row" style="--ui-gap: 6px;">
+  {%- for p in parents %}
+  {%- if p.merge %}<span class="ui-badge ui-badge--success">{{ icon("branch", 12) }}<span class="ui-mono">+ {{ p.name }}</span></span>
+  {%- else %}{{ ident(p.name, p.href) }}{% endif %}
+  {%- else %}<span class="ui-muted">no parents (first build)</span>
+  {%- endfor %}
+</div>
+{%- endmacro %}

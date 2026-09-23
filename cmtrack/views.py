@@ -7,7 +7,7 @@ calls the JSON API (POST /api/backlogs/<b>/items/<key>/move).
 """
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
-from . import service as svc, tickets
+from . import service as svc, tickets, ui
 from .db import get_db
 
 bp = Blueprint("ui", __name__)
@@ -262,6 +262,14 @@ def events():
     entities = [r[0] for r in get_db().execute("SELECT DISTINCT entity FROM event ORDER BY entity")]
     return page("events.html", "_event_rows.html", events=rows, more=more, entities=entities,
                 filters={"entity": entity or "", "entity_id": entity_id})
+
+
+# ----------------------------------------------------------------------------- UI component reference
+
+@bp.get("/ui")
+def styleguide():
+    """Living reference for the component library (templates/ui/components.html, static/ui.css)."""
+    return render_template("ui/styleguide.html", **ui.styleguide_samples())
 
 
 # ----------------------------------------------------------------------------- backlogs
