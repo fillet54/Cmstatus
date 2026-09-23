@@ -212,6 +212,11 @@
 {%- else -%}{{ badge(kind, {"patch": "warning", "emergency": "danger"}.get(kind, "neutral")) }}{%- endif -%}
 {%- endmacro %}
 
+{#- Baseline (HSCM) status: draft | approved | superseded. #}
+{% macro baseline_status(status) -%}
+{{ badge(status, {"approved": "success", "draft": "warning"}.get(status, "neutral")) }}
+{%- endmacro %}
+
 {#- ============================================================== status: tickets #}
 
 {% macro state_glyph(state, size=14) -%}
@@ -408,6 +413,31 @@
 </ol>
 {%- endmacro %}
 
+{#- A dict as "key: value" pairs (event details); lists are joined, empty values skipped. #}
+{% macro kv(d) -%}
+<span class="ui-kv">
+  {%- for k, v in (d or {}).items() if v not in (None, "", [], {}) -%}
+  <span><span class="ui-muted">{{ k }}:</span> {{ v | join(", ") if v is iterable and v is not string and v is not mapping else v }}</span>
+  {%- endfor -%}
+</span>
+{%- endmacro %}
+
+{#- The audit log as a feed: events from service.list_events (entity, entity_id, action, detail, at).
+    entity_url() (views.py) links the entity when it has a page. #}
+{% macro activity(events, empty_text="No activity yet.") -%}
+{%- if events -%}
+<ol class="ui-audit">
+  {%- for e in events %}
+  {%- set href = entity_url(e.entity, e.entity_id) %}
+  <li>{{ timestamp(e.at) }}<span>
+    {%- if href %}<a href="{{ href }}">{{ e.entity }} #{{ e.entity_id }}</a>{% else %}{{ e.entity }}{% if e.entity_id %} #{{ e.entity_id }}{% endif %}{% endif %}
+    <span class="ui-audit__who">{{ e.action }}</span>
+    {%- set label = e.detail.name or e.detail.version or e.detail.key %}{% if label %} {{ ident(label, plain=True) }}{% endif %}</span></li>
+  {%- endfor %}
+</ol>
+{%- else -%}{{ empty(empty_text) }}{%- endif -%}
+{%- endmacro %}
+
 {#- One-line provenance: "2027.Q1-b2 built · j.doe · 2026-09-23 14:24Z" #}
 {% macro stamp(what, who=None, at=None) -%}
 <div class="ui-stamp">{{ what }}{% if who %} · {{ who }}{% endif %}{% if at %} · {{ at | utc }}{% endif %}</div>
@@ -423,15 +453,51 @@
 </span>
 {%- endmacro %}
 
+{#- A fix version chip: linked when known to cmtrack (href, or id -> version page), flagged when it isn't. #}
+{% macro version_chip(v) -%}
+{%- set href = v.href or (url_for("ui.version", vid=v.id) if v.id) -%}
+{%- if href or v.id is not defined -%}{{ ident(v.name, href) }}
+{%- else -%}<code class="ui-ident ui-ident--unknown" title="not a cmtrack version of this CSC's CSCI">{{ v.name }}</code>{%- endif -%}
+{%- endmacro %}
+
 {#- A CSC ticket line for ui-tickets lists. t: ticket dict (key, summary, type, state, state_reason, status, url,
-    versions: [{"name", "href"?}]). href: link for the key. #}
+    versions: [{"name", "id"? | "href"?}]). href: link for the key (defaults to the ticket page). #}
 {% macro ticket_line(t, href=None) -%}
 <li class="ui-ticket ui-ticket--{{ t.state }}">
-  {{ ticket_ref(t.key, href, t.url) }}
+  {{ ticket_ref(t.key, href or url_for("ui.ticket", key=t.key), t.url) }}
   <div>{{ t.summary or "" }}{% if t.type and t.type not in ("Story",) %} {{ badge(t.type, outline=True) }}{% endif %}{{ state_reason(t) }}</div>
   {{ state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}
-  <div class="ui-ticket__versions">{% for v in t.versions or [] %}{{ ident(v.name, v.href) }}{% endfor %}</div>
+  <div class="ui-ticket__versions">{% for v in t.versions or [] %}{{ version_chip(v) }}{% endfor %}</div>
 </li>
+{%- endmacro %}
+
+{#- One parent ticket of a work report (service.work_report items[]): a disclosure whose summary is the parent
+    ticket and its progress, and whose body lists each CSC's tickets. #}
+{% macro work_group(item, open=False) -%}
+{%- set p = item.parent -%}
+<details class="ui-disclosure ui-card"{% if open %} open{% endif %}>
+  <summary class="ui-disclosure__summary">
+    {{ icon("chevron-right", 14, cls="ui-disclosure__chevron") }}
+    <div class="ui-disclosure__main">
+      <div class="ui-row" style="--ui-gap: 6px 10px;">
+        {%- if p %}{{ ticket_ref(p.key, url_for("ui.ticket", key=p.key), p.url) }}<span class="ui-disclosure__title">{{ p.summary or "" }}</span>
+          {%- if p.type %}{{ badge(p.type, outline=True) }}{% endif %}{{ state_pill(p.state, title=("Source status: " ~ p.status) if p.status else None) }}
+        {%- else %}<span class="ui-disclosure__title ui-muted">No parent ticket</span>{% endif %}
+      </div>
+      {%- if p and p.state == "error" %}{{ state_reason(p) }}{% endif %}
+      <div class="ui-row" style="--ui-gap: 4px; margin-top: 4px;">
+        {%- for g in item.cscs %}{{ chip((g.csc or "unmapped") ~ " · " ~ g.progress.done ~ "/" ~ g.progress.total) }}{% endfor %}
+      </div>
+    </div>
+    <div class="ui-row ui-muted" style="flex-wrap: nowrap;">{{ state_bar(item.progress, width="96px") }}<span class="ui-mono">{{ item.progress.done }}/{{ item.progress.total }}</span></div>
+  </summary>
+  <ul class="ui-tickets ui-disclosure__body">
+    {%- for g in item.cscs %}
+    {{ group_label((g.ci ~ " / " if g.ci else "") ~ (g.csc or "No CSC mapped") ~ (" · " ~ g.team if g.team else "")) }}
+    {%- for t in g.tickets %}{{ ticket_line(t) }}{% endfor %}
+    {%- endfor %}
+  </ul>
+</details>
 {%- endmacro %}
 
 {% macro group_label(text) -%}<div class="ui-group-label">{{ text }}</div>{%- endmacro %}
@@ -439,16 +505,15 @@
 {#- One backlog item. Keeps the drag-and-drop contract of backlog.html: data-key / data-rank / data-state,
     [data-pos] for the number, [data-move="top|up|down"] buttons. remove_attrs: hx-* attrs for the remove button.
     caller (optional) = extra meta (e.g. a state_bar). #}
-{% macro rank_item(t, position, href=None, movable=True, remove_attrs=None, lifted=False) -%}
-<li class="ui-rank-item{% if lifted %} ui-rank-item--lifted{% endif %}" draggable="{{ 'true' if movable else 'false' }}"
-    data-key="{{ t.key }}" data-rank="{{ t.rank }}" data-state="{{ t.state }}">
+{% macro rank_item(t, position, href=None, movable=True, remove_attrs=None, lifted=False, link_cis=False) -%}
+<li class="ui-rank-item{% if lifted %} ui-rank-item--lifted{% endif %}" draggable="{{ 'true' if movable else 'false' }}" data-key="{{ t.key }}" data-rank="{{ t.rank }}" data-state="{{ t.state }}">
   {%- if movable %}<span class="ui-rank-item__handle" title="Drag to reorder{% if t.rank %} (rank {{ t.rank }}){% endif %}">{{ icon("grip", 16) }}</span>{% endif %}
   <span class="ui-rank-item__pos" data-pos>{{ position }}</span>
   <div class="ui-rank-item__body">
     <div class="ui-rank-item__title">{{ ticket_ref(t.key, href, t.url) }}<span class="ui-rank-item__summary">{{ t.summary or "" }}</span>{% if t.type %}{{ badge(t.type, outline=True) }}{% endif %}</div>
     {{ state_reason(t) }}
     <div class="ui-rank-item__meta">
-      {%- for c in t.cis or [] %}{{ ident(c) }}{% endfor %}
+      {%- for c in t.cis or [] %}{{ ident(c, href=url_for("ui.ci", ref=c) if link_cis else None) }}{% endfor %}
       {{- caller() if caller }}
     </div>
   </div>

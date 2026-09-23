@@ -185,7 +185,7 @@ class BacklogTests(unittest.TestCase):
             "name": "jira", "get_tickets": lambda self, keys: 1 / 0})()}
         r = self.c.get(B)
         self.assertEqual(r.status_code, 200)
-        self.assertIn("read tickets:</span> ticket source &#39;jira&#39; failed in get_tickets", r.get_data(as_text=True))
+        self.assertIn("read tickets:</b> ticket source &#39;jira&#39; failed in get_tickets", r.get_data(as_text=True))
 
 
 if __name__ == "__main__":

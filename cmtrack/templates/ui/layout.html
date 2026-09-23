@@ -24,8 +24,7 @@
   {%- endif %}
   {% block head %}{% endblock %}
 </head>
-<body class="ui" hx-boost="true" hx-headers='{"X-UI-Layout": "ui"}'>
-  {%- set _ = ui_layout_used() %}
+<body class="ui" hx-boost="true">
   <a class="ui-skip" href="#main">Skip to content</a>
   {{ ui.marking_banner(ui_marking, "top") }}
   {% block header %}{{ ui.app_header(ui_nav(), nav_current | default(None), ui_program, ui_user) }}{% endblock %}

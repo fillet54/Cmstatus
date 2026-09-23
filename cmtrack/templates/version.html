@@ -1,117 +1,92 @@
-{% extends "base.html" %}
-{% from "macros.html" import badge, page_header, empty, detail %}
-{% set section = "ui.cis" %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "cis" %}
 {% block title %}{{ ci.name }} {{ v.name }}{% endblock %}
 {% block content %}
-{% call page_header(v.name, None, [("CIs", url_for('ui.cis')), (ci.name, url_for('ui.ci', ref=ci.name)),
-                                   (rel.name, url_for('ui.release', rid=rel.id)), (v.name, None)]) %}
-  {{ badge(v.status) }}
-  {% if not v.planned and rel.kind == 'planned' %}<span class="badge badge-warning badge-outline">ad hoc</span>{% endif %}
+{% call ui.page_header(v.name, ci.name ~ " version", mono=True,
+                       crumbs=[("Configuration items", url_for('ui.cis')), (ci.name, url_for('ui.ci', ref=ci.name)),
+                               (rel.name, url_for('ui.release', rid=rel.id)), (v.name, None)]) %}
+  {% if not v.planned and rel.kind == "planned" %}{{ ui.badge("ad hoc", "warning", outline=True) }}{% endif %}
+  {{ ui.version_status(v.status) }}
 {% endcall %}
 
-<div class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full">
-  <div class="stat"><div class="stat-title">Release</div><div class="stat-value text-lg font-mono">{{ rel.name }}</div><div class="stat-desc">sequence #{{ v.seq }}</div></div>
-  <div class="stat"><div class="stat-title">Planned</div><div class="stat-value text-lg">{{ v.planned_date or "—" }}</div></div>
-  <div class="stat"><div class="stat-title">Built</div><div class="stat-value text-lg">{{ v.built_at | ts or "—" }}</div></div>
-  <div class="stat"><div class="stat-title">Artifact</div><div class="stat-value text-lg font-mono break-all">{{ v.artifact_ref or "—" }}</div></div>
-</div>
+{% call ui.stats(v.name) %}
+  {{ ui.stat("Release", rel.name, "build #" ~ v.seq, mono=True) }}
+  {{ ui.stat("Planned", v.planned_date or "—", mono=True) }}
+  {{ ui.stat("Built", v.built_at | utc if v.built_at else "—", mono=True) }}
+  {{ ui.stat("Artifact", v.artifact_ref or "—", mono=True) }}
+{% endcall %}
 
-<div class="grid lg:grid-cols-2 gap-6 items-start">
-  <div class="card bg-base-100 shadow-sm lg:col-span-2">
-    <div class="card-body">
-      <h2 class="card-title">Fixed in this version {% if report %}<span class="badge badge-ghost">{{ report.progress.total }}</span>{% endif %}</h2>
-      {% if report %}{% include "_work_items.html" %}
-      {% else %}<div role="alert" class="alert alert-warning text-sm"><span>Couldn't get tickets: {{ source_error }}</span></div>{% endif %}
-    </div>
-  </div>
+{% call ui.card(flush=True) %}
+  {% call ui.card_header("Fixed in this version", "tickets read live from the ticket source") %}{% if report %}{{ ui.badge(report.progress.total) }}{% endif %}{% endcall %}
+  {% call ui.card_body() %}
+    {% if report %}{% include "_work_items.html" %}
+    {% else %}{% call ui.alert("warning") %}<b>Couldn't get tickets:</b> {{ source_error }}{% endcall %}{% endif %}
+  {% endcall %}
+{% endcall %}
+
+<div class="ui-grid">
+  {% call ui.card() %}
+    {% call ui.card_header("Lineage", "parents derived from the release plan" if lineage.lineage == "auto" else "parents set by hand (PUT /api/versions/" ~ v.id ~ "/parents)") %}
+      {{ ui.badge(lineage.lineage, "warning" if lineage.lineage == "manual" else "neutral") }}
+    {% endcall %}
+    {% call ui.card_section("Built from") %}
+      <div class="ui-row" style="--ui-gap: 6px;">
+      {% for p in lineage.parents %}{{ ui.ident(p.name, href=url_for('ui.version', vid=p.id)) }}{% if p.release_kind != "planned" %}{{ ui.release_kind(p.release_kind) }}{% endif %}
+      {% else %}<span class="ui-muted">no parents (first build)</span>{% endfor %}
+      </div>
+    {% endcall %}
+    {% call ui.card_section("Built on by") %}
+      <div class="ui-row" style="--ui-gap: 6px;">
+      {% for p in lineage.children %}{{ ui.ident(p.name, href=url_for('ui.version', vid=p.id)) }}{% if p.release_kind != "planned" %}{{ ui.release_kind(p.release_kind) }}{% endif %}
+      {% else %}<span class="ui-muted">nothing yet</span>{% endfor %}
+      </div>
+    {% endcall %}
+    {% call ui.card_section() %}<div>{{ ui.button("All work up to " ~ v.name, href=url_for('ui.work', ref=ci.name, to=v.name), size="sm") }}</div>{% endcall %}
+  {% endcall %}
+
+  {% call ui.card(flush=True) %}
+    {% call ui.card_header("Where used", "composites that pin it, and baselines that field it (directly or through a composite)") %}{% endcall %}
+    {% call ui.table(["Baseline", "Status", "Via"]) %}
+      {% for b in used.baselines %}
+      <tr>
+        <td><a href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.ifc }} / {{ b.name }}</a></td>
+        <td>{{ ui.baseline_status(b.status) }}</td>
+        <td>{{ ui.ident(b.via_version, plain=True) }}</td>
+      </tr>
+      {% else %}{{ ui.empty_row("Not in any baseline", 3) }}{% endfor %}
+    {% endcall %}
+    {% if used.composites %}
+    {% call ui.card_section("Pinned by composites") %}
+      <div class="ui-row" style="--ui-gap: 6px;">{% for c in used.composites %}<span>{{ c.ci }}</span>{{ ui.ident(c.version, href=url_for('ui.version', vid=c.id)) }}{% endfor %}</div>
+    {% endcall %}
+    {% endif %}
+  {% endcall %}
 
   {% if ci.kind == "composite" %}
-  <div class="card bg-base-100 shadow-sm">
-    <div class="card-body">
-      <h2 class="card-title">Manifest</h2>
-      <table class="table table-sm">
-        <thead><tr><th>CI</th><th>Version</th><th>Status</th></tr></thead>
-        <tbody>
-        {% for m in manifest %}
-          <tr class="hover">
-            <td><a class="link link-hover" href="{{ url_for('ui.ci', ref=m.ci) }}">{{ m.ci }}</a></td>
-            <td class="font-mono"><a class="link link-primary" href="{{ url_for('ui.version', vid=m.version_id) }}">{{ m.version }}</a></td>
-            <td>{{ badge(m.status, "badge-sm") }}</td>
-          </tr>
-        {% else %}{{ empty("Empty manifest", 3) }}{% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
+  {% call ui.card(flush=True) %}
+    {% call ui.card_header("Manifest", "child versions pinned into this build") %}{% endcall %}
+    {% call ui.table(["CI", "Version", "Status"]) %}
+      {% for m in manifest %}
+      <tr>
+        <td><a href="{{ url_for('ui.ci', ref=m.ci) }}">{{ m.ci }}</a></td>
+        <td>{{ ui.ident(m.version, href=url_for('ui.version', vid=m.version_id), plain=True) }}</td>
+        <td>{{ ui.version_status(m.status) }}</td>
+      </tr>
+      {% else %}{{ ui.empty_row("Empty manifest", 3) }}{% endfor %}
+    {% endcall %}
+  {% endcall %}
   {% endif %}
 
-  <div class="card bg-base-100 shadow-sm">
-    <div class="card-body">
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="card-title">Lineage</h2>
-        <span class="badge {{ 'badge-warning' if lineage.lineage == 'manual' else 'badge-ghost' }} badge-sm"
-              title="{{ 'parents set by hand (PUT /api/versions/' ~ v.id ~ '/parents)' if lineage.lineage == 'manual' else 'parents derived from the release plan' }}">{{ lineage.lineage }}</span>
-      </div>
-      <div class="grid grid-cols-2 gap-4 text-sm">
-        {% for label, items in (("Built from", lineage.parents), ("Built on by", lineage.children)) %}
-        <div>
-          <div class="text-base-content/60 mb-1">{{ label }}</div>
-          {% for p in items %}
-            <div><a class="link link-primary font-mono" href="{{ url_for('ui.version', vid=p.id) }}">{{ p.name }}</a>
-              {% if p.release_kind != 'planned' %}{{ badge(p.release_kind, "badge-xs") }}{% endif %}</div>
-          {% else %}<div class="text-base-content/50">—</div>{% endfor %}
-        </div>
-        {% endfor %}
-      </div>
-      <a class="link link-hover text-sm mt-1" href="{{ url_for('ui.work', ref=ci.name, to=v.name) }}">All work up to {{ v.name }} →</a>
-    </div>
-  </div>
-
-  <div class="card bg-base-100 shadow-sm">
-    <div class="card-body">
-      <h2 class="card-title">Where used</h2>
-      <h3 class="font-semibold text-sm mt-1">Composites</h3>
-      <table class="table table-sm">
-        <tbody>
-        {% for c in used.composites %}
-          <tr class="hover"><td>{{ c.ci }}</td><td class="font-mono"><a class="link link-primary" href="{{ url_for('ui.version', vid=c.id) }}">{{ c.version }}</a></td></tr>
-        {% else %}{{ empty("Not pinned by any composite", 2) }}{% endfor %}
-        </tbody>
-      </table>
-      <h3 class="font-semibold text-sm mt-3">Baselines</h3>
-      <table class="table table-sm">
-        <thead><tr><th>IFC</th><th>Baseline</th><th>Status</th><th>Via</th></tr></thead>
-        <tbody>
-        {% for b in used.baselines %}
-          <tr class="hover">
-            <td>{{ b.ifc }}</td>
-            <td><a class="link link-primary" href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.name }}</a></td>
-            <td>{{ badge(b.status, "badge-sm") }}</td>
-            <td class="font-mono text-xs">{{ b.via_version }}</td>
-          </tr>
-        {% else %}{{ empty("Not in any baseline", 4) }}{% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="card bg-base-100 shadow-sm">
-    <div class="card-body">
-      <h2 class="card-title">History</h2>
-      <ul class="timeline timeline-vertical timeline-compact">
-      {% for e in events %}
-        <li>
-          {% if not loop.first %}<hr>{% endif %}
-          <div class="timeline-middle text-primary">●</div>
-          <div class="timeline-end mb-4 text-sm">
-            <div class="font-mono text-xs text-base-content/60">{{ e.at | ts }}</div>
-            <div><span class="font-semibold">{{ e.action }}</span> {{ detail(e.detail) }}</div>
-          </div>
-          {% if not loop.last %}<hr>{% endif %}
-        </li>
-      {% else %}<li class="text-base-content/60">No events.</li>{% endfor %}
-      </ul>
-    </div>
-  </div>
+  {% call ui.card() %}
+    {% call ui.card_header("History") %}{% endcall %}
+    {% call ui.card_body() %}
+      {% if events %}
+      <ol class="ui-audit">
+        {% for e in events %}<li>{{ ui.timestamp(e.at) }}<span><span class="ui-audit__who">{{ e.action }}</span> {{ ui.kv(e.detail) }}</span></li>{% endfor %}
+      </ol>
+      {% else %}{{ ui.empty("No events.") }}{% endif %}
+    {% endcall %}
+  {% endcall %}
 </div>
 {% endblock %}

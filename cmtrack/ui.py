@@ -12,7 +12,7 @@ Config (app.config, or the environment at startup):
 import datetime as dt
 import os
 
-from flask import current_app, g, request, url_for
+from flask import current_app, g, url_for
 from werkzeug.routing import BuildError
 
 from . import tickets
@@ -101,22 +101,6 @@ def init_app(app):
     app.jinja_env.filters["iso"] = iso
     app.jinja_env.globals["ui_states"] = tickets.STATES
     app.jinja_env.globals["ui_version_statuses"] = VERSION_STATUSES
-
-    def ui_layout_used():
-        g.ui_layout = "ui"
-        return ""
-    app.jinja_env.globals["ui_layout_used"] = ui_layout_used
-
-    @app.after_request
-    def full_load_across_layouts(response):
-        """While pages move from base.html (daisyUI) to ui/layout.html, a boosted navigation between the two
-        would keep the old page's <head> (stylesheets). Ask htmx for a full page load instead."""
-        sender = request.headers.get("X-UI-Layout")
-        if (request.headers.get("HX-Boosted") and sender and response.status_code == 200
-                and response.mimetype == "text/html" and sender != g.get("ui_layout", "legacy")):
-            response = app.response_class("", 200)
-            response.headers["HX-Redirect"] = request.full_path.rstrip("?")
-        return response
 
     @app.context_processor
     def ui_shell():

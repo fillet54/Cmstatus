@@ -1,53 +1,30 @@
-{# The ranked item list. Swapped in by htmx after pull/add/remove; drag-and-drop reorders it in place. #}
-{% from "macros.html" import tstate, reason, ticket_link, progress, state_counts %}
-{% if message %}<div role="status" class="alert alert-success text-sm py-2 mb-3"><span>{{ message }}</span></div>{% endif %}
-{% if error %}<div role="alert" class="alert alert-error text-sm py-2 mb-3"><span>{{ error }}</span></div>{% endif %}
+{#- The ranked item list. Swapped in by htmx after pull/add/remove; static/backlog.js reorders it in place. -#}
+{% import "ui/components.html" as ui %}
+{% if message %}{% call ui.alert("success") %}{{ message }}{% endcall %}{% endif %}
+{% if error %}{% call ui.alert("danger") %}{{ error }}{% endcall %}{% endif %}
 {% if source_error %}
-<div role="alert" class="alert alert-error text-sm mb-3"><span><span class="font-semibold">Couldn't read tickets:</span> {{ source_error }}</span></div>
+{% call ui.alert("danger") %}<b>Couldn't read tickets:</b> {{ source_error }}{% endcall %}
 {% elif b['items'] %}
-<div class="flex flex-wrap items-center gap-3 mb-3 text-sm">
-  <span><span class="font-semibold">{{ b['items'] | length }}</span> item{{ 's' if b['items'] | length != 1 }}</span>
-  {{ progress(b.progress, "w-40") }}
-  <div class="flex flex-wrap gap-1">{{ state_counts(b.progress) }}</div>
+<div class="ui-row" style="--ui-gap: 8px 16px;">
+  <span><b>{{ b['items'] | length }}</b> item{{ 's' if b['items'] | length != 1 }}</span>
+  {{ ui.state_bar(b.progress, size="lg", width="200px") }}
+  <span class="ui-muted" style="font-size: 12px;">{% for s, label in ui_states.items() if b.progress[s] %}{{ b.progress[s] }} {{ label | lower }}{{ " · " if not loop.last }}{% endfor %}</span>
   {% if b.max_rank_length > 12 %}
-  <button class="btn btn-ghost btn-xs" hx-post="{{ url_for('ui.backlog_rebalance', ref=b.name) }}" hx-target="#backlog-items"
-          title="ranks are getting long ({{ b.max_rank_length }} characters); re-space them evenly">Rebalance ranks</button>
+  <span class="ui-spacer"></span>
+  {{ ui.button("Rebalance ranks", size="sm", variant="ghost", attrs={"hx-post": url_for('ui.backlog_rebalance', ref=b.name), "hx-target": "#backlog-items",
+               "title": "Ranks are getting long (" ~ b.max_rank_length ~ " characters); re-space them evenly"}) }}
   {% endif %}
 </div>
-<ol id="backlog-list" class="space-y-2">
-{% for t in b['items'] %}
-  <li draggable="true" data-key="{{ t.key }}" data-rank="{{ t.rank }}" data-state="{{ t.state }}"
-      class="flex items-start gap-3 rounded-box bg-base-100 border border-base-300 p-3 shadow-sm">
-    <span class="cursor-grab select-none text-base-content/40 pt-0.5" title="Drag to reorder (rank {{ t.rank }})" aria-hidden="true">⠿</span>
-    <span data-pos class="w-7 text-right font-mono text-sm text-base-content/50 pt-0.5">{{ t.position }}</span>
-    <div class="flex-1 min-w-0">
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-        {{ ticket_link(t) }}
-        <span class="font-semibold">{{ t.summary or "" }}</span>
-        {% if t.type %}<span class="badge badge-outline badge-sm">{{ t.type }}</span>{% endif %}
-        {{ tstate(t) }}
-      </div>
-      {{ reason(t) }}
-      {% if t.cis %}
-      <div class="flex flex-wrap gap-1 mt-1">
-        {% for c in t.cis %}<a class="badge badge-ghost badge-sm hover:badge-primary" href="{{ url_for('ui.ci', ref=c) }}">{{ c }}</a>{% endfor %}
-      </div>
-      {% endif %}
-    </div>
-    <div class="join shrink-0">
-      <button type="button" class="btn btn-ghost btn-xs join-item" data-move="top" title="Move to top" aria-label="Move {{ t.key }} to top">⤒</button>
-      <button type="button" class="btn btn-ghost btn-xs join-item" data-move="up" title="Move up" aria-label="Move {{ t.key }} up">↑</button>
-      <button type="button" class="btn btn-ghost btn-xs join-item" data-move="down" title="Move down" aria-label="Move {{ t.key }} down">↓</button>
-      <button type="button" class="btn btn-ghost btn-xs join-item text-error" title="Remove from backlog" aria-label="Remove {{ t.key }}"
-              hx-post="{{ url_for('ui.backlog_remove', ref=b.name, key=t.key) }}" hx-target="#backlog-items"
-              hx-confirm="Remove {{ t.key }} from {{ b.name }}? (The ticket itself is not touched.)">✕</button>
-    </div>
-  </li>
-{% endfor %}
+<ol id="backlog-list" class="ui-rank-list" aria-label="Backlog in rank order">
+  {% for t in b['items'] %}
+  {{ ui.rank_item(t, t.position, href=url_for('ui.ticket', key=t.key), link_cis=True,
+                  remove_attrs={"hx-post": url_for('ui.backlog_remove', ref=b.name, key=t.key), "hx-target": "#backlog-items",
+                                "hx-confirm": "Remove " ~ t.key ~ " from " ~ b.name ~ "? (The ticket itself is not touched.)"}) }}
+  {% endfor %}
 </ol>
 {% if b.warnings %}
-<ul class="text-sm text-warning mt-3 list-disc pl-5">{% for w in b.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+{% call ui.alert("warning") %}<ul style="margin: 0; padding-left: 18px;">{% for w in b.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endcall %}
 {% endif %}
 {% else %}
-<p class="text-base-content/60">Nothing on this backlog yet. Pull top-level tickets from the source, or add one by key.</p>
+{{ ui.empty("Nothing on this backlog yet. Pull top-level tickets from the source, or add one by key.") }}
 {% endif %}

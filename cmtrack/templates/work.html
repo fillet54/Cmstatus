@@ -1,9 +1,9 @@
-{% extends "base.html" %}
-{% from "macros.html" import page_header %}
-{% set section = "ui.cis" %}
-{% block title %}{{ ci.name }} work{% endblock %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "cis" %}
+{% block title %}{{ ci.name }} work items{% endblock %}
 {% block content %}
-{{ page_header("Work items", "Parent tickets and how each CSC implemented them, for a range of " ~ ci.name ~ " versions. The range follows the version lineage, so merged fixes are included.",
-               [("CIs", url_for('ui.cis')), (ci.name, url_for('ui.ci', ref=ci.name)), ("Work items", None)]) }}
-<div id="work" class="space-y-4">{% include "_work.html" %}</div>
+{{ ui.page_header("Work items", ci.name ~ ": parent tickets and how each CSC implemented them. The range follows the version lineage, so merged fixes are included.",
+                  crumbs=[("Configuration items", url_for('ui.cis')), (ci.name, url_for('ui.ci', ref=ci.name)), ("Work items", None)]) }}
+<div id="work" class="ui-stack">{% include "_work.html" %}</div>
 {% endblock %}

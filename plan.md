@@ -22,8 +22,8 @@ composites, and the manual policy.
   and leave a `# TODO phase N` comment so you know where to come back.
 - **One commit per phase**, after its checks pass.
 - **Keep a throwaway DB.** Delete `cmtrack.db` whenever a phase changes the schema of an existing table.
-- **Environment:** Python 3.10+, `pip install flask`. Nothing else. For the browser: Tailwind play CDN,
-  daisyUI 4 and htmx 2 from jsdelivr (see `base.html`).
+- **Environment:** Python 3.10+, `pip install flask`. Nothing else. For the browser: the UI component library
+  (`static/ui.css`, `templates/ui/`) and htmx 2 (from jsdelivr, or self-hosted via `CMTRACK_UI_HTMX_JS`).
 - **Test as you go.** Split `tests/test_flow.py` up so each phase adds the tests for what it built; the
   test files on `main` are the reference.
 
@@ -104,14 +104,15 @@ the release.
 
 | File | Type in |
 |---|---|
-| `templates/base.html` | the full layout (CDN links, navbar, theme toggle). Leave Backlogs / IFCs / Events out of `nav` for now. |
-| `templates/macros.html` | `badge`, `page_header`, `empty`, `detail` (ticket macros come in Phase 5) |
+| `static/ui.css` | tokens + the shell, page structure, identifier, status, button, form and table styles (the rest arrives with the components that need it) |
+| `templates/ui/components.html` | `icon`, `logo`, `marking_banner`, `app_header`, `breadcrumbs`, `page_header`, `card*`, `section_label`, `stats`/`stat`, `chip`, `ident`, `badge`, `timestamp`, `version_glyph`, `version_status`, `release_kind`, `alert`, `button`, `icon_button`, `field`, `input`, `select`, `search_box`, `table`, `empty_row`, `dl`, `empty`, `lineage` |
+| `templates/ui/layout.html` + `cmtrack/ui.py` | the page shell; marking config, `utc`/`iso` filters, shell context. Point `UI_NAV` at the pages that exist so far. |
 | `templates/error.html` | |
 | `templates/cis.html`, `_ci_rows.html` | CI list; the search/filter form swaps `#ci-rows` |
 | `templates/ci.html` | releases table + `#release-panel` + policy + CSCs. **Leave out** "Fielded in" (Phase 9), the "Work items" button (Phase 5) and the Backlogs card (Phase 6). |
 | `templates/_release.html`, `release.html` | release panel / full page. **Leave out** the work link, the unabsorbed alert and the baselines-behind alert. |
-| `cmtrack/views.py` | `is_fragment`, `page`, `ts` filter, `release_families`, and the views `cis`, `ci` (without the `fielded` query: it reads baseline tables, Phase 9), `release`. Make `/` redirect to `/cis` until Phase 8. |
-| `__init__.py` | register the `ui` blueprint; `CMError` renders `error.html` outside `/api` |
+| `cmtrack/views.py` | `is_fragment`, `page`, `ci_overview`, `built_from`, `release_families`, and the views `cis`, `ci` (without the `fielded` query: it reads baseline tables, Phase 9), `release`. Make `/` redirect to `/cis` until Phase 8. |
+| `__init__.py` | `ui.init_app(app)`; register the `ui` blueprint; `CMError` renders `error.html` outside `/api` |
 | `tests/test_views.py` | page renders + fragment-vs-page checks for the views above |
 
 **Working when**
@@ -156,7 +157,7 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 | `__init__.py` | `TICKET_SOURCES` config, falling back to `CMTRACK_TICKET_SOURCES` |
 | `api.py` | `ticket_source`, `versions_arg`, `GET /ticket-states`, `GET /cis/<ci>/work`, `GET /tickets/<key>` |
 | `views.py` | `ticket_source`, `live`, `work` (with the "What's new in" presets), `ticket`; the version view gains `report` / `source_error` |
-| `macros.html` | `STATE_STYLE`, `tstate`, `reason`, `progress`, `state_counts`, `ticket_link` |
+| `ui/components.html` | `state_glyph`, `state_pill`, `state_reason`, `state_bar`, `state_counts`, `ticket_ref`, `version_chip`, `ticket_line`, `group_label`, `work_group` (+ their CSS) |
 | templates | `_work.html`, `_work_items.html`, `work.html`, `ticket.html`; the "Work items" button in `ci.html`; the work link in `_release.html`; "Fixed in this version" in `version.html` |
 | `cmtrack/demo.py` | `seed` (the parts built so far), `DEMO_TICKETS`, `demo_source` |
 | tests | `test_work.py`: report grouping, ticket detail, source is definitive, records that don't fit, source failures, no source configured |
@@ -183,7 +184,7 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 | `service.py` | `"teams"` in `_JSON_COLS`; `_ask`'s `NotImplementedError` branch; backlogs section: `get_backlog` … `backlog_view` |
 | `api.py` | `backlog_source` + the backlog endpoints (CRUD, items, `move`, `pull`, `rebalance`) |
 | `views.py` | `backlogs`, `create_backlog`, `_backlog_fragment`, `backlog`, `_backlog_action` and the pull / add / remove / rebalance actions; the `ci` view gains `backlogs` |
-| templates | `backlogs.html`, `backlog.html` (including the inline drag-and-drop script), `_backlog_items.html`; the Backlogs card in `ci.html`; Backlogs in the `base.html` nav |
+| templates | `backlogs.html`, `backlog.html`, `_backlog_items.html`, `static/backlog.js` (drag and drop); `rank_item`, `drop_line`, `checkbox`, `segmented` in `ui/components.html`; the Backlogs card in `ci.html`; Backlogs in `UI_NAV` |
 | `demo.py` | the backlog part of `seed`, plus `cis` on the top-level demo tickets |
 | tests | `BacklogTests` |
 

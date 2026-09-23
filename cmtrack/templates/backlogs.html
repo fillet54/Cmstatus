@@ -1,53 +1,45 @@
-{% extends "base.html" %}
-{% from "macros.html" import page_header, empty %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "backlogs" %}
 {% block title %}Backlogs{% endblock %}
 {% block content %}
-{{ page_header("Backlogs", "Ranked lists of top-level tickets shared by a set of teams. The order lives here; the tickets are read live from the ticket source.") }}
+{{ ui.page_header("Backlogs", "Ranked lists of top-level tickets shared by a set of teams. The order lives here; the tickets are read live from the ticket source.") }}
 
-<div class="grid lg:grid-cols-3 gap-6 items-start">
-  <div class="card bg-base-100 shadow-sm lg:col-span-2">
-    <div class="overflow-x-auto">
-      <table class="table">
-        <thead><tr><th>Backlog</th><th>Teams</th><th>CIs</th><th class="text-right">Items</th></tr></thead>
-        <tbody>
-        {% for b in backlogs %}
-          <tr class="hover">
-            <td><a class="link link-primary font-semibold" href="{{ url_for('ui.backlog', ref=b.name) }}">{{ b.name }}</a>
-              {% if b.description %}<div class="text-xs text-base-content/60">{{ b.description }}</div>{% endif %}</td>
-            <td>{% for t in b.teams %}<span class="badge badge-ghost badge-sm mr-1">{{ t }}</span>{% endfor %}</td>
-            <td class="text-sm">{{ b.ci_names or "—" }}</td>
-            <td class="text-right">{{ b.item_count }}</td>
-          </tr>
-        {% else %}{{ empty("No backlogs yet", 4) }}{% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
+<div class="ui-split" style="--ui-aside: 380px;">
+  {% call ui.card(flush=True) %}
+    {% call ui.table(["Backlog", "Teams", "CIs", {"label": "Items", "align": "end"}]) %}
+      {% for b in backlogs %}
+      <tr>
+        <td><a href="{{ url_for('ui.backlog', ref=b.name) }}"><b>{{ b.name }}</b></a>
+          {% if b.description %}<span class="ui-muted ui-clip" style="font-size: 12px;">{{ b.description }}</span>{% endif %}</td>
+        <td><div class="ui-row" style="--ui-gap: 4px;">{% for t in b.teams %}{{ ui.chip(t) }}{% endfor %}</div></td>
+        <td class="ui-mono">{{ b.ci_names or "—" }}</td>
+        <td class="ui-end">{{ b.item_count }}</td>
+      </tr>
+      {% else %}{{ ui.empty_row("No backlogs yet", 4) }}{% endfor %}
+    {% endcall %}
+  {% endcall %}
 
-  <form class="card bg-base-100 shadow-sm" method="post" action="{{ url_for('ui.create_backlog') }}"
-        hx-post="{{ url_for('ui.create_backlog') }}" hx-target="body" hx-swap="outerHTML">
-    <div class="card-body gap-3">
-      <h2 class="card-title">New backlog</h2>
-      {% if error %}<div role="alert" class="alert alert-error text-sm py-2"><span>{{ error }}</span></div>{% endif %}
-      <label class="form-control"><span class="label-text text-sm mb-1">Name</span>
-        <input name="name" required class="input input-bordered input-sm" value="{{ form.get('name', '') }}"></label>
-      <label class="form-control"><span class="label-text text-sm mb-1">Description</span>
-        <input name="description" class="input input-bordered input-sm" value="{{ form.get('description', '') }}"></label>
-      <label class="form-control"><span class="label-text text-sm mb-1">Teams <span class="text-base-content/50">(comma separated)</span></span>
-        <input name="teams" class="input input-bordered input-sm" placeholder="Nav, Maps, Display" value="{{ form.get('teams', '') }}"></label>
+  {% call ui.card() %}
+    {% call ui.card_header("New backlog") %}{% endcall %}
+    {% call ui.card_body() %}
+    <form class="ui-stack" style="--ui-gap: 14px;" method="post" action="{{ url_for('ui.create_backlog') }}"
+          hx-post="{{ url_for('ui.create_backlog') }}" hx-target="body" hx-swap="outerHTML">
+      {% if error %}{% call ui.alert("danger") %}{{ error }}{% endcall %}{% endif %}
+      {% call ui.field("Name", "bl-name") %}{{ ui.input("name", form.get('name', ''), id="bl-name", required=True) }}{% endcall %}
+      {% call ui.field("Description", "bl-description") %}{{ ui.input("description", form.get('description', ''), id="bl-description") }}{% endcall %}
+      {% call ui.field("Teams", "bl-teams", hint="Comma separated") %}{{ ui.input("teams", form.get('teams', ''), id="bl-teams", placeholder="Nav, Maps, Display") }}{% endcall %}
       {% if cis %}
-      <fieldset>
-        <legend class="label-text text-sm mb-1">Related CIs</legend>
-        <div class="flex flex-wrap gap-x-4 gap-y-1">
-        {% for c in cis %}
-          <label class="label cursor-pointer gap-2 py-0"><input type="checkbox" name="cis" value="{{ c.name }}" class="checkbox checkbox-sm"
-                 {{ 'checked' if form.getlist and c.name in form.getlist('cis') }}><span class="label-text">{{ c.name }}</span></label>
-        {% endfor %}
+      <fieldset class="ui-field" style="border: 0; padding: 0; margin: 0;">
+        <legend class="ui-field__label" style="margin-bottom: 6px;">Related CIs</legend>
+        <div class="ui-row" style="--ui-gap: 8px 16px;">
+          {% for c in cis %}{{ ui.checkbox("cis", c.name, checked=form.getlist and c.name in form.getlist('cis'), value=c.name) }}{% endfor %}
         </div>
       </fieldset>
       {% endif %}
-      <button class="btn btn-primary btn-sm self-start">Create</button>
-    </div>
-  </form>
+      <div>{{ ui.button("Create backlog", variant="primary", type="submit") }}</div>
+    </form>
+    {% endcall %}
+  {% endcall %}
 </div>
 {% endblock %}

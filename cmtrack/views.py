@@ -1,9 +1,10 @@
 """HTML views (mounted at /). Jinja pages, with htmx fragments for the interactive parts.
 
 A view renders its fragment template for an htmx request and the full page otherwise, so every
-URL also works as a plain link, a bookmark or a history restore. Pages are read-only except
-backlogs, whose forms post here and get the refreshed list fragment back; drag-and-drop ranking
-calls the JSON API (POST /api/backlogs/<b>/items/<key>/move).
+URL also works as a plain link, a bookmark or a history restore. Every page extends ui/layout.html and is
+built from the macros in ui/components.html. Pages are read-only except backlogs, whose forms post here and
+get the refreshed list fragment back; drag-and-drop ranking (static/backlog.js) calls the JSON API
+(POST /api/backlogs/<b>/items/<key>/move).
 """
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
@@ -14,7 +15,7 @@ bp = Blueprint("ui", __name__)
 
 EVENT_PAGE = 50
 ENTITY_ENDPOINTS = {"ci": "ui.ci", "release": "ui.release", "version": "ui.version",
-                    "baseline": "ui.baseline", "ifc": "ui.ifc"}
+                    "baseline": "ui.baseline", "ifc": "ui.ifc", "backlog": "ui.backlog"}
 
 
 def is_fragment():
@@ -26,18 +27,12 @@ def page(template, fragment, **ctx):
     return render_template(fragment if is_fragment() else template, **ctx), 200, {"Vary": "HX-Request"}
 
 
-@bp.app_template_filter("ts")
-def ts(value):
-    """'2026-10-03T14:05:22+00:00' / '2026-10-03 14:05:22' -> '2026-10-03 14:05'."""
-    return str(value)[:16].replace("T", " ") if value else ""
-
-
 @bp.app_template_global()
 def entity_url(entity, entity_id):
     endpoint = ENTITY_ENDPOINTS.get(entity)
     if endpoint is None or entity_id is None:
         return None
-    arg = {"ci": "ref", "ifc": "ref", "release": "rid", "version": "vid", "baseline": "bid"}[entity]
+    arg = {"ci": "ref", "ifc": "ref", "backlog": "ref", "release": "rid", "version": "vid", "baseline": "bid"}[entity]
     return url_for(endpoint, **{arg: entity_id})
 
 

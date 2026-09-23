@@ -172,10 +172,10 @@ GET  /events?entity=&entity_id=
 
 Schema additions to existing DBs are applied by `db.MIGRATIONS` at startup.
 
-## Web UI (read-only, `/`)
+## Web UI (`/`)
 
-Flask + Jinja pages in `cmtrack/views.py` / `cmtrack/templates/`, htmx for interactivity, Tailwind + daisyUI 4
-(loaded from CDN in `base.html`, no build step). Each view returns its `_fragment.html` template to htmx
+Flask + Jinja pages in `cmtrack/views.py` / `cmtrack/templates/`, htmx for interactivity, and the cmtrack UI
+component library below for everything visual (no CSS framework, no build step). Each view returns its `_fragment.html` template to htmx
 requests and the full page otherwise (boosted navigation and history restores also get the full page), so
 every URL works as a plain link.
 
@@ -200,7 +200,7 @@ every URL works as a plain link.
 
 ## UI component library (`/ui`)
 
-A design system for new pages, independent of daisyUI/Tailwind: plain CSS tokens and components in `static/ui.css`, Jinja macros in `templates/ui/components.html`, and a
+The design system every page is built from: plain CSS tokens and components in `static/ui.css`, Jinja macros in `templates/ui/components.html`, and a
 page shell in `templates/ui/layout.html`. **`/ui` is the living reference**: every macro rendered with a usage
 snippet, plus a CI overview page built only from macros.
 
@@ -229,11 +229,8 @@ Every status is a glyph and a word as well as a colour. Identifiers are monospac
 `CMTRACK_MARKING_COLORS`) for the top/bottom banners, which read "[Marking not configured]" until set;
 `CMTRACK_PROGRAM`; `CMTRACK_UI_FONTS_CSS` / `CMTRACK_UI_HTMX_JS` to self-host fonts and htmx on a closed network.
 
-**Migration status.** On the new layout: the CI list (`cis.html`, `_ci_rows.html`), the CI page (`ci.html`) and
-releases (`release.html`, `_release.html`). Still on `base.html` (daisyUI): dashboard, versions, work items, tickets,
-backlogs, IFCs, baselines, events. Each layout sends `X-UI-Layout` with htmx requests; a boosted navigation that
-crosses layouts gets `HX-Redirect` (a full page load) so the right stylesheets load (`ui.full_load_across_layouts`).
-Remove that hook and `base.html` once every page is migrated.
+Pages extend `ui/layout.html`, import the macros and add no page-specific CSS. The only page script is
+`static/backlog.js` (backlog drag and drop).
 
 ## Not yet built (next iterations)
 - Jira: the `TicketSource` for your Jira client; discrepancy/feature trace; a cross-CI "tickets in error" view

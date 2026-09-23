@@ -1,11 +1,10 @@
-{% extends "base.html" %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
 {% block title %}Error{% endblock %}
 {% block content %}
-<div role="alert" class="alert alert-error">
-  <div>
-    <h3 class="font-bold">{{ error.status }} · {{ error.message }}</h3>
-    {% for p in error.problems %}<div class="text-sm">{{ p }}</div>{% endfor %}
-  </div>
-</div>
-<a href="javascript:history.back()" class="btn btn-sm">Back</a>
+{{ ui.page_header("Something went wrong", error.status ~ " · " ~ error.message) }}
+{% call ui.alert("danger", error.message) %}
+  {% if error.problems %}<ul style="margin: 4px 0 0; padding-left: 18px;">{% for p in error.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+{% endcall %}
+<div class="ui-row">{{ ui.button("Back", href="javascript:history.back()", icon="arrow-up", attrs={"hx-boost": "false"}) }}{{ ui.button("Overview", href=url_for('ui.dashboard'), variant="ghost") }}</div>
 {% endblock %}

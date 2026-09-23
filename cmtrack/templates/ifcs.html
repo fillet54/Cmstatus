@@ -1,27 +1,27 @@
-{% extends "base.html" %}
-{% from "macros.html" import badge, page_header %}
-{% block title %}IFCs{% endblock %}
-{% macro tree(parent_id) %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "ifcs" %}
+{% block title %}Capabilities{% endblock %}
+{% macro tree(parent_id) -%}
 <ul>
-{% for i in children.get(parent_id, []) %}
+  {%- for i in children.get(parent_id, []) %}
   <li>
-    <a href="{{ url_for('ui.ifc', ref=i.name) }}" class="flex justify-between gap-4">
-      <span class="font-semibold">{{ i.name }}{% if i.description %} <span class="font-normal text-base-content/60">{{ i.description }}</span>{% endif %}</span>
-      {% if i.current %}<span class="text-sm">{{ i.current.name }} {{ badge(i.current.source, "badge-sm") }}</span>
-      {% else %}<span class="text-sm text-base-content/50">no approved HSCM</span>{% endif %}
-    </a>
-    {% if children.get(i.id) %}{{ tree(i.id) }}{% endif %}
+    <div class="ui-tree__node">
+      <span><a href="{{ url_for('ui.ifc', ref=i.name) }}"><b>{{ i.name }}</b></a>{% if i.description %} <span class="ui-muted">{{ i.description }}</span>{% endif %}</span>
+      {%- if i.current %}
+      <span class="ui-row" style="--ui-gap: 6px;">{{ ui.ident(i.current.name, href=url_for('ui.baseline', bid=i.current.id)) }}{{ ui.badge(i.current.source) }}</span>
+      {%- else %}<span class="ui-muted" style="font-size: 12px;">no approved HSCM</span>{% endif %}
+    </div>
+    {%- if children.get(i.id) %}{{ tree(i.id) }}{% endif %}
   </li>
-{% endfor %}
+  {%- endfor %}
 </ul>
-{% endmacro %}
+{%- endmacro %}
 {% block content %}
-{{ page_header("IFCs", "Capabilities, their hierarchy, and the current approved HSCM for each.") }}
-<div class="card bg-base-100 shadow-sm">
-  <div class="card-body">
-    {% if total %}
-    <div class="menu w-full p-0 [&_ul]:w-full">{{ tree(None) }}</div>
-    {% else %}<p class="text-base-content/60">No IFCs yet.</p>{% endif %}
-  </div>
-</div>
+{{ ui.page_header("Capabilities (IFCs)", "The capability hierarchy and each one's current approved HSCM") }}
+{% call ui.card() %}
+  {% call ui.card_body() %}
+    {% if total %}<div class="ui-tree">{{ tree(None) }}</div>{% else %}{{ ui.empty("No IFCs yet.") }}{% endif %}
+  {% endcall %}
+{% endcall %}
 {% endblock %}

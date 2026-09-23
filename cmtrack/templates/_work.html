@@ -1,69 +1,53 @@
-{% from "macros.html" import progress, state_counts %}
-<form class="card bg-base-100 shadow-sm" action="{{ url_for('ui.work', ref=ci.name) }}"
-      hx-get="{{ url_for('ui.work', ref=ci.name) }}" hx-target="#work" hx-push-url="true" hx-trigger="change">
-  <div class="card-body gap-3">
-    <div class="flex flex-wrap items-end gap-3">
-      <label class="form-control">
-        <span class="label-text text-xs mb-1">From (exclusive)</span>
-        <select name="from" class="select select-bordered select-sm font-mono">
-          <option value="">(beginning)</option>
-          {% for v in versions %}<option {{ 'selected' if v.name == frm }}>{{ v.name }}</option>{% endfor %}
-        </select>
-      </label>
-      <span class="pb-1.5 font-mono text-base-content/50">..</span>
-      <label class="form-control">
-        <span class="label-text text-xs mb-1">To (inclusive)</span>
-        <select name="to" class="select select-bordered select-sm font-mono">
-          <option value="">choose…</option>
-          {% for v in versions %}<option {{ 'selected' if v.name == to }}>{{ v.name }}</option>{% endfor %}
-        </select>
-      </label>
-      <span class="loading loading-spinner loading-sm htmx-indicator mb-1.5"></span>
+{#- Range picker + report; swapped into #work when the range changes. -#}
+{% import "ui/components.html" as ui %}
+{% call ui.card() %}
+  {% call ui.card_body() %}
+  <form class="ui-stack" style="--ui-gap: 12px;" action="{{ url_for('ui.work', ref=ci.name) }}"
+        hx-get="{{ url_for('ui.work', ref=ci.name) }}" hx-target="#work" hx-push-url="true" hx-trigger="change" hx-indicator="#work-busy">
+    <div class="ui-row" style="--ui-gap: 12px; align-items: flex-end;">
+      {% call ui.field("From (exclusive)", "work-from") %}
+        {{ ui.select("from", [("", "(beginning)")] + versions | map(attribute="name") | list, selected=frm or "", id="work-from", mono=True) }}
+      {% endcall %}
+      <span class="ui-mono ui-muted" style="padding-bottom: 8px;">..</span>
+      {% call ui.field("To (inclusive)", "work-to") %}
+        {{ ui.select("to", [("", "choose…")] + versions | map(attribute="name") | list, selected=to or "", id="work-to", mono=True) }}
+      {% endcall %}
+      <span id="work-busy" class="ui-spinner htmx-indicator" aria-hidden="true" style="margin-bottom: 10px;"></span>
     </div>
     {% if presets %}
-    <div class="flex flex-wrap items-center gap-1 text-sm">
-      <span class="text-base-content/60 mr-1">What's new in:</span>
-      {% for p in presets %}
-        <a class="btn btn-xs {{ 'btn-primary' if p.to == to and p['from'] == frm else 'btn-ghost' }} font-mono"
-           href="{{ url_for('ui.work', ref=ci.name, to=p.to, **({'from': p['from']} if p['from'] else {})) }}"
-           hx-get="{{ url_for('ui.work', ref=ci.name, to=p.to, **({'from': p['from']} if p['from'] else {})) }}"
-           hx-target="#work" hx-push-url="true">{{ p.release }}</a>
-      {% endfor %}
-    </div>
+    {% set items = [] %}
+    {% for p in presets %}
+      {% set href = url_for('ui.work', ref=ci.name, to=p.to, **({'from': p['from']} if p['from'] else {})) %}
+      {% set _ = items.append({"label": p.release, "href": href, "active": p.to == to and p['from'] == frm,
+                               "attrs": {"hx-get": href, "hx-target": "#work", "hx-push-url": "true"}}) %}
+    {% endfor %}
+    <div class="ui-row"><span class="ui-muted">What's new in</span>{{ ui.segmented(items, label="Release presets") }}</div>
     {% endif %}
-  </div>
-</form>
+  </form>
+  {% endcall %}
+{% endcall %}
 
 {% if source_error %}
-<div role="alert" class="alert alert-error"><span><span class="font-semibold">Couldn't get tickets:</span> {{ source_error }}</span></div>
+{% call ui.alert("danger") %}<b>Couldn't get tickets:</b> {{ source_error }}{% endcall %}
 {% elif report %}
-<div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-  <div class="text-sm">
-    <span class="font-semibold">{{ report.parents }}</span> parent ticket{{ 's' if report.parents != 1 }},
-    <span class="font-semibold">{{ report.progress.total }}</span> CSC ticket{{ 's' if report.progress.total != 1 }}
-  </div>
-  {{ progress(report.progress, "w-48") }}
-  <div class="flex flex-wrap gap-1">{{ state_counts(report.progress) }}</div>
+<div class="ui-row" style="--ui-gap: 8px 20px;">
+  <span><b>{{ report.parents }}</b> parent ticket{{ 's' if report.parents != 1 }}, <b>{{ report.progress.total }}</b> CSC ticket{{ 's' if report.progress.total != 1 }}</span>
+  {{ ui.state_bar(report.progress, size="lg", width="200px") }}
+  <span class="ui-spacer"></span>
+  {{ ui.button("Expand all", size="sm", variant="ghost", attrs={"onclick": "document.querySelectorAll('#work details.ui-disclosure').forEach(d => d.open = true)"}) }}
+  {{ ui.button("Collapse all", size="sm", variant="ghost", attrs={"onclick": "document.querySelectorAll('#work details.ui-disclosure').forEach(d => d.open = false)"}) }}
 </div>
-<div class="flex flex-wrap items-start justify-between gap-2">
-  <details class="text-sm">
-    <summary class="cursor-pointer text-base-content/70">{{ report.versions | length }} version{{ 's' if report.versions | length != 1 }} in range</summary>
-    <div class="flex flex-wrap gap-1 mt-2">
-      {% for v in report.versions %}<a class="badge badge-outline font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{% endfor %}
-    </div>
-  </details>
-  <div>
-    <button type="button" class="btn btn-ghost btn-xs" onclick="document.querySelectorAll('#work details.collapse').forEach(d => d.open = true)">Expand all</button>
-    <button type="button" class="btn btn-ghost btn-xs" onclick="document.querySelectorAll('#work details.collapse').forEach(d => d.open = false)">Collapse all</button>
-  </div>
+<div class="ui-grid" style="--ui-cols: 2; gap: 16px;">
+  <div>{{ ui.state_counts(report.progress) }}</div>
+  <div class="ui-row" style="--ui-gap: 4px;"><span class="ui-muted">{{ report.versions | length }} version{{ 's' if report.versions | length != 1 }} in range:</span>
+    {% for v in report.versions %}{{ ui.ident(v.name, href=url_for('ui.version', vid=v.id)) }}{% endfor %}</div>
 </div>
 {% include "_work_items.html" %}
 {% if report.warnings %}
-<details class="collapse collapse-arrow bg-base-100 border border-warning/50">
-  <summary class="collapse-title text-sm text-warning">{{ report.warnings | length }} ticket{{ 's' if report.warnings | length != 1 }} from {{ report.source }} couldn't be placed</summary>
-  <ul class="collapse-content text-sm list-disc pl-10">{% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
-</details>
+{% call ui.alert("warning", report.warnings | length ~ " ticket" ~ ("s" if report.warnings | length != 1 else "") ~ " from " ~ report.source ~ " couldn't be placed") %}
+  <ul style="margin: 4px 0 0; padding-left: 18px;">{% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+{% endcall %}
 {% endif %}
 {% else %}
-<p class="text-base-content/60">Pick a version range.</p>
+{{ ui.empty("Pick a version range.") }}
 {% endif %}

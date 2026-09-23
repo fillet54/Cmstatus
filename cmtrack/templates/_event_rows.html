@@ -1,19 +1,20 @@
-{% from "macros.html" import empty, detail %}
+{#- Event rows; the last row loads the next page when it scrolls into view. -#}
+{% import "ui/components.html" as ui %}
 {% for e in events %}
-  {% set href = entity_url(e.entity, e.entity_id) %}
-  <tr class="hover align-top">
-    <td class="text-base-content/50">{{ e.id }}</td>
-    <td class="font-mono text-xs whitespace-nowrap">{{ e.at | ts }}</td>
-    <td class="whitespace-nowrap">{% if href %}<a class="link link-primary" href="{{ href }}">{{ e.entity }} #{{ e.entity_id }}</a>{% else %}{{ e.entity }} #{{ e.entity_id }}{% endif %}</td>
-    <td class="font-semibold">{{ e.action }}</td>
-    <td class="text-xs">{{ detail(e.detail) }}</td>
-  </tr>
+{% set href = entity_url(e.entity, e.entity_id) %}
+<tr>
+  <td class="ui-muted">{{ e.id }}</td>
+  <td>{{ ui.timestamp(e.at) }}</td>
+  <td style="white-space: nowrap;">{% if href %}<a href="{{ href }}">{{ e.entity }} #{{ e.entity_id }}</a>{% else %}{{ e.entity }}{% if e.entity_id %} #{{ e.entity_id }}{% endif %}{% endif %}</td>
+  <td><b>{{ e.action }}</b></td>
+  <td>{{ ui.kv(e.detail) }}</td>
+</tr>
 {% else %}
-  {% if not request.args.before %}{{ empty("No events", 5) }}{% endif %}
+{% if not request.args.before %}{{ ui.empty_row("No events", 5) }}{% endif %}
 {% endfor %}
 {% if more %}
-  <tr hx-get="{{ url_for('ui.events', entity=filters.entity or None, entity_id=filters.entity_id, before=events[-1].id) }}"
-      hx-trigger="revealed" hx-target="this" hx-swap="outerHTML">
-    <td colspan="5" class="text-center"><span class="loading loading-dots loading-sm"></span></td>
-  </tr>
+<tr hx-get="{{ url_for('ui.events', entity=filters.entity or None, entity_id=filters.entity_id, before=events[-1].id) }}"
+    hx-trigger="revealed" hx-target="this" hx-swap="outerHTML">
+  <td colspan="5"><div class="ui-row" style="justify-content: center;"><span class="ui-spinner" aria-hidden="true"></span><span class="ui-muted">Loading older events</span></div></td>
+</tr>
 {% endif %}

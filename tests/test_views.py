@@ -73,31 +73,27 @@ class ViewTests(unittest.TestCase):
         self.assertNotIn(f">{last_id}<", rest)
         self.assertIn("release #", self.get("/events?entity=release", HX))
 
-    def test_migrated_pages_use_ui_layout(self):
+    def test_every_page_uses_the_ui_layout(self):
         rid = self.api("/cis/NAV-SW/releases")[0]["id"]
-        for path in ("/cis", "/cis/NAV-SW", f"/releases/{rid}"):
+        vid = self.api(f"/releases/{rid}")["versions"][0]["id"]
+        bid = self.api("/ifcs/IFC-2.1")["current_hscm"]["id"]
+        for path in ("/", "/cis", "/cis/NAV-SW", f"/releases/{rid}", f"/versions/{vid}", "/cis/NAV-SW/work",
+                     "/backlogs", "/backlogs/Nav & Display", "/ifcs", "/ifcs/IFC-2.1", f"/baselines/{bid}", "/events",
+                     "/ui"):
             page = self.get(path)
             self.assertIn("/static/ui.css", page, path)
-            self.assertNotIn("daisyui", page, path)
-        self.assertIn("daisyui", self.get("/events"))                       # not migrated yet
+            for old in ("daisyui", "tailwindcss", "X-UI-Layout"):
+                self.assertNotIn(old, page, path)
+            for pos in ("top", "bottom"):                                         # marking banners
+                self.assertEqual(page.count(f"ui-marking--{pos}"), 1, (path, pos))
+        self.assertIn("/static/ui.css", self.get("/cis/NOPE", status=404))        # the error page too
         ci = self.get("/cis/NAV-SW")
-        self.assertIn('hx-trigger="load"', ci)                              # a release panel opens by default
+        self.assertIn('hx-trigger="load"', ci)                                    # a release panel opens by default
         self.assertIn("ui-row--selected", ci)
         panel = self.get(f"/releases/{rid}", HX)
         self.assertIn('aria-label="Release ', panel)
         self.assertNotIn("<html", panel)
-
-    def test_boost_across_layouts_forces_full_load(self):
-        boost = lambda layout: {**HX, "HX-Boosted": "true", "X-UI-Layout": layout}
-        r = self.c.get("/cis?q=nav", headers=boost("legacy"))               # old page -> new page
-        self.assertEqual((r.status_code, r.headers.get("HX-Redirect"), r.data), (200, "/cis?q=nav", b""))
-        r = self.c.get("/events", headers=boost("ui"))                      # new page -> old page
-        self.assertEqual(r.headers.get("HX-Redirect"), "/events")
-        r = self.c.get("/cis", headers=boost("ui"))                         # same layout: a normal boost
-        self.assertNotIn("HX-Redirect", r.headers)
-        self.assertIn(b"<html", r.data)
-        r = self.c.get("/cis?q=nav", headers={**HX, "X-UI-Layout": "legacy"})  # fragments are never redirected
-        self.assertNotIn("HX-Redirect", r.headers)
+        self.assertIn("/static/backlog.js", self.get("/backlogs/Nav & Display"))
 
     def test_not_found_is_html_outside_api(self):
         self.assertIn("CI &#39;NOPE&#39; not found", self.get("/cis/NOPE", status=404))

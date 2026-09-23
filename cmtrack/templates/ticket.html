@@ -1,78 +1,52 @@
-{% extends "base.html" %}
-{% from "macros.html" import page_header, tstate, reason, state_counts, progress, ticket_link, empty %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
 {% block title %}{{ t.key }}{% endblock %}
 {% block content %}
 {% set crumbs = [] %}
 {% if t.parent %}{% set _ = crumbs.append((t.parent.key, url_for('ui.ticket', key=t.parent.key))) %}{% endif %}
 {% set _ = crumbs.append((t.key, None)) %}
-{% call page_header(t.key ~ (": " ~ t.summary if t.summary else ""), None, crumbs) %}
-  {% if t.type %}<span class="badge badge-outline">{{ t.type }}</span>{% endif %}
-  {{ tstate(t, "") }}
+{% call ui.page_header(t.key ~ (": " ~ t.summary if t.summary else ""), crumbs=crumbs, meta=[t.type] if t.type else None) %}
+  {{ ui.state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}
+  {% if t.url %}{{ ui.button("Open in " ~ t.source, href=t.url, icon="external", attrs={"target": "_blank", "rel": "noopener", "hx-boost": "false"}) }}{% endif %}
 {% endcall %}
 
-{% if t.state in ("error", "merge_blocked") and t.state_reason %}
-<div role="alert" class="alert {{ 'alert-error' if t.state == 'error' else 'alert-warning' }}">
-  <span><span class="font-semibold">{{ "Something is off in " ~ t.source ~ ":" if t.state == "error" else "Merge blocked:" }}</span> {{ t.state_reason }}</span>
-</div>
+{% if t.state == "error" and t.state_reason %}
+{% call ui.alert("danger", "Something is off in " ~ t.source) %}{{ t.state_reason }}{% endcall %}
+{% elif t.state == "merge_blocked" and t.state_reason %}
+{% call ui.alert("warning", "Merge blocked") %}{{ t.state_reason }}{% endcall %}
 {% endif %}
 
-<div class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full">
+{% call ui.stats(t.key) %}
   {% if t.csc %}
-  <div class="stat"><div class="stat-title">CSC</div><div class="stat-value text-lg">{{ t.csc }}</div>
-    <div class="stat-desc"><a class="link" href="{{ url_for('ui.ci', ref=t.ci) }}">{{ t.ci }}</a>{% if t.team %} · {{ t.team }}{% endif %}</div></div>
-  <div class="stat"><div class="stat-title">Fix versions</div><div class="stat-value text-lg font-mono">
-    {% for v in t.versions %}{% if v.id %}<a class="link link-hover" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{% else %}<span class="text-warning" title="not a version of {{ t.ci }}">{{ v.name }}</span>{% endif %}{{ ", " if not loop.last }}{% else %}—{% endfor %}</div></div>
+    {{ ui.stat("CSC", t.csc, t.ci ~ (" · " ~ t.team if t.team else "")) }}
+    {% call ui.stat("Fix versions", "") %}<div class="ui-row" style="--ui-gap: 4px;">{% for v in t.versions %}{{ ui.version_chip(v) }}{% else %}<span class="ui-muted">none</span>{% endfor %}</div>{% endcall %}
   {% endif %}
   {% if t.children %}
-  <div class="stat"><div class="stat-title">CSC tickets</div><div class="stat-value text-2xl">{{ t.progress.done }}/{{ t.progress.total }}</div>
-    <div class="stat-desc">{{ progress(t.progress, "w-40 mt-1") }}</div></div>
-  <div class="stat"><div class="stat-title">CSC ticket states</div><div class="flex flex-wrap gap-1 mt-1 max-w-xs">{{ state_counts(t.progress) }}</div></div>
+    {% call ui.stat("CSC tickets done", t.progress.done ~ " of " ~ t.progress.total) %}{{ ui.state_bar(t.progress) }}{% endcall %}
   {% endif %}
-  {% if t.status %}<div class="stat"><div class="stat-title">{{ t.source | capitalize }} status</div><div class="stat-value text-lg">{{ t.status }}</div></div>{% endif %}
-  <div class="stat"><div class="stat-title">Assignee</div><div class="stat-value text-lg">{{ t.assignee or "—" }}</div></div>
-  <div class="stat"><div class="stat-title">Source</div><div class="stat-value text-lg">{{ t.source }}{% if t.url %} <a class="link text-base" href="{{ t.url }}" target="_blank" rel="noopener" hx-boost="false">open ↗</a>{% endif %}</div>
-    <div class="stat-desc">live from the source</div></div>
-</div>
+  {{ ui.stat(t.source | capitalize ~ " status", t.status or "—") }}
+  {{ ui.stat("Assignee", t.assignee or "—") }}
+{% endcall %}
 
 {% if t.children %}
-<div class="card bg-base-100 shadow-sm">
-  <div class="card-body">
-    <h2 class="card-title">How each CSC implemented it</h2>
+{% call ui.card(flush=True) %}
+  {% call ui.card_header("How each CSC implemented it", "read live from " ~ t.source) %}{% endcall %}
+  <ul class="ui-tickets">
     {% for g in t.children %}
-    <div class="mt-2">
-      <div class="flex items-center gap-3">
-        <div class="font-semibold">{% if g.ci %}<a class="link link-hover" href="{{ url_for('ui.ci', ref=g.ci) }}">{{ g.ci }}</a> / {% endif %}{{ g.csc or "No CSC mapped" }}
-          {% if g.team %}<span class="font-normal text-base-content/60">· {{ g.team }}</span>{% endif %}</div>
-        {{ progress(g.progress, "w-24") }} <span class="text-sm text-base-content/60">{{ g.progress.done }}/{{ g.progress.total }}</span>
-      </div>
-      <table class="table table-sm">
-        <tbody>
-        {% for c in g.tickets %}
-          <tr class="hover">
-            <td class="whitespace-nowrap w-32">{{ ticket_link(c) }}</td>
-            <td>{{ c.summary or "" }}{{ reason(c) }}</td>
-            <td class="w-36">{{ tstate(c) }}</td>
-            <td class="text-right whitespace-nowrap">{% for v in c.versions %}{% if v.id %}<a class="badge badge-ghost badge-sm font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{% else %}<span class="badge badge-warning badge-outline badge-sm font-mono" title="not a cmtrack version of this CSC's CSCI">{{ v.name }}</span>{% endif %} {% endfor %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {{ ui.group_label((g.ci ~ " / " if g.ci else "") ~ (g.csc or "No CSC mapped") ~ (" · " ~ g.team if g.team else "") ~ " · " ~ g.progress.done ~ "/" ~ g.progress.total ~ " done") }}
+    {% for c in g.tickets %}{{ ui.ticket_line(c) }}{% endfor %}
     {% endfor %}
-  </div>
-</div>
+  </ul>
+{% endcall %}
 {% elif not t.csc %}
-<p class="text-base-content/60">No CSC tickets reference this ticket yet.</p>
+{{ ui.empty("No CSC tickets reference this ticket yet.") }}
 {% endif %}
 
 {% if t.warnings %}
-<div role="alert" class="alert alert-warning text-sm"><ul>{% for w in t.warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>
+{% call ui.alert("warning", "Some of this ticket's data doesn't match cmtrack") %}<ul style="margin: 4px 0 0; padding-left: 18px;">{% for w in t.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endcall %}
 {% endif %}
 
 {% if t.attributes %}
-<div class="card bg-base-100 shadow-sm"><div class="card-body">
-  <h2 class="card-title">Attributes</h2>
-  <pre class="text-xs bg-base-200 rounded p-2 overflow-x-auto">{{ t.attributes | tojson(indent=2) }}</pre>
-</div></div>
+{% call ui.card(title="Attributes") %}{% call ui.card_body() %}<pre class="ui-pre">{{ t.attributes | tojson(indent=2) }}</pre>{% endcall %}{% endcall %}
 {% endif %}
 {% endblock %}
