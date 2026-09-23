@@ -10,7 +10,8 @@
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
 </head>
 <body class="min-h-screen bg-base-200" hx-boost="true">
-  {% set nav = [("ui.dashboard", "Dashboard"), ("ui.cis", "CIs"), ("ui.ifcs", "IFCs"), ("ui.events", "Events")] %}
+  {% set nav = [("ui.dashboard", "Dashboard"), ("ui.cis", "CIs"), ("ui.backlogs", "Backlogs"), ("ui.ifcs", "IFCs"),
+                ("ui.events", "Events")] %}
   <div class="navbar bg-base-100 shadow-sm px-4">
     <div class="flex-1 gap-2">
       <a href="{{ url_for('ui.dashboard') }}" class="text-lg font-bold mr-4">cmtrack</a>

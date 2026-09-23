@@ -100,6 +100,20 @@
       </div>
     </div>
 
+    {% if backlogs %}
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body">
+        <h2 class="card-title">Backlogs</h2>
+        <ul class="space-y-1">
+        {% for b in backlogs %}
+          <li class="flex justify-between gap-2"><a class="link link-primary" href="{{ url_for('ui.backlog', ref=b.name) }}">{{ b.name }}</a>
+            <span class="text-sm text-base-content/60">{{ b.item_count }} item{{ 's' if b.item_count != 1 }}{% if b.teams %} · {{ b.teams | join(", ") }}{% endif %}</span></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
     {% if ci.attributes %}
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body">

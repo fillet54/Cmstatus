@@ -87,6 +87,7 @@ class TicketRecord:
     project: Optional[str] = None
     affected_product: Optional[str] = None
     fix_versions: Optional[List[str]] = None
+    cis: Optional[List[str]] = None          # CI names a top-level ticket affects, if the source knows
     url: Optional[str] = None
     assignee: Optional[str] = None
     updated: Optional[str] = None
@@ -107,6 +108,8 @@ class TicketRecord:
         self.state, self.state_reason = normalize_state(self.state, self.state_reason)
         if isinstance(self.fix_versions, str):
             self.fix_versions = [self.fix_versions]
+        if isinstance(self.cis, str):
+            self.cis = [self.cis]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -135,6 +138,15 @@ class TicketSource:
         """The CSC tickets under a parent ticket, across all CIs."""
         raise NotImplementedError
 
+    def top_level_tickets(self, backlog: dict, cis: List[dict]) -> Iterable[TicketRecord]:
+        """Optional: candidate top-level tickets for a shared backlog ("Pull from Jira").
+
+        ``backlog`` has name/description/teams; ``cis`` are the CIs it is related to (may be empty).
+        Set ``cis`` on the records if you know which CIs each ticket affects. New keys are appended
+        to the bottom of the backlog; nothing is removed.
+        """
+        raise NotImplementedError(f"ticket source {self.name!r} can't list top-level tickets")
+
 
 class StaticSource(TicketSource):
     """In-memory source (tests, demos, a JSON export): answers from a fixed list of records."""
@@ -155,6 +167,11 @@ class StaticSource(TicketSource):
 
     def get_children(self, key):
         return [r for r in self.records if r.parent_key == key]
+
+    def top_level_tickets(self, backlog, cis):
+        names = {c["name"] for c in cis}
+        return [r for r in self.records if not r.parent_key and not r.project
+                and (not names or names & set(r.cis or ()))]
 
 
 def pick_source(sources: Optional[dict], name: Optional[str] = None) -> Optional[TicketSource]:

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header %}
+{% set section = "ui.backlogs" %}
+{% block title %}{{ b.name }}{% endblock %}
+{% block content %}
+{% call page_header(b.name, b.description, [("Backlogs", url_for('ui.backlogs')), (b.name, None)]) %}
+  {% for t in b.teams %}<span class="badge badge-outline">{{ t }}</span>{% endfor %}
+{% endcall %}
+
+{% if b.cis %}
+<div class="flex flex-wrap items-center gap-2 text-sm">
+  <span class="text-base-content/60">CIs:</span>
+  {% for c in b.cis %}<a class="badge badge-ghost hover:badge-primary" href="{{ url_for('ui.ci', ref=c) }}">{{ c }}</a>{% endfor %}
+</div>
+{% endif %}
+
+<div class="card bg-base-100 shadow-sm">
+  <div class="card-body py-4 flex-row flex-wrap items-center gap-3">
+    <button class="btn btn-primary btn-sm" hx-post="{{ url_for('ui.backlog_pull', ref=b.name) }}" hx-target="#backlog-items"
+            hx-indicator="#backlog-busy" title="Append top-level tickets the source offers for this backlog">Pull from source</button>
+    <form class="join" hx-post="{{ url_for('ui.backlog_add', ref=b.name) }}" hx-target="#backlog-items"
+          hx-indicator="#backlog-busy" hx-on::after-request="if (event.detail.successful) this.reset()">
+      <input name="key" required placeholder="Ticket key, e.g. PRG-20" class="input input-bordered input-sm join-item w-48" autocomplete="off">
+      <select name="position" class="select select-bordered select-sm join-item">
+        <option value="bottom">at bottom</option><option value="top">at top</option>
+      </select>
+      <button class="btn btn-sm join-item">Add</button>
+    </form>
+    <label class="label cursor-pointer gap-2 ml-auto">
+      <span class="label-text text-sm">Hide done</span>
+      <input type="checkbox" class="toggle toggle-sm" onchange="document.getElementById('backlog-items').classList.toggle('hide-done', this.checked)">
+    </label>
+    <span id="backlog-busy" class="loading loading-spinner loading-sm htmx-indicator"></span>
+  </div>
+</div>
+
+<style>
+  #backlog-items.hide-done li[data-state="done"] { display: none; }
+  #backlog-items li.dragging { opacity: .4; }
+  #backlog-items li.saving { opacity: .6; }
+</style>
+
+<div id="backlog-items" data-move-url="{{ url_for('api.move_backlog_item', ref=b.name, key='__KEY__') }}"
+     data-reload-url="{{ url_for('ui.backlog', ref=b.name) }}">
+  {% include "_backlog_items.html" %}
+</div>
+<div id="backlog-toast" class="toast toast-end" aria-live="polite"></div>
+
+<script>
+/* Backlog ordering with native drag and drop (no libraries). After a drop, or an ↑/↓/top click,
+   the moved item's new neighbours are sent to the move endpoint, which gives it a rank between theirs;
+   no other item is touched. If the server refuses (e.g. someone else reordered meanwhile), the list reloads. */
+(() => {
+  const root = document.getElementById("backlog-items");
+  if (!root || root.dataset.dnd) return;
+  root.dataset.dnd = "1";
+  const items = () => root.querySelectorAll("#backlog-list > li[data-key]");
+  let dragged = null, startNext = null;
+
+  function toast(msg) {
+    const box = document.getElementById("backlog-toast");
+    const el = document.createElement("div");
+    el.className = "alert alert-error text-sm";
+    el.textContent = msg;
+    box.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+  }
+
+  function renumber() {
+    items().forEach((li, i) => { const n = li.querySelector("[data-pos]"); if (n) n.textContent = i + 1; });
+  }
+
+  async function save(li) {
+    const prev = li.previousElementSibling, next = li.nextElementSibling;
+    renumber();
+    li.classList.add("saving");
+    try {
+      const url = root.dataset.moveUrl.replace("__KEY__", encodeURIComponent(li.dataset.key));
+      const res = await fetch(url, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({after: prev ? prev.dataset.key : null, before: next ? next.dataset.key : null}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      li.dataset.rank = data.rank;
+    } catch (err) {
+      toast(`Couldn't move ${li.dataset.key}: ${err.message}`);
+      htmx.ajax("GET", root.dataset.reloadUrl, {target: "#backlog-items"});
+    } finally {
+      li.classList.remove("saving");
+    }
+  }
+
+  root.addEventListener("dragstart", (e) => {
+    const li = e.target.closest && e.target.closest("li[data-key]");
+    if (!li) return;
+    dragged = li;
+    startNext = li.nextElementSibling;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", li.dataset.key);
+    requestAnimationFrame(() => li.classList.add("dragging"));
+  });
+
+  root.addEventListener("dragover", (e) => {
+    if (!dragged) return;
+    e.preventDefault();
+    const over = e.target.closest && e.target.closest("li[data-key]");
+    if (!over || over === dragged) return;
+    const box = over.getBoundingClientRect();
+    const below = e.clientY > box.top + box.height / 2;
+    over.parentNode.insertBefore(dragged, below ? over.nextElementSibling : over);
+  });
+
+  root.addEventListener("drop", (e) => { if (dragged) e.preventDefault(); });
+
+  root.addEventListener("dragend", () => {
+    if (!dragged) return;
+    const li = dragged;
+    dragged = null;
+    li.classList.remove("dragging");
+    if (li.nextElementSibling !== startNext) save(li);
+  });
+
+  root.addEventListener("click", (e) => {
+    const btn = e.target.closest && e.target.closest("[data-move]");
+    if (!btn) return;
+    const li = btn.closest("li[data-key]"), list = li.parentNode;
+    const prev = li.previousElementSibling, next = li.nextElementSibling;
+    if (btn.dataset.move === "top" && prev) list.prepend(li);
+    else if (btn.dataset.move === "up" && prev) list.insertBefore(li, prev);
+    else if (btn.dataset.move === "down" && next) list.insertBefore(next, li);
+    else return;
+    save(li);
+    btn.focus();
+  });
+})();
+</script>
+{% endblock %}

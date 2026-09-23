@@ -25,6 +25,7 @@ Env: `CMTRACK_DB` (SQLite path), `CMTRACK_POLICY_DIR` (where manual plan files l
 | Manifest | `manifest_entry` | Composite CI version → pinned child versions. |
 | IFC | `ifc` | Capability, with `parent_id` hierarchy. |
 | Baseline | `baseline` + `baseline_entry` | The HSCM list: one version per CI. draft → approved → superseded. |
+| Backlog | `backlog` + `backlog_item` + `backlog_ci` | A ranked list of top-level ticket keys shared by a set of teams, related to CIs. Stores only key + lexorank; tickets are read live. |
 | Event | `event` | Append-only log of every change (status accounting). |
 
 **Rules enforced**
@@ -91,6 +92,29 @@ means the source data doesn't add up (e.g. closed with open sub-tasks). A missin
 as `error` with a reason. Errors (and merge-blocked reasons) show next to the ticket so people know what to fix
 in Jira. `status` keeps the raw Jira status for display.
 
+## Shared backlogs
+
+Jira can't hold one ordering across several teams' projects, so cmtrack keeps it: a backlog has a name,
+the teams sharing it, and related CIs (for navigation and for choosing what to pull), and each item is just a
+top-level ticket key plus a **lexorank** (`cmtrack/rank.py`). Ticket data (summary, state, affected CIs) is
+read live from the ticket source like everywhere else.
+
+- **Ranks** are base-36 strings compared as plain strings. `rank.between(a, b)` returns a rank strictly
+  between two others (`None` = open end), so a move rewrites only the moved item. Appends and prepends grow
+  ranks by about one character per 35 inserts; repeatedly dropping into the same gap grows them faster, which
+  `POST /api/backlogs/<b>/rebalance` fixes by re-spacing every rank (order unchanged). The UI offers it once
+  ranks pass 12 characters.
+- **Move callback**: `POST /api/backlogs/<b>/items/<key>/move {"after": <key above>, "before": <key below>}`
+  returns `{key, rank}`. Send both neighbours after a drag and drop, or one to move next to an item (`before`
+  the first item = top, `after` the last = bottom). If the neighbours are no longer in that order (someone
+  else reordered), it answers 409 and the page reloads the list.
+- **Pull**: `POST /api/backlogs/<b>/pull` asks the source's optional `top_level_tickets(backlog, cis)` for
+  candidates and appends the ones not already there, in the source's order. Records may set `cis` (affected
+  CI names), which the backlog shows. Nothing is removed by a pull. Items can also be added by key (top or
+  bottom); CSC tickets are refused, since the backlog holds their parents.
+- **Drag and drop** in `/backlogs/<b>` uses the browser's native drag events and ~60 lines of inline JS,
+  with no libraries. ⤒ ↑ ↓ buttons use the same callback for keyboard and touch users.
+
 ## Policies
 
 - **`none`**: plans nothing (default for CIs without a policy).
@@ -138,6 +162,11 @@ GET  /cis/<ci>/versions?to=&from=  range over the lineage DAG, oldest first
 GET  /cis/<ci>/work?to=&from=      or ?versions=a,b   parent tickets -> CSC -> CSC tickets (live from the source)
 GET  /tickets/<key>                a ticket, its parent, and CSC tickets under it by CI/CSC (live)
 GET  /ticket-states                the workflow states a source may report
+GET  /backlogs[?ci=]               POST /backlogs {name, description?, teams?, cis?, source?}
+GET  /backlogs/<b>                 items in rank order, tickets read live      PATCH /backlogs/<b>
+POST /backlogs/<b>/items {key, position?: bottom|top}   DELETE /backlogs/<b>/items/<key>
+POST /backlogs/<b>/items/<key>/move {after?, before?} -> {key, rank}
+POST /backlogs/<b>/pull            POST /backlogs/<b>/rebalance
 GET  /events?entity=&entity_id=
 ```
 
@@ -160,6 +189,9 @@ every URL works as a plain link.
 /releases/<id>        versions, released vs effective version, baselines behind, unabsorbed fixes, work link
 /versions/<id>        tickets fixed in it, lineage (built from / built on by), manifest, where-used, history
 /tickets/<key>        a parent ticket and how each CSC implemented it, across CIs
+/backlogs             shared backlogs, and a form to create one
+/backlogs/<b>         the ranked backlog: drag and drop (or ⤒ ↑ ↓) to reorder, pull from the source, add by key,
+                      remove, hide done
 /ifcs                 IFC tree with each IFC's current HSCM
 /ifcs/<ifc>           current HSCM entries (stale ones flagged), baseline history
 /baselines/<id>       entries, compare with another baseline of the IFC (diff loaded via htmx)

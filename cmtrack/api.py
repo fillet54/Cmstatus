@@ -307,9 +307,9 @@ def diff_baselines(conn, a, b):
 # ----------------------------------------------------------------------------- tickets / work items
 # Tickets are read live from the configured TicketSource on every call; nothing is stored here.
 
-def ticket_source():
+def ticket_source(default=None):
     try:
-        return tickets.pick_source(current_app.config["TICKET_SOURCES"], request.args.get("source"))
+        return tickets.pick_source(current_app.config["TICKET_SOURCES"], request.args.get("source") or default)
     except KeyError as e:
         raise svc.CMError(e.args[0]) from None
 
@@ -338,6 +338,75 @@ def work(conn, ref):
 @tx
 def get_ticket(conn, key):
     return jsonify(svc.ticket_detail(conn, ticket_source(), key))
+
+
+# ----------------------------------------------------------------------------- backlogs
+# Shared, ranked backlogs of top-level tickets. Order and membership live here; tickets are read live.
+
+def backlog_source(conn, ref):
+    return ticket_source(svc.get_backlog(conn, ref)["source"])
+
+
+@bp.get("/backlogs")
+@tx
+def list_backlogs(conn):
+    return jsonify(svc.list_backlogs(conn, request.args.get("ci")))
+
+
+@bp.post("/backlogs")
+@tx
+def create_backlog(conn):
+    d = body()
+    return created(svc.create_backlog(conn, d.get("name"), **pick(d, "description", "teams", "cis", "source")))
+
+
+@bp.get("/backlogs/<ref>")
+@tx
+def get_backlog(conn, ref):
+    """The backlog in rank order, each ticket read live from the source."""
+    return jsonify(svc.backlog_view(conn, backlog_source(conn, ref), ref))
+
+
+@bp.patch("/backlogs/<ref>")
+@tx
+def update_backlog(conn, ref):
+    return jsonify(svc.update_backlog(conn, ref, **body()))
+
+
+@bp.post("/backlogs/<ref>/items")
+@tx
+def add_backlog_item(conn, ref):
+    """{key, position?: "bottom" | "top"}"""
+    d = body()
+    return created(svc.add_backlog_item(conn, backlog_source(conn, ref), ref, d.get("key"),
+                                        d.get("position") or "bottom"))
+
+
+@bp.delete("/backlogs/<ref>/items/<key>")
+@tx
+def remove_backlog_item(conn, ref, key):
+    return jsonify(svc.remove_backlog_item(conn, ref, key))
+
+
+@bp.post("/backlogs/<ref>/items/<key>/move")
+@tx
+def move_backlog_item(conn, ref, key):
+    """{after?: key above, before?: key below} -> {key, rank}. Only the moved item is re-ranked."""
+    d = body()
+    return jsonify(svc.move_backlog_item(conn, ref, key, d.get("after"), d.get("before")))
+
+
+@bp.post("/backlogs/<ref>/pull")
+@tx
+def pull_backlog(conn, ref):
+    """Append the source's top-level tickets for this backlog that aren't on it yet."""
+    return jsonify(svc.pull_backlog(conn, backlog_source(conn, ref), ref))
+
+
+@bp.post("/backlogs/<ref>/rebalance")
+@tx
+def rebalance_backlog(conn, ref):
+    return jsonify(svc.rebalance_backlog(conn, ref))
 
 
 # ----------------------------------------------------------------------------- events

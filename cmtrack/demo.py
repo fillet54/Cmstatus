@@ -83,25 +83,40 @@ def seed(client):
     q1 = next(r["id"] for r in call("get", "/cis/NAV-SW/releases") if r["name"] == "2027.Q1")
     call("put", f"/versions/{version(q1, '2027.Q1-b1')}/parents", {"parents": ["2026.Q4-b4", "2026.Q4.ER1"]})
 
+    # a backlog shared by the nav and display teams; filled from the ticket source when one is configured
+    call("post", "/backlogs", {"name": "Nav & Display", "description": "Shared feature backlog",
+                               "teams": ["Nav", "Maps", "Display"], "cis": ["NAV-SW", "DISPLAY-SW"]})
+    if client.application.config.get("TICKET_SOURCES"):
+        call("post", "/backlogs/Nav & Display/pull")
+        call("post", "/backlogs/Nav & Display/items/PRG-20/move", {"before": "PRG-10"})      # to the top
+        call("post", "/backlogs/Nav & Display/items/PRG-15/move", {"after": "PRG-22"})      # to the bottom
+
 
 def demo_source():
     """Stand-in ticket source for the demo: CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source"""
     return StaticSource(DEMO_TICKETS, name="jira")
 
 
-def _t(key, summary, parent=None, pair=None, versions=None, state="done", type="Story", status=None, reason=None):
+def _t(key, summary, parent=None, pair=None, versions=None, state="done", type="Story", status=None, reason=None,
+       cis=None):
     project, product = pair or (None, None)
     return {"key": key, "summary": summary, "type": type, "parent_key": parent, "project": project,
-            "affected_product": product, "fix_versions": versions, "state": state, "state_reason": reason,
+            "affected_product": product, "fix_versions": versions, "state": state, "state_reason": reason, "cis": cis,
             "status": status or state.replace("_", " ").title(), "url": f"https://jira.example.com/browse/{key}"}
 
 
 CORE, MAPS, HUD = ("NAVL", "core"), ("NAVX", "maps"), ("DSP", "hud")
 DEMO_TICKETS = [
-    _t("PRG-10", "GPS-denied navigation", type="Feature", state="in_progress"),
-    _t("PRG-12", "Terrain database refresh", type="Feature", state="verification"),
-    _t("PRG-15", "CR-1234: heading drift after cold start", type="Change Request"),
-    _t("PRG-18", "Moving map declutter", type="Feature", state="analysis_in_progress"),
+    _t("PRG-10", "GPS-denied navigation", type="Feature", state="in_progress", cis=["NAV-SW", "DISPLAY-SW"]),
+    _t("PRG-12", "Terrain database refresh", type="Feature", state="verification", cis=["NAV-SW"]),
+    _t("PRG-15", "CR-1234: heading drift after cold start", type="Change Request", cis=["NAV-SW"]),
+    _t("PRG-18", "Moving map declutter", type="Feature", state="analysis_in_progress", cis=["NAV-SW", "DISPLAY-SW"]),
+    _t("PRG-20", "Weather radar overlay on the moving map", type="Feature", state="analysis_required",
+       cis=["NAV-SW", "DISPLAY-SW"]),
+    _t("PRG-21", "Night mode palette", type="Feature", state="ready_for_work", cis=["DISPLAY-SW"]),
+    _t("PRG-22", "Route re-planning around restricted airspace", type="Feature", state="analysis_in_progress",
+       cis=["NAV-SW"]),
+    _t("PRG-23", "Radar mode scheduling", type="Feature", state="analysis_required", cis=["RADAR-SW"]),
     _t("NAVL-101", "Inertial-only dead reckoning mode", "PRG-10", CORE, ["2026.Q4-b1"]),
     _t("NAVL-105", "Blend terrain-referenced fixes into the filter", "PRG-10", CORE, ["2027.Q1-b1"], "peer_review",
        status="In Review"),
@@ -129,6 +144,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if os.path.exists(args.db):
         raise SystemExit(f"{args.db} already exists; pick another --db or delete it")
-    seed(create_app({"DATABASE": args.db}).test_client())
+    seed(create_app({"DATABASE": args.db, "TICKET_SOURCES": {"jira": demo_source()}}).test_client())
     print(f"seeded {args.db}; run: CMTRACK_DB={args.db} CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source "
           f"python -m cmtrack")
