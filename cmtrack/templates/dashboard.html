@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% from "macros.html" import badge, empty %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="stats stats-vertical sm:stats-horizontal shadow w-full bg-base-100">
+  <a class="stat hover:bg-base-200" href="{{ url_for('ui.cis', managed='1') }}">
+    <div class="stat-title">Managed CIs</div>
+    <div class="stat-value">{{ counts.managed }}</div>
+    <div class="stat-desc">{{ counts.placeholders }} placeholder{{ 's' if counts.placeholders != 1 }} from HSCMs</div>
+  </a>
+  <div class="stat">
+    <div class="stat-title">Open releases</div>
+    <div class="stat-value">{{ counts.open_releases }}</div>
+    <div class="stat-desc">planned or active</div>
+  </div>
+  <a class="stat hover:bg-base-200" href="{{ url_for('ui.ifcs') }}">
+    <div class="stat-title">Approved baselines</div>
+    <div class="stat-value">{{ counts.approved_baselines }}</div>
+    <div class="stat-desc">current + superseded history on each IFC</div>
+  </a>
+  <div class="stat">
+    <div class="stat-title">Stale HSCM entries</div>
+    <div class="stat-value {{ 'text-warning' if stale }}">{{ stale | length }}</div>
+    <div class="stat-desc">fielding an older version than effective</div>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-6">
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">Open patch / emergency releases</h2>
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>CI</th><th>Release</th><th>Kind</th><th>Reason</th><th>Status</th></tr></thead>
+          <tbody>
+          {% for r in open_children %}
+            <tr class="hover">
+              <td><a class="link link-hover" href="{{ url_for('ui.ci', ref=r.ci) }}">{{ r.ci }}</a></td>
+              <td><a class="link link-primary font-mono" href="{{ url_for('ui.release', rid=r.id) }}">{{ r.name }}</a></td>
+              <td>{{ badge(r.kind) }}</td>
+              <td class="font-mono text-xs">{{ r.reason or "" }}</td>
+              <td>{{ badge(r.status) }}</td>
+            </tr>
+          {% else %}{{ empty("None open", 5) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">Upcoming planned releases</h2>
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>CI</th><th>Release</th><th>Target</th><th>Status</th></tr></thead>
+          <tbody>
+          {% for r in upcoming %}
+            <tr class="hover">
+              <td><a class="link link-hover" href="{{ url_for('ui.ci', ref=r.ci) }}">{{ r.ci }}</a></td>
+              <td><a class="link link-primary font-mono" href="{{ url_for('ui.release', rid=r.id) }}">{{ r.name }}</a></td>
+              <td class="whitespace-nowrap">{{ r.target_date or "—" }}</td>
+              <td>{{ badge(r.status) }}</td>
+            </tr>
+          {% else %}{{ empty("Nothing planned", 4) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">Baselines behind effective version</h2>
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>IFC</th><th>Baseline</th><th>CI</th><th>Fielded</th><th>Effective</th></tr></thead>
+          <tbody>
+          {% for s in stale %}
+            <tr class="hover">
+              <td>{{ s.ifc }}</td>
+              <td><a class="link link-primary" href="{{ url_for('ui.baseline', bid=s.baseline_id) }}">{{ s.baseline }}</a></td>
+              <td><a class="link link-hover" href="{{ url_for('ui.ci', ref=s.ci) }}">{{ s.ci }}</a></td>
+              <td class="font-mono"><a class="link link-hover" href="{{ url_for('ui.version', vid=s.version_id) }}">{{ s.version }}</a></td>
+              <td class="font-mono text-warning">{{ s.effective }}</td>
+            </tr>
+          {% else %}{{ empty("All approved baselines are current", 5) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <div class="flex items-center justify-between">
+        <h2 class="card-title">Recent activity</h2>
+        <a class="link link-hover text-sm" href="{{ url_for('ui.events') }}">All events →</a>
+      </div>
+      <div hx-get="{{ url_for('ui.recent_events') }}" hx-trigger="every 30s" hx-swap="innerHTML">
+        {% include "_recent_events.html" %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

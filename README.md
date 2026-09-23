@@ -5,7 +5,8 @@ Python 3.10+, Flask, SQLite. No other dependencies.
 
 ```
 python -m cmtrack                      # dev server on :5000, DB in ./cmtrack.db
-python -m unittest discover -s tests   # end-to-end scenario
+python -m unittest discover -s tests   # end-to-end scenario + views
+python -m cmtrack.demo --db demo.db    # load a demo scenario, then: CMTRACK_DB=demo.db python -m cmtrack
 ```
 Env: `CMTRACK_DB` (SQLite path), `CMTRACK_POLICY_DIR` (where manual plan files live, default `./policies`).
 
@@ -84,6 +85,26 @@ GET  /events?entity=&entity_id=
 ```
 
 Schema additions to existing DBs are applied by `db.MIGRATIONS` at startup.
+
+## Web UI (read-only, `/`)
+
+Flask + Jinja pages in `cmtrack/views.py` / `cmtrack/templates/`, htmx for interactivity, Tailwind + daisyUI 4
+(loaded from CDN in `base.html`, no build step). Each view returns its `_fragment.html` template to htmx
+requests and the full page otherwise (boosted navigation and history restores also get the full page), so
+every URL works as a plain link.
+
+```
+/                     dashboard: counts, open patch/emergency releases, upcoming releases,
+                      HSCM entries behind their effective version, recent activity (polls every 30s)
+/cis                  CI list; search + type/managed filters re-render the rows via htmx
+/cis/<ci>             releases grouped by family (click one to load its panel), where fielded, policy, CSCs
+/releases/<id>        versions, released vs effective version, baselines behind
+/versions/<id>        manifest (composites), where-used, history
+/ifcs                 IFC tree with each IFC's current HSCM
+/ifcs/<ifc>           current HSCM entries (stale ones flagged), baseline history
+/baselines/<id>       entries, compare with another baseline of the IFC (diff loaded via htmx)
+/events               audit log, entity filter, infinite scroll
+```
 
 ## Not yet built (next iterations)
 - Jira sync: product tickets via the CSC pair mapping, discrepancy/feature trace, missing-ticket findings.

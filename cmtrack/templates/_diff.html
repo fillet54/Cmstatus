@@ -1,0 +1,24 @@
+{% if not diff %}
+<p class="text-base-content/60 text-sm">Pick a baseline to see what changed.</p>
+{% else %}
+<p class="text-sm text-base-content/70 mb-2">From <a class="link font-semibold" href="{{ url_for('ui.baseline', bid=a.id) }}">{{ a.name }}</a> to <span class="font-semibold">{{ b.name }}</span></p>
+{% if not (diff.added or diff.removed or diff.changed) %}
+<div class="alert text-sm">Identical: {{ diff.unchanged | length }} entries unchanged.</div>
+{% else %}
+<table class="table table-sm">
+  <thead><tr><th></th><th>CI</th><th>From</th><th>To</th></tr></thead>
+  <tbody>
+  {% for ci, ch in diff.changed.items() %}
+    <tr><td><span class="badge badge-info badge-sm">changed</span></td><td>{{ ci }}</td><td class="font-mono">{{ ch["from"] }}</td><td class="font-mono font-semibold">{{ ch["to"] }}</td></tr>
+  {% endfor %}
+  {% for ci, v in diff.added.items() %}
+    <tr><td><span class="badge badge-success badge-sm">added</span></td><td>{{ ci }}</td><td></td><td class="font-mono font-semibold">{{ v }}</td></tr>
+  {% endfor %}
+  {% for ci, v in diff.removed.items() %}
+    <tr><td><span class="badge badge-error badge-sm">removed</span></td><td>{{ ci }}</td><td class="font-mono line-through">{{ v }}</td><td></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="text-xs text-base-content/60 mt-2">{{ diff.unchanged | length }} unchanged{% if diff.unchanged %}: {{ diff.unchanged | join(", ") }}{% endif %}</p>
+{% endif %}
+{% endif %}

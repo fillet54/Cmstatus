@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header %}
+{% set section = "ui.cis" %}
+{% block title %}{{ r.ci }} {{ r.name }}{% endblock %}
+{% block content %}
+{{ page_header(r.name, None, [("CIs", url_for('ui.cis')), (r.ci, url_for('ui.ci', ref=r.ci)), (r.name, None)]) }}
+<div class="max-w-3xl">{% include "_release.html" %}</div>
+{% endblock %}

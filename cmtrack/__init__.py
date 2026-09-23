@@ -2,7 +2,7 @@
 import os
 import sqlite3
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template, request
 
 from . import db
 from .service import CMError
@@ -22,11 +22,15 @@ def create_app(config=None):
     conn.close()
 
     from .api import bp
+    from .views import bp as ui
     app.register_blueprint(bp, url_prefix="/api")
+    app.register_blueprint(ui)
     app.teardown_appcontext(db.close_db)
 
     @app.errorhandler(CMError)
     def _cm_error(e):
+        if not request.path.startswith("/api"):
+            return render_template("error.html", error=e), e.status
         body = {"error": e.message}
         if e.problems:
             body["problems"] = e.problems

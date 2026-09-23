@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "macros.html" import badge, page_header %}
+{% set section = "ui.ifcs" %}
+{% block title %}{{ b.ifc }} {{ b.name }}{% endblock %}
+{% block content %}
+{% call page_header(b.name, None, [("IFCs", url_for('ui.ifcs')), (b.ifc, url_for('ui.ifc', ref=b.ifc)), (b.name, None)]) %}
+  {{ badge(b.status) }} {{ badge(b.source) }}
+{% endcall %}
+
+<div class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full">
+  <div class="stat"><div class="stat-title">Entries</div><div class="stat-value text-2xl">{{ entries | length }}</div>
+    <div class="stat-desc">{{ entries | selectattr('effective') | list | length }} behind effective</div></div>
+  <div class="stat"><div class="stat-title">Supersedes</div><div class="stat-value text-lg">
+    {% if b.supersedes %}<a class="link link-hover" href="{{ url_for('ui.baseline', bid=b.supersedes_id) }}">{{ b.supersedes }}</a>{% else %}—{% endif %}</div></div>
+  <div class="stat"><div class="stat-title">Source ref</div><div class="stat-value text-lg font-mono">{{ b.source_ref or "—" }}</div></div>
+  <div class="stat"><div class="stat-title">Approved</div><div class="stat-value text-lg">{{ b.approved_at | ts or "—" }}</div>
+    <div class="stat-desc">created {{ b.created_at | ts }}</div></div>
+</div>
+
+<div class="grid lg:grid-cols-5 gap-6 items-start">
+  <div class="card bg-base-100 shadow-sm lg:col-span-3">
+    <div class="card-body">
+      <h2 class="card-title">Entries</h2>
+      {% include "_entries.html" %}
+    </div>
+  </div>
+
+  <div class="card bg-base-100 shadow-sm lg:col-span-2">
+    <div class="card-body">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="card-title">Compare</h2>
+        {% if others %}
+        <select name="other" class="select select-bordered select-sm"
+                hx-get="{{ url_for('ui.baseline_diff', bid=b.id) }}" hx-target="#diff" hx-trigger="change">
+          <option value="">Choose a baseline…</option>
+          {% for o in others %}<option value="{{ o.id }}" {{ 'selected' if o.id == compare }}>{{ o.name }} ({{ o.status }})</option>{% endfor %}
+        </select>
+        {% endif %}
+      </div>
+      <div id="diff" {% if compare %}hx-get="{{ url_for('ui.baseline_diff', bid=b.id, other=compare) }}" hx-trigger="load"{% endif %}>
+        {% if not others %}<p class="text-base-content/60 text-sm">This is the only baseline for {{ b.ifc }}.</p>
+        {% elif compare %}<span class="loading loading-dots loading-sm"></span>
+        {% else %}<p class="text-base-content/60 text-sm">Pick a baseline to see what changed.</p>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

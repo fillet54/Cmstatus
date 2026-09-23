@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% from "macros.html" import badge, page_header, empty %}
+{% set section = "ui.cis" %}
+{% block title %}{{ ci.name }}{% endblock %}
+{% block content %}
+{% call page_header(ci.name, ci.description, [("CIs", url_for('ui.cis')), (ci.name, None)]) %}
+  {{ badge(ci.type) }}{% if ci.kind == 'composite' %} {{ badge('composite') }}{% endif %}
+  {% if not ci.managed %}<span class="badge badge-ghost">placeholder</span>{% endif %}
+{% endcall %}
+
+<div class="grid lg:grid-cols-5 gap-6 items-start">
+  <div class="lg:col-span-3 space-y-6">
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body">
+        <h2 class="card-title">Releases</h2>
+        <p class="text-sm text-base-content/60 -mt-1">Patch and emergency releases are nested under the release they were spawned from. Click a release for details.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th>Release</th><th>Kind</th><th>Status</th><th>Target</th><th>Released as</th><th class="text-right" title="planned + ad hoc versions">Versions</th></tr></thead>
+            <tbody>
+            {% for root, kids in families %}
+              {% for r in [root] + kids %}
+              {% set child = r is not sameas root %}
+              <tr class="hover cursor-pointer {{ 'bg-base-200/50' if child }}"
+                  hx-get="{{ url_for('ui.release', rid=r.id) }}" hx-target="#release-panel" hx-push-url="false"
+                  hx-on::after-request="document.querySelectorAll('[data-rel-row]').forEach(e => e.classList.remove('bg-primary/10')); this.classList.add('bg-primary/10')"
+                  data-rel-row>
+                <td class="font-mono {{ 'pl-8' if child }}">
+                  {% if child %}<span class="text-base-content/40">↳</span>{% endif %}
+                  <a class="link link-primary" href="{{ url_for('ui.release', rid=r.id) }}" hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a>
+                </td>
+                <td>{{ badge(r.kind, "badge-sm") }}</td>
+                <td>{{ badge(r.status, "badge-sm") }}</td>
+                <td class="whitespace-nowrap">{{ r.target_date or "—" }}</td>
+                <td class="font-mono">{{ r.released_version or "" }}</td>
+                <td class="text-right whitespace-nowrap">
+                  {% if r.kind != 'planned' %}{{ r.planned_versions + r.unplanned_versions }}{% else %}{{ r.planned_versions }}{% if r.unplanned_versions %} <span class="text-warning" title="ad hoc versions (variance)">+{{ r.unplanned_versions }}</span>{% endif %}{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            {% else %}{{ empty("No releases. Plan this CI via POST /api/cis/" ~ ci.name ~ "/plan", 6) }}{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body">
+        <h2 class="card-title">Fielded in (approved baselines)</h2>
+        <table class="table table-sm">
+          <thead><tr><th>IFC</th><th>Baseline</th><th>Version</th></tr></thead>
+          <tbody>
+          {% for f in fielded %}
+            <tr class="hover">
+              <td><a class="link link-hover" href="{{ url_for('ui.ifc', ref=f.ifc) }}">{{ f.ifc }}</a></td>
+              <td><a class="link link-primary" href="{{ url_for('ui.baseline', bid=f.id) }}">{{ f.name }}</a></td>
+              <td class="font-mono"><a class="link link-hover" href="{{ url_for('ui.version', vid=f.version_id) }}">{{ f.version }}</a></td>
+            </tr>
+          {% else %}{{ empty("Not in any approved baseline", 3) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="lg:col-span-2 space-y-6 lg:sticky lg:top-4">
+    <div id="release-panel">
+      <div class="card bg-base-100 shadow-sm border border-dashed border-base-300">
+        <div class="card-body items-center text-center text-base-content/60">Select a release to see its versions.</div>
+      </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body">
+        <h2 class="card-title">Policy</h2>
+        {% if ci.policy %}
+          <p><span class="font-semibold">{{ ci.policy.name }}</span> {{ badge(ci.policy.type, "badge-sm") }}</p>
+          {% if ci.policy.params %}
+          <pre class="text-xs bg-base-200 rounded p-2 overflow-x-auto">{{ ci.policy.params | tojson(indent=2) }}</pre>
+          {% endif %}
+        {% else %}<p class="text-base-content/60">No policy: nothing is planned automatically.</p>{% endif %}
+      </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body">
+        <h2 class="card-title">CSCs <span class="badge badge-ghost">{{ ci.cscs | length }}</span></h2>
+        <table class="table table-sm">
+          <thead><tr><th>Name</th><th>Jira project</th><th>Affected product</th><th>Team</th></tr></thead>
+          <tbody>
+          {% for c in ci.cscs %}
+            <tr><td>{{ c.name }}</td><td class="font-mono">{{ c.jira_project or "—" }}</td><td>{{ c.affected_product or "—" }}</td><td>{{ c.team or "" }}</td></tr>
+          {% else %}{{ empty("No CSCs mapped", 4) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if ci.attributes %}
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body">
+        <h2 class="card-title">Attributes</h2>
+        <pre class="text-xs bg-base-200 rounded p-2 overflow-x-auto">{{ ci.attributes | tojson(indent=2) }}</pre>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

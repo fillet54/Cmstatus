@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Error{% endblock %}
+{% block content %}
+<div role="alert" class="alert alert-error">
+  <div>
+    <h3 class="font-bold">{{ error.status }} · {{ error.message }}</h3>
+    {% for p in error.problems %}<div class="text-sm">{{ p }}</div>{% endfor %}
+  </div>
+</div>
+<a href="javascript:history.back()" class="btn btn-sm">Back</a>
+{% endblock %}

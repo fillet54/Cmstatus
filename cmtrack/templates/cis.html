@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header %}
+{% block title %}CIs{% endblock %}
+{% block content %}
+{{ page_header("Configuration items", "CSCIs and HWCIs, with their release state.") }}
+
+<form class="flex flex-wrap gap-2 items-center" action="{{ url_for('ui.cis') }}"
+      hx-get="{{ url_for('ui.cis') }}" hx-target="#ci-rows" hx-push-url="true"
+      hx-trigger="input changed delay:250ms from:input[name=q], change from:select, submit">
+  <input type="search" name="q" value="{{ filters.q }}" placeholder="Search name or description…"
+         class="input input-bordered input-sm w-full sm:w-72" autocomplete="off">
+  <select name="type" class="select select-bordered select-sm">
+    <option value="">All types</option>
+    {% for t in ("CSCI", "HWCI") %}<option {{ 'selected' if filters.type == t }}>{{ t }}</option>{% endfor %}
+  </select>
+  <select name="managed" class="select select-bordered select-sm">
+    <option value="">Managed + placeholders</option>
+    <option value="1" {{ 'selected' if filters.managed == '1' }}>Managed only</option>
+    <option value="0" {{ 'selected' if filters.managed == '0' }}>Placeholders only</option>
+  </select>
+  <span class="loading loading-spinner loading-sm htmx-indicator"></span>
+</form>
+
+<div class="card bg-base-100 shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="table">
+      <thead>
+        <tr><th>Name</th><th>Type</th><th>Policy</th><th>Last released</th><th>Next planned</th><th class="text-right">Open</th></tr>
+      </thead>
+      <tbody id="ci-rows">{% include "_ci_rows.html" %}</tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

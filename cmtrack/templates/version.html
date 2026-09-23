@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "macros.html" import badge, page_header, empty, detail %}
+{% set section = "ui.cis" %}
+{% block title %}{{ ci.name }} {{ v.name }}{% endblock %}
+{% block content %}
+{% call page_header(v.name, None, [("CIs", url_for('ui.cis')), (ci.name, url_for('ui.ci', ref=ci.name)),
+                                   (rel.name, url_for('ui.release', rid=rel.id)), (v.name, None)]) %}
+  {{ badge(v.status) }}
+  {% if not v.planned and rel.kind == 'planned' %}<span class="badge badge-warning badge-outline">ad hoc</span>{% endif %}
+{% endcall %}
+
+<div class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full">
+  <div class="stat"><div class="stat-title">Release</div><div class="stat-value text-lg font-mono">{{ rel.name }}</div><div class="stat-desc">sequence #{{ v.seq }}</div></div>
+  <div class="stat"><div class="stat-title">Planned</div><div class="stat-value text-lg">{{ v.planned_date or "—" }}</div></div>
+  <div class="stat"><div class="stat-title">Built</div><div class="stat-value text-lg">{{ v.built_at | ts or "—" }}</div></div>
+  <div class="stat"><div class="stat-title">Artifact</div><div class="stat-value text-lg font-mono break-all">{{ v.artifact_ref or "—" }}</div></div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-6 items-start">
+  {% if ci.kind == "composite" %}
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">Manifest</h2>
+      <table class="table table-sm">
+        <thead><tr><th>CI</th><th>Version</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for m in manifest %}
+          <tr class="hover">
+            <td><a class="link link-hover" href="{{ url_for('ui.ci', ref=m.ci) }}">{{ m.ci }}</a></td>
+            <td class="font-mono"><a class="link link-primary" href="{{ url_for('ui.version', vid=m.version_id) }}">{{ m.version }}</a></td>
+            <td>{{ badge(m.status, "badge-sm") }}</td>
+          </tr>
+        {% else %}{{ empty("Empty manifest", 3) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">Where used</h2>
+      <h3 class="font-semibold text-sm mt-1">Composites</h3>
+      <table class="table table-sm">
+        <tbody>
+        {% for c in used.composites %}
+          <tr class="hover"><td>{{ c.ci }}</td><td class="font-mono"><a class="link link-primary" href="{{ url_for('ui.version', vid=c.id) }}">{{ c.version }}</a></td></tr>
+        {% else %}{{ empty("Not pinned by any composite", 2) }}{% endfor %}
+        </tbody>
+      </table>
+      <h3 class="font-semibold text-sm mt-3">Baselines</h3>
+      <table class="table table-sm">
+        <thead><tr><th>IFC</th><th>Baseline</th><th>Status</th><th>Via</th></tr></thead>
+        <tbody>
+        {% for b in used.baselines %}
+          <tr class="hover">
+            <td>{{ b.ifc }}</td>
+            <td><a class="link link-primary" href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.name }}</a></td>
+            <td>{{ badge(b.status, "badge-sm") }}</td>
+            <td class="font-mono text-xs">{{ b.via_version }}</td>
+          </tr>
+        {% else %}{{ empty("Not in any baseline", 4) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">History</h2>
+      <ul class="timeline timeline-vertical timeline-compact">
+      {% for e in events %}
+        <li>
+          {% if not loop.first %}<hr>{% endif %}
+          <div class="timeline-middle text-primary">●</div>
+          <div class="timeline-end mb-4 text-sm">
+            <div class="font-mono text-xs text-base-content/60">{{ e.at | ts }}</div>
+            <div><span class="font-semibold">{{ e.action }}</span> {{ detail(e.detail) }}</div>
+          </div>
+          {% if not loop.last %}<hr>{% endif %}
+        </li>
+      {% else %}<li class="text-base-content/60">No events.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

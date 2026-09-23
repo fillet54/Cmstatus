@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "macros.html" import badge, page_header, empty %}
+{% set section = "ui.ifcs" %}
+{% block title %}{{ ifc.name }}{% endblock %}
+{% block content %}
+{% set crumbs = [("IFCs", url_for('ui.ifcs'))] %}
+{% for a in ifc.ancestors | reverse %}{% set _ = crumbs.append((a, url_for('ui.ifc', ref=a))) %}{% endfor %}
+{% set _ = crumbs.append((ifc.name, None)) %}
+{{ page_header(ifc.name, ifc.description, crumbs) }}
+
+{% if ifc.children %}
+<div class="flex flex-wrap gap-2 items-center text-sm">
+  <span class="text-base-content/60">Sub-capabilities:</span>
+  {% for c in ifc.children %}<a class="badge badge-outline hover:badge-primary" href="{{ url_for('ui.ifc', ref=c) }}">{{ c }}</a>{% endfor %}
+</div>
+{% endif %}
+
+<div class="grid lg:grid-cols-5 gap-6 items-start">
+  <div class="card bg-base-100 shadow-sm lg:col-span-3">
+    <div class="card-body">
+      {% if current %}
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="card-title">Current HSCM: <a class="link link-primary" href="{{ url_for('ui.baseline', bid=current.id) }}">{{ current.name }}</a></h2>
+        <div class="flex gap-1 items-center text-sm">{{ badge(current.source) }}
+          {% if current.source_ref %}<span class="font-mono">{{ current.source_ref }}</span>{% endif %}</div>
+      </div>
+      <p class="text-sm text-base-content/60 -mt-1">Approved {{ current.approved_at | ts }}</p>
+      {% include "_entries.html" %}
+      {% else %}
+      <h2 class="card-title">Current HSCM</h2>
+      <p class="text-base-content/60">No approved baseline yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card bg-base-100 shadow-sm lg:col-span-2">
+    <div class="card-body">
+      <h2 class="card-title">Baseline history</h2>
+      <table class="table table-sm">
+        <thead><tr><th>Name</th><th>Status</th><th>Source</th><th>Approved</th></tr></thead>
+        <tbody>
+        {% for b in ifc.baselines | reverse %}
+          <tr class="hover">
+            <td><a class="link link-primary" href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.name }}</a></td>
+            <td>{{ badge(b.status, "badge-sm") }}</td>
+            <td>{{ badge(b.source, "badge-sm") }}</td>
+            <td class="whitespace-nowrap text-xs">{{ b.approved_at | ts }}</td>
+          </tr>
+        {% else %}{{ empty("No baselines", 4) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

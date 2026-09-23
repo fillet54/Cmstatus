@@ -1,0 +1,15 @@
+{% from "macros.html" import badge, empty %}
+{% for c in cis %}
+<tr class="hover {{ 'opacity-60' if not c.managed }}">
+  <td>
+    <a class="link link-primary font-semibold" href="{{ url_for('ui.ci', ref=c.name) }}">{{ c.name }}</a>
+    {% if not c.managed %}<span class="badge badge-ghost badge-sm ml-1">placeholder</span>{% endif %}
+    {% if c.description %}<div class="text-xs text-base-content/60 truncate max-w-xs">{{ c.description }}</div>{% endif %}
+  </td>
+  <td class="space-x-1">{{ badge(c.type, "badge-sm") }}{% if c.kind == "composite" %}{{ badge("composite", "badge-sm") }}{% endif %}</td>
+  <td>{{ c.policy or "—" }}</td>
+  <td class="font-mono">{{ c.last_release or "—" }}</td>
+  <td class="font-mono">{{ c.next_release or "—" }}{% if c.next_target %} <span class="text-xs text-base-content/60">{{ c.next_target }}</span>{% endif %}</td>
+  <td class="text-right">{{ c.open_releases }}</td>
+</tr>
+{% else %}{{ empty("No CIs match", 6) }}{% endfor %}

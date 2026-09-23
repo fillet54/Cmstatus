@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "macros.html" import badge, page_header %}
+{% block title %}IFCs{% endblock %}
+{% macro tree(parent_id) %}
+<ul>
+{% for i in children.get(parent_id, []) %}
+  <li>
+    <a href="{{ url_for('ui.ifc', ref=i.name) }}" class="flex justify-between gap-4">
+      <span class="font-semibold">{{ i.name }}{% if i.description %} <span class="font-normal text-base-content/60">{{ i.description }}</span>{% endif %}</span>
+      {% if i.current %}<span class="text-sm">{{ i.current.name }} {{ badge(i.current.source, "badge-sm") }}</span>
+      {% else %}<span class="text-sm text-base-content/50">no approved HSCM</span>{% endif %}
+    </a>
+    {% if children.get(i.id) %}{{ tree(i.id) }}{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endmacro %}
+{% block content %}
+{{ page_header("IFCs", "Capabilities, their hierarchy, and the current approved HSCM for each.") }}
+<div class="card bg-base-100 shadow-sm">
+  <div class="card-body">
+    {% if total %}
+    <div class="menu w-full p-0 [&_ul]:w-full">{{ tree(None) }}</div>
+    {% else %}<p class="text-base-content/60">No IFCs yet.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

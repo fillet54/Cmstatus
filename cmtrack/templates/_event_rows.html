@@ -1,0 +1,19 @@
+{% from "macros.html" import empty, detail %}
+{% for e in events %}
+  {% set href = entity_url(e.entity, e.entity_id) %}
+  <tr class="hover align-top">
+    <td class="text-base-content/50">{{ e.id }}</td>
+    <td class="font-mono text-xs whitespace-nowrap">{{ e.at | ts }}</td>
+    <td class="whitespace-nowrap">{% if href %}<a class="link link-primary" href="{{ href }}">{{ e.entity }} #{{ e.entity_id }}</a>{% else %}{{ e.entity }} #{{ e.entity_id }}{% endif %}</td>
+    <td class="font-semibold">{{ e.action }}</td>
+    <td class="text-xs">{{ detail(e.detail) }}</td>
+  </tr>
+{% else %}
+  {% if not request.args.before %}{{ empty("No events", 5) }}{% endif %}
+{% endfor %}
+{% if more %}
+  <tr hx-get="{{ url_for('ui.events', entity=filters.entity or None, entity_id=filters.entity_id, before=events[-1].id) }}"
+      hx-trigger="revealed" hx-target="this" hx-swap="outerHTML">
+    <td colspan="5" class="text-center"><span class="loading loading-dots loading-sm"></span></td>
+  </tr>
+{% endif %}

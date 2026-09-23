@@ -785,8 +785,11 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
 
 # ----------------------------------------------------------------------------- events
 
-def list_events(conn, entity=None, entity_id=None, limit=200):
+def list_events(conn, entity=None, entity_id=None, limit=200, before_id=None):
     sql, args = "SELECT * FROM event WHERE 1=1", []
+    if before_id is not None:
+        sql += " AND id < ?"
+        args.append(before_id)
     if entity:
         sql += " AND entity = ?"
         args.append(entity)

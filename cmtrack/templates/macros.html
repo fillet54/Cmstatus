@@ -1,0 +1,33 @@
+{% macro badge(status, size="") -%}
+{%- set cls = {
+  "planned": "badge-ghost", "active": "badge-info", "built": "badge-info", "tested": "badge-accent",
+  "released": "badge-success", "approved": "badge-success", "external": "badge-neutral",
+  "rejected": "badge-error", "cancelled": "badge-error", "draft": "badge-warning", "superseded": "badge-ghost",
+  "patch": "badge-warning", "emergency": "badge-error", "CSCI": "badge-primary badge-outline",
+  "HWCI": "badge-secondary badge-outline", "composite": "badge-outline", "simple": "badge-ghost",
+  "scraped": "badge-neutral badge-outline", "manual": "badge-ghost", "policy": "badge-ghost",
+}.get(status, "badge-ghost") -%}
+<span class="badge {{ cls }} {{ size }} whitespace-nowrap">{{ status }}</span>
+{%- endmacro %}
+
+{% macro page_header(title, subtitle=None, crumbs=()) %}
+<div>
+  {% if crumbs %}
+  <div class="breadcrumbs text-sm py-0">
+    <ul>{% for label, href in crumbs %}<li>{% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}{{ label }}{% endif %}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  <h1 class="text-2xl font-bold flex flex-wrap items-center gap-2">{{ title }} {{ caller() if caller }}</h1>
+  {% if subtitle %}<p class="text-base-content/70 mt-1">{{ subtitle }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro empty(msg, cols=1) -%}
+<tr><td colspan="{{ cols }}" class="text-center text-base-content/60 py-6">{{ msg }}</td></tr>
+{%- endmacro %}
+
+{% macro detail(d) -%}
+{%- for k, v in (d or {}).items() if v not in (None, "", [], {}) -%}
+<span class="mr-2"><span class="text-base-content/60">{{ k }}:</span> {{ v | join(", ") if v is iterable and v is not string and v is not mapping else v }}</span>
+{%- endfor -%}
+{%- endmacro %}

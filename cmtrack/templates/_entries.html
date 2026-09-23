@@ -1,0 +1,21 @@
+{# baseline entries table; expects `entries` with an `effective` flag from views.with_staleness #}
+{% from "macros.html" import badge, empty %}
+<div class="overflow-x-auto">
+  <table class="table table-sm">
+    <thead><tr><th>CI</th><th>Type</th><th>Version</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+      <tr class="hover {{ 'opacity-70' if not e.managed }}">
+        <td>
+          <a class="link link-hover font-semibold" href="{{ url_for('ui.ci', ref=e.ci) }}">{{ e.ci }}</a>
+          {% if not e.managed %}<span class="badge badge-ghost badge-xs ml-1">placeholder</span>{% endif %}
+        </td>
+        <td>{{ badge(e.type, "badge-sm") }}</td>
+        <td class="font-mono"><a class="link link-primary" href="{{ url_for('ui.version', vid=e.version_id) }}">{{ e.version }}</a></td>
+        <td>{{ badge(e.status, "badge-sm") }}</td>
+        <td>{% if e.effective %}<span class="badge badge-warning badge-sm whitespace-nowrap" title="a newer version of this release is effective">behind: <span class="font-mono ml-1">{{ e.effective }}</span></span>{% endif %}</td>
+      </tr>
+    {% else %}{{ empty("No entries", 5) }}{% endfor %}
+    </tbody>
+  </table>
+</div>

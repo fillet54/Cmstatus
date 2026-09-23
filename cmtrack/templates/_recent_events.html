@@ -1,0 +1,15 @@
+<ul class="space-y-2 text-sm">
+{% for e in events %}
+  {% set href = entity_url(e.entity, e.entity_id) %}
+  <li class="flex gap-3">
+    <span class="text-base-content/60 whitespace-nowrap font-mono text-xs pt-0.5">{{ e.at | ts }}</span>
+    <span>
+      {% if href %}<a class="link link-hover" href="{{ href }}">{{ e.entity }} #{{ e.entity_id }}</a>{% else %}{{ e.entity }} #{{ e.entity_id }}{% endif %}
+      <span class="font-semibold">{{ e.action }}</span>
+      {% if e.detail.name or e.detail.version %}<span class="font-mono">{{ e.detail.name or e.detail.version }}</span>{% endif %}
+    </span>
+  </li>
+{% else %}
+  <li class="text-base-content/60">No activity yet.</li>
+{% endfor %}
+</ul>

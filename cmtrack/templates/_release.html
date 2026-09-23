@@ -1,0 +1,83 @@
+{% from "macros.html" import badge, empty %}
+<div class="card bg-base-100 shadow-sm">
+  <div class="card-body gap-4">
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <div>
+        <div class="text-sm text-base-content/60">
+          <a class="link link-hover" href="{{ url_for('ui.ci', ref=r.ci) }}">{{ r.ci }}</a>
+          {% if r.parent %} · spawned from <a class="link link-hover font-mono" href="{{ url_for('ui.release', rid=r.parent_id) }}">{{ r.parent }}</a>{% endif %}
+        </div>
+        <h2 class="text-xl font-bold font-mono">
+          <a class="link link-hover" href="{{ url_for('ui.release', rid=r.id) }}">{{ r.name }}</a>
+        </h2>
+      </div>
+      <div class="flex gap-1">{{ badge(r.kind) }} {{ badge(r.status) }}</div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+      <div><div class="text-base-content/60">Target</div><div>{{ r.target_date or "—" }}</div></div>
+      <div><div class="text-base-content/60">Released at</div><div>{{ r.released_at | ts or "—" }}</div></div>
+      <div><div class="text-base-content/60">Released version</div><div class="font-mono">{{ r.released_version or "—" }}</div></div>
+      <div><div class="text-base-content/60">Effective version</div>
+        <div class="font-mono {{ 'text-success font-semibold' if r.effective_version and r.effective_version != r.released_version }}">{{ r.effective_version or "—" }}</div></div>
+      {% if r.base_version %}<div><div class="text-base-content/60">Built on</div><div class="font-mono">{{ r.base_version }}</div></div>{% endif %}
+      {% if r.reason %}<div><div class="text-base-content/60">Reason / CR</div><div class="font-mono">{{ r.reason }}</div></div>{% endif %}
+      <div><div class="text-base-content/60">Source</div><div>{{ r.source }}</div></div>
+    </div>
+
+    {% if r.baselines_behind %}
+    <div role="alert" class="alert alert-warning text-sm">
+      <div>
+        <div class="font-semibold">{{ r.baselines_behind | length }} approved baseline{{ 's' if r.baselines_behind | length != 1 }} still field an older version</div>
+        <ul class="mt-1">
+        {% for b in r.baselines_behind %}
+          <li><a class="link" href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.ifc }} / {{ b.name }}</a>: <span class="font-mono">{{ b.fielded_version }}</span></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
+    <div>
+      <h3 class="font-semibold mb-1">Versions</h3>
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>#</th><th>Version</th><th>Status</th><th>Planned</th><th>Built</th></tr></thead>
+          <tbody>
+          {% for v in r.versions %}
+            <tr class="hover {{ 'font-semibold' if v.id == r.released_version_id }}">
+              <td>{{ v.seq }}</td>
+              <td class="font-mono">
+                <a class="link link-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>
+                {% if not v.planned and r.kind == 'planned' %}<span class="badge badge-warning badge-outline badge-xs ml-1" title="added outside the plan">ad hoc</span>{% endif %}
+              </td>
+              <td>{{ badge(v.status, "badge-sm") }}</td>
+              <td class="whitespace-nowrap">{{ v.planned_date or "" }}</td>
+              <td class="whitespace-nowrap">{{ (v.built_at or "")[:10] }}</td>
+            </tr>
+          {% else %}{{ empty("No versions", 5) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if r.children %}
+    <div>
+      <h3 class="font-semibold mb-1">Patch / emergency releases</h3>
+      <table class="table table-sm">
+        <thead><tr><th>Release</th><th>Kind</th><th>Status</th><th>Reason</th></tr></thead>
+        <tbody>
+        {% for c in r.children %}
+          <tr class="hover">
+            <td class="font-mono"><a class="link link-primary" href="{{ url_for('ui.release', rid=c.id) }}">{{ c.name }}</a></td>
+            <td>{{ badge(c.kind, "badge-sm") }}</td>
+            <td>{{ badge(c.status, "badge-sm") }}</td>
+            <td class="font-mono text-xs">{{ c.reason or "" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
