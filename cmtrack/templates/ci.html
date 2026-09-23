@@ -1,127 +1,138 @@
-{% extends "base.html" %}
-{% from "macros.html" import badge, page_header, empty %}
-{% set section = "ui.cis" %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "cis" %}
 {% block title %}{{ ci.name }}{% endblock %}
 {% block content %}
-{% call page_header(ci.name, ci.description, [("CIs", url_for('ui.cis')), (ci.name, None)]) %}
-  {{ badge(ci.type) }}{% if ci.kind == 'composite' %} {{ badge('composite') }}{% endif %}
-  {% if not ci.managed %}<span class="badge badge-ghost">placeholder</span>{% endif %}
+{% set o = overview %}
+{% set meta = [ci.type] %}
+{% if ci.kind == "composite" %}{% set _ = meta.append("composite") %}{% endif %}
+{% if not ci.managed %}{% set _ = meta.append("placeholder (known only from HSCMs)") %}{% endif %}
+{% if ci.policy %}{% set _ = meta.append("Policy " ~ ci.policy.name) %}{% endif %}
+{% set _ = meta.append(ci.cscs | length ~ " CSC" ~ ("s" if ci.cscs | length != 1 else "")
+                       ~ (" · " ~ ci.cscs | map(attribute="name") | join(", ") if ci.cscs else "")) %}
+{% call ui.page_header(ci.name, ci.description, crumbs=[("Configuration items", url_for('ui.cis')), (ci.name, None)], meta=meta) %}
+  {{ ui.button("Work items", variant="primary", href=url_for('ui.work', ref=ci.name)) }}
 {% endcall %}
 
-<div class="grid lg:grid-cols-5 gap-6 items-start">
-  <div class="lg:col-span-3 space-y-6">
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body">
-        <div class="flex items-center justify-between gap-2">
-          <h2 class="card-title">Releases</h2>
-          <a class="btn btn-sm btn-primary btn-outline" href="{{ url_for('ui.work', ref=ci.name) }}">Work items</a>
-        </div>
-        <p class="text-sm text-base-content/60 -mt-1">Patch and emergency releases are nested under the release they were spawned from. Click a release for details.</p>
-        <div class="overflow-x-auto">
-          <table class="table table-sm">
-            <thead><tr><th>Release</th><th>Kind</th><th>Status</th><th>Target</th><th>Released as</th><th class="text-right" title="planned + ad hoc versions">Versions</th></tr></thead>
-            <tbody>
-            {% for root, kids in families %}
-              {% for r in [root] + kids %}
-              {% set child = r is not sameas root %}
-              <tr class="hover cursor-pointer {{ 'bg-base-200/50' if child }}"
-                  hx-get="{{ url_for('ui.release', rid=r.id) }}" hx-target="#release-panel" hx-push-url="false"
-                  hx-on::after-request="document.querySelectorAll('[data-rel-row]').forEach(e => e.classList.remove('bg-primary/10')); this.classList.add('bg-primary/10')"
-                  data-rel-row>
-                <td class="font-mono {{ 'pl-8' if child }}">
-                  {% if child %}<span class="text-base-content/40">↳</span>{% endif %}
-                  <a class="link link-primary" href="{{ url_for('ui.release', rid=r.id) }}" hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a>
-                </td>
-                <td>{{ badge(r.kind, "badge-sm") }}</td>
-                <td>{{ badge(r.status, "badge-sm") }}</td>
-                <td class="whitespace-nowrap">{{ r.target_date or "—" }}</td>
-                <td class="font-mono">{{ r.released_version or "" }}</td>
-                <td class="text-right whitespace-nowrap">
-                  {% if r.kind != 'planned' %}{{ r.planned_versions + r.unplanned_versions }}{% else %}{{ r.planned_versions }}{% if r.unplanned_versions %} <span class="text-warning" title="ad hoc versions (variance)">+{{ r.unplanned_versions }}</span>{% endif %}{% endif %}
-                </td>
-              </tr>
-              {% endfor %}
-            {% else %}{{ empty("No releases. Plan this CI via POST /api/cis/" ~ ci.name ~ "/plan", 6) }}{% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+{% call ui.stats(ci.name ~ " at a glance") %}
+  {% if o.current %}
+    {{ ui.stat("Fielded (effective)", o.effective, "release " ~ o.current.name ~ " shipped as " ~ o.current.released_version, mono=True) }}
+  {% else %}
+    {{ ui.stat("Fielded (effective)", "—", "nothing released yet") }}
+  {% endif %}
+  {% if o.next %}
+    {{ ui.stat("Next release", o.next.name, "target " ~ (o.next.target_date or "not set") ~ " · " ~ o.next_built ~ " of " ~ o.next_total ~ " built", mono=True) }}
+  {% else %}
+    {{ ui.stat("Next release", "—", "nothing planned; plan via POST /api/cis/" ~ ci.name ~ "/plan") }}
+  {% endif %}
+  {{ ui.stat("Open patches / emergencies", o.open_children | length,
+             o.open_children | map(attribute="name") | join(", ") if o.open_children else "none open",
+             tone="warning" if o.open_children | selectattr("kind", "equalto", "emergency") | list else None) }}
+  {% if o.behind %}
+    {{ ui.stat("Baselines", o.behind | length ~ " behind", o.behind[0].ifc ~ " / " ~ o.behind[0].name ~ " fields " ~ o.behind[0].fielded_version,
+               tone="warning", icon="alert-triangle") }}
+  {% elif fielded %}
+    {{ ui.stat("Baselines", "current", "fielded in " ~ fielded | length ~ " approved baseline" ~ ("s" if fielded | length != 1 else ""), tone="success", icon="check") }}
+  {% else %}
+    {{ ui.stat("Baselines", "—", "not in any approved baseline") }}
+  {% endif %}
+{% endcall %}
 
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body">
-        <h2 class="card-title">Fielded in (approved baselines)</h2>
-        <table class="table table-sm">
-          <thead><tr><th>IFC</th><th>Baseline</th><th>Version</th></tr></thead>
-          <tbody>
-          {% for f in fielded %}
-            <tr class="hover">
-              <td><a class="link link-hover" href="{{ url_for('ui.ifc', ref=f.ifc) }}">{{ f.ifc }}</a></td>
-              <td><a class="link link-primary" href="{{ url_for('ui.baseline', bid=f.id) }}">{{ f.name }}</a></td>
-              <td class="font-mono"><a class="link link-hover" href="{{ url_for('ui.version', vid=f.version_id) }}">{{ f.version }}</a></td>
-            </tr>
-          {% else %}{{ empty("Not in any approved baseline", 3) }}{% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+<div class="ui-split">
+  <div class="ui-stack">
+    {% call ui.card(flush=True) %}
+      {% call ui.card_header("Releases", "Patch and emergency releases sit under the release they were spawned from. Select one for details.") %}{% endcall %}
+      {% call ui.table(["Release", "Kind", "Status", "Target / CR", "Released as", {"label": "Versions", "align": "end"}], body_id="release-rows") %}
+        {% for root, kids in families %}
+          {% for r in [root] + kids %}
+          {% set child = r is not sameas root %}
+          <tr class="ui-row--link{{ ' ui-row--child' if child }}{{ ' ui-row--selected' if r.id == o.focus_id }}"
+              hx-get="{{ url_for('ui.release', rid=r.id) }}" hx-target="#release-panel" hx-push-url="false"
+              hx-on::after-request="this.closest('tbody').querySelectorAll('.ui-row--selected').forEach(e => e.classList.remove('ui-row--selected')); this.classList.add('ui-row--selected')">
+            <td>{% if child %}<span class="ui-tree-mark">└</span>{% endif %}<a class="ui-ident ui-ident--plain" href="{{ url_for('ui.release', rid=r.id) }}"
+                   hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a></td>
+            <td>{{ ui.release_kind(r.kind) }}</td>
+            <td>{{ ui.version_status(r.status) }}</td>
+            <td>{% if child and r.reason %}{{ ui.ident(r.reason, plain=True) }}{% else %}<span class="ui-mono">{{ r.target_date or "—" }}</span>{% endif %}</td>
+            <td>{% if r.released_version %}{{ ui.ident(r.released_version, plain=True) }}{% endif %}</td>
+            <td class="ui-end">
+              {%- if r.kind != "planned" %}{{ r.planned_versions + r.unplanned_versions }}
+              {%- else %}{{ r.planned_versions }}{% if r.unplanned_versions %} <span class="ui-tone-warning" title="ad hoc versions (added outside the plan)">+{{ r.unplanned_versions }}</span>{% endif %}{% endif -%}
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}{{ ui.empty_row("No releases yet. Plan this CI via POST /api/cis/" ~ ci.name ~ "/plan", 6) }}{% endfor %}
+      {% endcall %}
+    {% endcall %}
+
+    {% call ui.card(flush=True) %}
+      {% call ui.card_header("Fielded in", "approved baselines (HSCMs) that list " ~ ci.name) %}{% endcall %}
+      {% call ui.table(["Capability (IFC)", "Baseline", "Version", ""]) %}
+        {% for f in fielded %}
+        {% set late = o.behind | selectattr("id", "equalto", f.id) | list %}
+        <tr>
+          <td><a href="{{ url_for('ui.ifc', ref=f.ifc) }}">{{ f.ifc }}</a></td>
+          <td><a href="{{ url_for('ui.baseline', bid=f.id) }}">{{ f.name }}</a></td>
+          <td>{{ ui.ident(f.version, href=url_for('ui.version', vid=f.version_id), plain=True) }}</td>
+          <td class="ui-end">{% if late %}{{ ui.badge("behind " ~ o.effective, "warning") }}{% endif %}</td>
+        </tr>
+        {% else %}{{ ui.empty_row("Not in any approved baseline", 4) }}{% endfor %}
+      {% endcall %}
+    {% endcall %}
   </div>
 
-  <div class="lg:col-span-2 space-y-6 lg:sticky lg:top-4">
-    <div id="release-panel">
-      <div class="card bg-base-100 shadow-sm border border-dashed border-base-300">
-        <div class="card-body items-center text-center text-base-content/60">Select a release to see its versions.</div>
-      </div>
+  <aside class="ui-aside ui-sticky" aria-label="Details">
+    <div id="release-panel" aria-live="polite"
+         {%- if o.focus_id %} hx-get="{{ url_for('ui.release', rid=o.focus_id) }}" hx-trigger="load"{% endif %}>
+      {% call ui.card(cls="ui-card--dashed") %}
+        {% call ui.empty("Select a release to see its versions.") %}{% if o.focus_id %}<span class="ui-spinner" aria-hidden="true"></span>{% endif %}{% endcall %}
+      {% endcall %}
     </div>
 
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body">
-        <h2 class="card-title">Policy</h2>
+    {% call ui.card() %}
+      {% call ui.card_header("Policy") %}{% if ci.policy %}{{ ui.badge(ci.policy.type) }}{% endif %}{% endcall %}
+      {% call ui.card_body() %}
         {% if ci.policy %}
-          <p><span class="font-semibold">{{ ci.policy.name }}</span> {{ badge(ci.policy.type, "badge-sm") }}</p>
-          {% if ci.policy.params %}
-          <pre class="text-xs bg-base-200 rounded p-2 overflow-x-auto">{{ ci.policy.params | tojson(indent=2) }}</pre>
-          {% endif %}
-        {% else %}<p class="text-base-content/60">No policy: nothing is planned automatically.</p>{% endif %}
-      </div>
-    </div>
+          <div class="ui-stack" style="--ui-gap: 8px;">
+            {{ ui.ident(ci.policy.name) }}
+            {% if ci.policy.params %}<pre class="ui-pre">{{ ci.policy.params | tojson(indent=2) }}</pre>{% endif %}
+          </div>
+        {% else %}<span class="ui-muted">No policy: nothing is planned automatically.</span>{% endif %}
+      {% endcall %}
+    {% endcall %}
 
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body">
-        <h2 class="card-title">CSCs <span class="badge badge-ghost">{{ ci.cscs | length }}</span></h2>
-        <table class="table table-sm">
-          <thead><tr><th>Name</th><th>Jira project</th><th>Affected product</th><th>Team</th></tr></thead>
-          <tbody>
-          {% for c in ci.cscs %}
-            <tr><td>{{ c.name }}</td><td class="font-mono">{{ c.jira_project or "—" }}</td><td>{{ c.affected_product or "—" }}</td><td>{{ c.team or "" }}</td></tr>
-          {% else %}{{ empty("No CSCs mapped", 4) }}{% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    {% call ui.card(flush=True) %}
+      {% call ui.card_header("CSCs", "each maps one Jira project + affected product") %}{{ ui.badge(ci.cscs | length) }}{% endcall %}
+      {% call ui.table(["Name", "Jira pair", "Team"], dense=True) %}
+        {% for c in ci.cscs %}
+        <tr>
+          <td>{{ c.name }}</td>
+          <td>{% if c.jira_project %}{{ ui.ident(c.jira_project ~ " / " ~ c.affected_product, plain=True) }}{% else %}<span class="ui-muted">unmapped</span>{% endif %}</td>
+          <td>{{ c.team or "" }}</td>
+        </tr>
+        {% else %}{{ ui.empty_row("No CSCs mapped", 3) }}{% endfor %}
+      {% endcall %}
+    {% endcall %}
 
     {% if backlogs %}
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body">
-        <h2 class="card-title">Backlogs</h2>
-        <ul class="space-y-1">
+    {% call ui.card() %}
+      {% call ui.card_header("Backlogs") %}{% endcall %}
+      {% call ui.card_body() %}
+        <div class="ui-stack" style="--ui-gap: 6px;">
         {% for b in backlogs %}
-          <li class="flex justify-between gap-2"><a class="link link-primary" href="{{ url_for('ui.backlog', ref=b.name) }}">{{ b.name }}</a>
-            <span class="text-sm text-base-content/60">{{ b.item_count }} item{{ 's' if b.item_count != 1 }}{% if b.teams %} · {{ b.teams | join(", ") }}{% endif %}</span></li>
+          <div class="ui-row" style="justify-content: space-between;">
+            <a href="{{ url_for('ui.backlog', ref=b.name) }}">{{ b.name }}</a>
+            <span class="ui-muted" style="font-size: 12px;">{{ b.item_count }} item{{ 's' if b.item_count != 1 }}{% if b.teams %} · {{ b.teams | join(", ") }}{% endif %}</span>
+          </div>
         {% endfor %}
-        </ul>
-      </div>
-    </div>
+        </div>
+      {% endcall %}
+    {% endcall %}
     {% endif %}
 
     {% if ci.attributes %}
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body">
-        <h2 class="card-title">Attributes</h2>
-        <pre class="text-xs bg-base-200 rounded p-2 overflow-x-auto">{{ ci.attributes | tojson(indent=2) }}</pre>
-      </div>
-    </div>
+    {% call ui.card(title="Attributes") %}{% call ui.card_body() %}<pre class="ui-pre">{{ ci.attributes | tojson(indent=2) }}</pre>{% endcall %}{% endcall %}
     {% endif %}
-  </div>
+  </aside>
 </div>
 {% endblock %}

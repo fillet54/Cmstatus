@@ -1,107 +1,82 @@
-{% from "macros.html" import badge, empty %}
-<div class="card bg-base-100 shadow-sm">
-  <div class="card-body gap-4">
-    <div class="flex flex-wrap items-start justify-between gap-2">
-      <div>
-        <div class="text-sm text-base-content/60">
-          <a class="link link-hover" href="{{ url_for('ui.ci', ref=r.ci) }}">{{ r.ci }}</a>
-          {% if r.parent %} · spawned from <a class="link link-hover font-mono" href="{{ url_for('ui.release', rid=r.parent_id) }}">{{ r.parent }}</a>{% endif %}
-        </div>
-        <h2 class="text-xl font-bold font-mono">
-          <a class="link link-hover" href="{{ url_for('ui.release', rid=r.id) }}">{{ r.name }}</a>
-        </h2>
-      </div>
-      <div class="flex gap-1">{{ badge(r.kind) }} {{ badge(r.status) }}</div>
-    </div>
+{#- Release details: the panel on the CI page (htmx) and the body of the release page. -#}
+{% import "ui/components.html" as ui %}
+{% call ui.card(attrs={"aria-label": "Release " ~ r.name}) %}
+  {% call ui.card_header("Release details" if standalone else r.name, None if standalone else r.ci ~ " release", mono=not standalone) %}
+    {% if r.kind != "planned" %}{{ ui.release_kind(r.kind) }}{% endif %}{{ ui.version_status(r.status) }}
+    {% if not standalone %}{{ ui.icon_button("external", "Open the " ~ r.name ~ " release page", size="sm", href=url_for('ui.release', rid=r.id)) }}{% endif %}
+  {% endcall %}
 
-    <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-      <div><div class="text-base-content/60">Target</div><div>{{ r.target_date or "—" }}</div></div>
-      <div><div class="text-base-content/60">Released at</div><div>{{ r.released_at | ts or "—" }}</div></div>
-      <div><div class="text-base-content/60">Released version</div><div class="font-mono">{{ r.released_version or "—" }}</div></div>
-      <div><div class="text-base-content/60">Effective version</div>
-        <div class="font-mono {{ 'text-success font-semibold' if r.effective_version and r.effective_version != r.released_version }}">{{ r.effective_version or "—" }}</div></div>
-      {% if r.base_version %}<div><div class="text-base-content/60">Built on</div><div class="font-mono">{{ r.base_version }}</div></div>{% endif %}
-      {% if r.reason %}<div><div class="text-base-content/60">Reason / CR</div><div class="font-mono">{{ r.reason }}</div></div>{% endif %}
-      <div><div class="text-base-content/60">Source</div><div>{{ r.source }}</div></div>
-    </div>
+  {% set details = [("Target", ui.ident(r.target_date, plain=True) if r.target_date else "—"),
+                    ("Released at", ui.timestamp(r.released_at)),
+                    ("Released version", ui.ident(r.released_version) if r.released_version else "—"),
+                    ("Effective version", ui.ident(r.effective_version) if r.effective_version else "—")] %}
+  {% if r.parent %}{% set _ = details.append(("Spawned from", ui.ident(r.parent, href=url_for('ui.release', rid=r.parent_id)))) %}{% endif %}
+  {% if r.base_version %}{% set _ = details.append(("Built on", ui.ident(r.base_version))) %}{% endif %}
+  {% if r.reason %}{% set _ = details.append(("Reason / CR", ui.ident(r.reason))) %}{% endif %}
+  {% set _ = details.append(("Source", r.source)) %}
+  {% call ui.card_section() %}{{ ui.dl(details, cols=True) }}{% endcall %}
 
-    {% if work_range %}
-    <a class="btn btn-sm btn-outline btn-primary self-start"
-       href="{{ url_for('ui.work', ref=r.ci, to=work_range.to, **({'from': work_range['from']} if work_range['from'] else {})) }}"
-       hx-boost="true" hx-target="body" hx-push-url="true">
-      Work items: <span class="font-mono">{{ work_range['from'] or "start" }}..{{ work_range.to }}</span>
-    </a>
-    {% endif %}
-
+  {% if built_from or r.unabsorbed %}
+  {% call ui.card_section("Built from") %}
+    {{ ui.lineage(built_from) }}
     {% if r.unabsorbed %}
-    <div role="alert" class="alert alert-error text-sm">
-      <div>
-        <div class="font-semibold">Not built on {{ r.unabsorbed | length }} earlier fix{{ 'es' if r.unabsorbed | length != 1 }}</div>
-        <p class="opacity-80">This release's lineage doesn't include these released patch/emergency versions. Merge them
-          (set a build's parents) or accept the regression.</p>
-        <ul class="mt-1">
-        {% for u in r.unabsorbed %}
-          <li><a class="link font-mono" href="{{ url_for('ui.version', vid=u.id) }}">{{ u.name }}</a>
-            <span class="opacity-80">{{ u.kind }} on {{ u.root }}{% if u.reason %} · {{ u.reason }}{% endif %}</span></li>
-        {% endfor %}
-        </ul>
-      </div>
-    </div>
+      {% call ui.alert("danger", "Not built on " ~ r.unabsorbed | length ~ " earlier fix" ~ ("es" if r.unabsorbed | length != 1 else "")) %}
+        This release's lineage doesn't include these released patch/emergency versions. Merge them (set a build's
+        parents) or accept the regression:
+        {% for u in r.unabsorbed %}{{ ui.ident(u.name, href=url_for('ui.version', vid=u.id)) }} <span>{{ u.kind }} on {{ u.root }}{% if u.reason %} · {{ u.reason }}{% endif %}</span>{{ ";" if not loop.last }} {% endfor %}
+      {% endcall %}
+    {% elif r.kind == "planned" %}
+      <span class="ui-status ui-tone-success" style="font-size: 12px;">{{ ui.icon("check", 14) }}Includes every released fix from earlier release lines</span>
     {% endif %}
+  {% endcall %}
+  {% endif %}
 
-    {% if r.baselines_behind %}
-    <div role="alert" class="alert alert-warning text-sm">
-      <div>
-        <div class="font-semibold">{{ r.baselines_behind | length }} approved baseline{{ 's' if r.baselines_behind | length != 1 }} still field an older version</div>
-        <ul class="mt-1">
-        {% for b in r.baselines_behind %}
-          <li><a class="link" href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.ifc }} / {{ b.name }}</a>: <span class="font-mono">{{ b.fielded_version }}</span></li>
-        {% endfor %}
-        </ul>
-      </div>
-    </div>
-    {% endif %}
+  {% if r.baselines_behind %}
+  {% call ui.card_section() %}
+    {% call ui.alert("warning", r.baselines_behind | length ~ " approved baseline" ~ ("s" if r.baselines_behind | length != 1 else "") ~ " still field an older version") %}
+      {% for b in r.baselines_behind %}<a href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.ifc }} / {{ b.name }}</a> fields {{ ui.ident(b.fielded_version) }}{{ "; " if not loop.last }}{% endfor %}
+    {% endcall %}
+  {% endcall %}
+  {% endif %}
 
-    <div>
-      <h3 class="font-semibold mb-1">Versions</h3>
-      <div class="overflow-x-auto">
-        <table class="table table-sm">
-          <thead><tr><th>#</th><th>Version</th><th>Status</th><th>Planned</th><th>Built</th></tr></thead>
-          <tbody>
-          {% for v in r.versions %}
-            <tr class="hover {{ 'font-semibold' if v.id == r.released_version_id }}">
-              <td>{{ v.seq }}</td>
-              <td class="font-mono">
-                <a class="link link-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>
-                {% if not v.planned and r.kind == 'planned' %}<span class="badge badge-warning badge-outline badge-xs ml-1" title="added outside the plan">ad hoc</span>{% endif %}
-              </td>
-              <td>{{ badge(v.status, "badge-sm") }}</td>
-              <td class="whitespace-nowrap">{{ v.planned_date or "" }}</td>
-              <td class="whitespace-nowrap">{{ (v.built_at or "")[:10] }}</td>
-            </tr>
-          {% else %}{{ empty("No versions", 5) }}{% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+  {% call ui.card_section("Versions") %}
+    {% call ui.table(["Version", "Status", "Date"], dense=True) %}
+      {% for v in r.versions %}
+      <tr>
+        <td>{{ ui.version_glyph(v.status) }} {{ ui.ident(v.name, href=url_for('ui.version', vid=v.id), plain=True) }}
+          {%- if not v.planned and r.kind == "planned" %} {{ ui.badge("ad hoc", "warning", outline=True) }}{% endif %}</td>
+        <td>{{ ui_version_statuses.get(v.status, v.status) }}</td>
+        <td class="ui-mono">{% if v.built_at %}<span title="built {{ v.built_at | utc }}">{{ (v.built_at | utc)[:10] }}</span>
+          {%- elif v.planned_date %}<span class="ui-muted" title="planned date">{{ v.planned_date }} (plan)</span>{% endif %}</td>
+      </tr>
+      {% else %}{{ ui.empty_row("No versions", 3) }}{% endfor %}
+    {% endcall %}
+  {% endcall %}
 
-    {% if r.children %}
-    <div>
-      <h3 class="font-semibold mb-1">Patch / emergency releases</h3>
-      <table class="table table-sm">
-        <thead><tr><th>Release</th><th>Kind</th><th>Status</th><th>Reason</th></tr></thead>
-        <tbody>
-        {% for c in r.children %}
-          <tr class="hover">
-            <td class="font-mono"><a class="link link-primary" href="{{ url_for('ui.release', rid=c.id) }}">{{ c.name }}</a></td>
-            <td>{{ badge(c.kind, "badge-sm") }}</td>
-            <td>{{ badge(c.status, "badge-sm") }}</td>
-            <td class="font-mono text-xs">{{ c.reason or "" }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+  {% if r.children %}
+  {% call ui.card_section("Patch / emergency releases") %}
+    {% call ui.table(["Release", "Kind", "Status", "Reason"], dense=True) %}
+      {% for c in r.children %}
+      <tr>
+        <td>{{ ui.ident(c.name, href=url_for('ui.release', rid=c.id), plain=True) }}</td>
+        <td>{{ ui.release_kind(c.kind) }}</td>
+        <td>{{ ui.version_status(c.status) }}</td>
+        <td>{% if c.reason %}{{ ui.ident(c.reason, plain=True) }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    {% endcall %}
+  {% endcall %}
+  {% endif %}
+
+  {% if work_range %}
+  {% call ui.card_section("Work since the previous release") %}
+    <div class="ui-row">
+      {{ ui.button("Open work items", variant="primary",
+                   href=url_for('ui.work', ref=r.ci, to=work_range.to, **({'from': work_range['from']} if work_range['from'] else {}))) }}
+      <span class="ui-mono ui-muted" style="font-size: 12px;">{{ work_range['from'] or "start" }}..{{ work_range.to }}</span>
     </div>
-    {% endif %}
-  </div>
-</div>
+  {% endcall %}
+  {% endif %}
+
+  {% call ui.card_footer() %}Record created {{ r.created_at | utc }}{% if r.released_at %} · released {{ r.released_at | utc }}{% endif %}{% endcall %}
+{% endcall %}

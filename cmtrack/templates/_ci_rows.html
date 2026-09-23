@@ -1,15 +1,18 @@
-{% from "macros.html" import badge, empty %}
+{#- CI table rows; swapped into #ci-rows by the filter form. -#}
+{% import "ui/components.html" as ui %}
 {% for c in cis %}
-<tr class="hover {{ 'opacity-60' if not c.managed }}">
+<tr>
   <td>
-    <a class="link link-primary font-semibold" href="{{ url_for('ui.ci', ref=c.name) }}">{{ c.name }}</a>
-    {% if not c.managed %}<span class="badge badge-ghost badge-sm ml-1">placeholder</span>{% endif %}
-    {% if c.description %}<div class="text-xs text-base-content/60 truncate max-w-xs">{{ c.description }}</div>{% endif %}
+    <div class="ui-row" style="--ui-gap: 6px;">
+      {{ ui.ident(c.name, href=url_for('ui.ci', ref=c.name), plain=True) }}
+      {%- if not c.managed %}{{ ui.badge("placeholder") }}{% endif %}
+    </div>
+    {%- if c.description %}<span class="ui-muted ui-clip" style="font-size: 12px;">{{ c.description }}</span>{% endif %}
   </td>
-  <td class="space-x-1">{{ badge(c.type, "badge-sm") }}{% if c.kind == "composite" %}{{ badge("composite", "badge-sm") }}{% endif %}</td>
-  <td>{{ c.policy or "—" }}</td>
-  <td class="font-mono">{{ c.last_release or "—" }}</td>
-  <td class="font-mono">{{ c.next_release or "—" }}{% if c.next_target %} <span class="text-xs text-base-content/60">{{ c.next_target }}</span>{% endif %}</td>
-  <td class="text-right">{{ c.open_releases }}</td>
+  <td><div class="ui-row" style="--ui-gap: 4px;">{{ ui.chip(c.type) }}{% if c.kind == "composite" %}{{ ui.chip("composite") }}{% endif %}</div></td>
+  <td>{% if c.policy %}{{ ui.ident(c.policy, plain=True) }}{% else %}<span class="ui-muted">none</span>{% endif %}</td>
+  <td>{% if c.last_release %}{{ ui.ident(c.last_release, plain=True) }}{% else %}<span class="ui-muted">—</span>{% endif %}</td>
+  <td>{% if c.next_release %}{{ ui.ident(c.next_release, plain=True) }} <span class="ui-muted ui-mono" style="font-size: 12px;">{{ c.next_target or "" }}</span>{% else %}<span class="ui-muted">—</span>{% endif %}</td>
+  <td class="ui-end">{{ c.open_releases }}</td>
 </tr>
-{% else %}{{ empty("No CIs match", 6) }}{% endfor %}
+{% else %}{{ ui.empty_row("No CIs match these filters", 6) }}{% endfor %}

@@ -1,8 +1,10 @@
-{% extends "base.html" %}
-{% from "macros.html" import page_header %}
-{% set section = "ui.cis" %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "cis" %}
+{% set standalone = True %}
 {% block title %}{{ r.ci }} {{ r.name }}{% endblock %}
 {% block content %}
-{{ page_header(r.name, None, [("CIs", url_for('ui.cis')), (r.ci, url_for('ui.ci', ref=r.ci)), (r.name, None)]) }}
-<div class="max-w-3xl">{% include "_release.html" %}</div>
+{{ ui.page_header(r.name, r.ci ~ " release", mono=True,
+                  crumbs=[("Configuration items", url_for('ui.cis')), (r.ci, url_for('ui.ci', ref=r.ci)), (r.name, None)]) }}
+<div style="max-width: 880px;">{% include "_release.html" %}</div>
 {% endblock %}

@@ -96,7 +96,7 @@ body.ui {
 .ui-spacer { flex: 1 1 auto; }
 .ui-split { display: grid; grid-template-columns: minmax(0, 1fr) var(--ui-aside, 420px); gap: 24px; align-items: start; }
 .ui-grid { display: grid; grid-template-columns: repeat(var(--ui-cols, 2), minmax(0, 1fr)); gap: 24px; align-items: start; }
-@media (max-width: 1100px) { .ui-split, .ui-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1100px) { .ui-split, .ui-grid { grid-template-columns: minmax(0, 1fr); } .ui-sticky { position: static; } }
 
 /* ------------------------------------------------------------------ shell */
 
@@ -148,6 +148,7 @@ body.ui {
 .ui-card--flush { overflow: hidden; }
 .ui-card__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--ui-line-soft); }
 .ui-card__title { font-size: 14px; font-weight: 600; }
+.ui-card__title--lg { font-size: 20px; }
 .ui-card__subtitle { font-size: 12px; color: var(--ui-muted); }
 .ui-card__body { padding: 14px 16px; }
 .ui-card__section { padding: 14px 16px; border-top: 1px solid var(--ui-line-soft); display: flex; flex-direction: column; gap: 8px; }
@@ -278,6 +279,7 @@ body.ui {
 .ui-select { padding-right: 28px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 L5 6.5 L8 3.5' fill='none' stroke='%2357606A' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
 .ui-search { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; width: var(--ui-search-w, 320px); border: 1px solid var(--ui-line-strong); border-radius: var(--ui-radius); background: var(--ui-sunken); color: var(--ui-muted); }
 .ui-search:focus-within { outline: 3px solid var(--ui-focus); outline-offset: 2px; }
+.ui .ui-search input:focus-visible { outline: none; }   /* the box shows the ring (focus-within) */
 .ui-search input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; font: inherit; font-size: 13px; color: var(--ui-ink); outline: none; }
 .ui-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .ui-check input { width: 16px; height: 16px; accent-color: var(--ui-accent); margin: 0; }
@@ -294,11 +296,13 @@ body.ui {
 
 /* ------------------------------------------------------------------ tables, lists */
 
+.ui-table-wrap { overflow-x: auto; }
 .ui-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ui-table caption { text-align: left; padding: 0 16px 8px; font-size: 12px; color: var(--ui-muted); }
 .ui-table th { text-align: left; font-size: 12px; font-weight: 500; color: var(--ui-muted); padding: 8px 16px; white-space: nowrap; }
 .ui-table td { padding: 8px 16px; border-top: 1px solid var(--ui-subtle); vertical-align: middle; }
-.ui-table--dense th, .ui-table--dense td { padding: 5px 12px; }
+.ui-table--dense th, .ui-table--dense td { padding: 5px 12px; white-space: nowrap; }
+.ui-table td.ui-wrap { white-space: normal; }
 .ui-table .ui-num, .ui-table .ui-end { text-align: right; }
 .ui-table tr.ui-row--child td { background: var(--ui-sunken); }
 .ui-table tr.ui-row--child td:first-child { padding-left: 32px; }
@@ -349,6 +353,18 @@ body.ui {
 .ui-drop-line { height: 0; border-top: 2px solid var(--ui-accent); position: relative; list-style: none; }
 .ui-drop-line::before { content: ""; position: absolute; left: -5px; top: -6px; width: 10px; height: 10px; border-radius: 50%; background: var(--ui-accent); }
 .hide-done .ui-rank-item[data-state="done"] { display: none; }
+
+/* a placeholder surface (e.g. "select a release") and a column that stays in view */
+.ui-card--dashed { border-style: dashed; background: transparent; }
+.ui-sticky { position: sticky; top: 36px; }
+.ui-aside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ui-pre { margin: 0; padding: 8px 10px; background: var(--ui-sunken); border: 1px solid var(--ui-line-soft); border-radius: var(--ui-radius); font-size: 12px; overflow-x: auto; }
+.ui-clip { display: block; max-width: 36ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* loading indicator: htmx shows .htmx-indicator elements while a request is in flight */
+.ui-spinner { width: 14px; height: 14px; border: 2px solid var(--ui-line); border-top-color: var(--ui-accent); border-radius: 50%; animation: ui-spin 0.8s linear infinite; }
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ui-spinner { animation-duration: 2.4s; } }
 
 /* toasts (use the "ui-toasts" container from the layout) */
 .ui-toasts { position: fixed; right: 20px; bottom: 36px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 420px; }

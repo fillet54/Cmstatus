@@ -68,6 +68,35 @@ def with_staleness(conn, entries):
     return out
 
 
+def ci_overview(conn, releases):
+    """What the CI page's stat strip shows, plus which release panel to open first."""
+    planned = [r for r in releases if r["kind"] == "planned"]
+    shipped = [r for r in planned if r["status"] == "released"]
+    upcoming = [r for r in planned if r["status"] in ("planned", "active")]
+    current, nxt = (shipped[-1] if shipped else None), (upcoming[0] if upcoming else None)
+    effective = svc.effective_version(conn, current["id"]) if current else None
+    built = total = 0
+    if nxt:
+        built, total = conn.execute(
+            "SELECT COALESCE(SUM(status IN ('built', 'tested', 'released')), 0), COUNT(*) FROM version "
+            "WHERE release_id = ?", (nxt["id"],)).fetchone()
+    focus = nxt or current or (releases[0] if releases else None)
+    return {"current": current, "effective": effective["name"] if effective else None, "next": nxt,
+            "next_built": built, "next_total": total,
+            "open_children": [r for r in releases if r["parent_id"] and r["status"] in ("planned", "active")],
+            "behind": svc.behind_effective(conn, current["id"]) if current else [],
+            "focus_id": focus["id"] if focus else None}
+
+
+def built_from(conn, rel):
+    """The versions a release's first build was built from, outside the release itself (later ones are merges)."""
+    if not rel["versions"]:
+        return []
+    parents = [p for p in svc.version_parents(conn, rel["versions"][0]["id"]) if p["release_id"] != rel["id"]]
+    return [{"name": p["name"], "href": url_for("ui.version", vid=p["id"]), "merge": i > 0}
+            for i, p in enumerate(parents)]
+
+
 def release_families(releases):
     """Root releases in order, each followed by its patch/emergency children."""
     children = {}
@@ -151,14 +180,15 @@ def ci(ref):
         "JOIN version v ON v.id = e.version_id WHERE e.ci_id = ? AND b.status = 'approved' ORDER BY i.name",
         (detail["id"],)))
     return render_template("ci.html", ci=detail, families=release_families(detail["releases"]), fielded=fielded,
-                           backlogs=svc.list_backlogs(conn, detail["id"]))
+                           backlogs=svc.list_backlogs(conn, detail["id"]), overview=ci_overview(conn, detail["releases"]))
 
 
 @bp.get("/releases/<int:rid>")
 def release(rid):
     conn = get_db()
-    return page("release.html", "_release.html", r=svc.release_detail(conn, rid),
-                ci=svc.get_ci(conn, svc.get_release(conn, rid)["ci_id"]), work_range=svc.release_range(conn, rid))
+    r = svc.release_detail(conn, rid)
+    return page("release.html", "_release.html", r=r, built_from=built_from(conn, r),
+                work_range=svc.release_range(conn, rid))
 
 
 @bp.get("/versions/<int:vid>")

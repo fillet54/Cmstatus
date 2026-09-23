@@ -200,8 +200,7 @@ every URL works as a plain link.
 
 ## UI component library (`/ui`)
 
-A design system for new pages, independent of daisyUI/Tailwind (the existing pages still use those until they are
-migrated): plain CSS tokens and components in `static/ui.css`, Jinja macros in `templates/ui/components.html`, and a
+A design system for new pages, independent of daisyUI/Tailwind: plain CSS tokens and components in `static/ui.css`, Jinja macros in `templates/ui/components.html`, and a
 page shell in `templates/ui/layout.html`. **`/ui` is the living reference**: every macro rendered with a usage
 snippet, plus a CI overview page built only from macros.
 
@@ -229,6 +228,12 @@ Every status is a glyph and a word as well as a colour. Identifiers are monospac
 `2026-09-23 14:24Z`), focus is always visible. Config in `cmtrack/ui.py`: `CMTRACK_MARKING` (+
 `CMTRACK_MARKING_COLORS`) for the top/bottom banners, which read "[Marking not configured]" until set;
 `CMTRACK_PROGRAM`; `CMTRACK_UI_FONTS_CSS` / `CMTRACK_UI_HTMX_JS` to self-host fonts and htmx on a closed network.
+
+**Migration status.** On the new layout: the CI list (`cis.html`, `_ci_rows.html`), the CI page (`ci.html`) and
+releases (`release.html`, `_release.html`). Still on `base.html` (daisyUI): dashboard, versions, work items, tickets,
+backlogs, IFCs, baselines, events. Each layout sends `X-UI-Layout` with htmx requests; a boosted navigation that
+crosses layouts gets `HX-Redirect` (a full page load) so the right stylesheets load (`ui.full_load_across_layouts`).
+Remove that hook and `base.html` once every page is migrated.
 
 ## Not yet built (next iterations)
 - Jira: the `TicketSource` for your Jira client; discrepancy/feature trace; a cross-CI "tickets in error" view

@@ -73,6 +73,32 @@ class ViewTests(unittest.TestCase):
         self.assertNotIn(f">{last_id}<", rest)
         self.assertIn("release #", self.get("/events?entity=release", HX))
 
+    def test_migrated_pages_use_ui_layout(self):
+        rid = self.api("/cis/NAV-SW/releases")[0]["id"]
+        for path in ("/cis", "/cis/NAV-SW", f"/releases/{rid}"):
+            page = self.get(path)
+            self.assertIn("/static/ui.css", page, path)
+            self.assertNotIn("daisyui", page, path)
+        self.assertIn("daisyui", self.get("/events"))                       # not migrated yet
+        ci = self.get("/cis/NAV-SW")
+        self.assertIn('hx-trigger="load"', ci)                              # a release panel opens by default
+        self.assertIn("ui-row--selected", ci)
+        panel = self.get(f"/releases/{rid}", HX)
+        self.assertIn('aria-label="Release ', panel)
+        self.assertNotIn("<html", panel)
+
+    def test_boost_across_layouts_forces_full_load(self):
+        boost = lambda layout: {**HX, "HX-Boosted": "true", "X-UI-Layout": layout}
+        r = self.c.get("/cis?q=nav", headers=boost("legacy"))               # old page -> new page
+        self.assertEqual((r.status_code, r.headers.get("HX-Redirect"), r.data), (200, "/cis?q=nav", b""))
+        r = self.c.get("/events", headers=boost("ui"))                      # new page -> old page
+        self.assertEqual(r.headers.get("HX-Redirect"), "/events")
+        r = self.c.get("/cis", headers=boost("ui"))                         # same layout: a normal boost
+        self.assertNotIn("HX-Redirect", r.headers)
+        self.assertIn(b"<html", r.data)
+        r = self.c.get("/cis?q=nav", headers={**HX, "X-UI-Layout": "legacy"})  # fragments are never redirected
+        self.assertNotIn("HX-Redirect", r.headers)
+
     def test_not_found_is_html_outside_api(self):
         self.assertIn("CI &#39;NOPE&#39; not found", self.get("/cis/NOPE", status=404))
         self.assertEqual(self.c.get("/api/cis/NOPE").get_json(), {"error": "CI 'NOPE' not found"})

@@ -124,9 +124,9 @@
 </section>
 {%- endmacro %}
 
-{% macro card_header(title, subtitle=None, level=2) -%}
+{% macro card_header(title, subtitle=None, level=2, mono=False) -%}
 <div class="ui-card__header">
-  <div><h{{ level }} class="ui-card__title">{{ title }}</h{{ level }}>{% if subtitle %}<div class="ui-card__subtitle">{{ subtitle }}</div>{% endif %}</div>
+  <div><h{{ level }} class="ui-card__title{% if mono %} ui-mono ui-card__title--lg{% endif %}">{{ title }}</h{{ level }}>{% if subtitle %}<div class="ui-card__subtitle">{{ subtitle }}</div>{% endif %}</div>
   {%- if caller %}<div class="ui-row">{{ caller() }}</div>{% endif %}
 </div>
 {%- endmacro %}
@@ -204,6 +204,12 @@
 {% macro version_status(status, label=None) -%}
 {%- set shape = {"active": "built", "cancelled": "rejected"}.get(status, status) -%}
 <span class="ui-status ui-tone-{{ VERSION_TONES.get(shape, 'muted') }}">{{ version_glyph(shape) }}{{ label or ui_version_statuses.get(status, status) }}</span>
+{%- endmacro %}
+
+{#- Release kind: planned releases stay quiet; patch / emergency / external stand out. #}
+{% macro release_kind(kind) -%}
+{%- if kind == "planned" -%}<span class="ui-muted">planned</span>
+{%- else -%}{{ badge(kind, {"patch": "warning", "emergency": "danger"}.get(kind, "neutral")) }}{%- endif -%}
 {%- endmacro %}
 
 {#- ============================================================== status: tickets #}
@@ -359,9 +365,10 @@
 {#- ============================================================== data display #}
 
 {#- headers: ["Release", {"label": "Versions", "align": "end"}, ...]. caller = the <tr> rows.
-    Rows can use classes ui-row--child (indented family member) and ui-row--selected. #}
-{% macro table(headers, caption=None, dense=False, id=None, attrs=None) -%}
-<table class="ui-table{% if dense %} ui-table--dense{% endif %}"{% if id %} id="{{ id }}"{% endif %}{{ (attrs or {}) | xmlattr }}>
+    Rows can use classes ui-row--child (indented family member) and ui-row--selected.
+    body_id: id for the <tbody>, e.g. as an htmx swap target for the rows. #}
+{% macro table(headers, caption=None, dense=False, id=None, body_id=None, attrs=None) -%}
+<div class="ui-table-wrap"><table class="ui-table{% if dense %} ui-table--dense{% endif %}"{% if id %} id="{{ id }}"{% endif %}{{ (attrs or {}) | xmlattr }}>
   {%- if caption %}<caption>{{ caption }}</caption>{% endif %}
   <thead><tr>
     {%- for h in headers %}
@@ -369,8 +376,8 @@
     {%- else %}<th scope="col">{{ h }}</th>{% endif %}
     {%- endfor %}
   </tr></thead>
-  <tbody>{{ caller() }}</tbody>
-</table>
+  <tbody{% if body_id %} id="{{ body_id }}"{% endif %}>{{ caller() }}</tbody>
+</table></div>
 {%- endmacro %}
 
 {#- A table row for "nothing here" (colspan = number of columns). #}

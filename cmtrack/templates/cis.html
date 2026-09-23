@@ -1,34 +1,22 @@
-{% extends "base.html" %}
-{% from "macros.html" import page_header %}
-{% block title %}CIs{% endblock %}
+{% extends "ui/layout.html" %}
+{% import "ui/components.html" as ui %}
+{% set nav_current = "cis" %}
+{% block title %}Configuration items{% endblock %}
 {% block content %}
-{{ page_header("Configuration items", "CSCIs and HWCIs, with their release state.") }}
+{{ ui.page_header("Configuration items", "CSCIs and HWCIs, with their release state") }}
 
-<form class="flex flex-wrap gap-2 items-center" action="{{ url_for('ui.cis') }}"
-      hx-get="{{ url_for('ui.cis') }}" hx-target="#ci-rows" hx-push-url="true"
+<form class="ui-row" action="{{ url_for('ui.cis') }}" role="search"
+      hx-get="{{ url_for('ui.cis') }}" hx-target="#ci-rows" hx-push-url="true" hx-indicator="#ci-busy"
       hx-trigger="input changed delay:250ms from:input[name=q], change from:select, submit">
-  <input type="search" name="q" value="{{ filters.q }}" placeholder="Search name or description…"
-         class="input input-bordered input-sm w-full sm:w-72" autocomplete="off">
-  <select name="type" class="select select-bordered select-sm">
-    <option value="">All types</option>
-    {% for t in ("CSCI", "HWCI") %}<option {{ 'selected' if filters.type == t }}>{{ t }}</option>{% endfor %}
-  </select>
-  <select name="managed" class="select select-bordered select-sm">
-    <option value="">Managed + placeholders</option>
-    <option value="1" {{ 'selected' if filters.managed == '1' }}>Managed only</option>
-    <option value="0" {{ 'selected' if filters.managed == '0' }}>Placeholders only</option>
-  </select>
-  <span class="loading loading-spinner loading-sm htmx-indicator"></span>
+  {{ ui.search_box("q", filters.q, "Search name or description", shortcut=None) }}
+  {{ ui.select("type", [("", "All types"), "CSCI", "HWCI"], selected=filters.type, attrs={"aria-label": "Type"}) }}
+  {{ ui.select("managed", [("", "Managed + placeholders"), ("1", "Managed only"), ("0", "Placeholders only")],
+               selected=filters.managed, attrs={"aria-label": "Managed"}) }}
+  <span id="ci-busy" class="ui-spinner htmx-indicator" aria-hidden="true"></span>
 </form>
 
-<div class="card bg-base-100 shadow-sm">
-  <div class="overflow-x-auto">
-    <table class="table">
-      <thead>
-        <tr><th>Name</th><th>Type</th><th>Policy</th><th>Last released</th><th>Next planned</th><th class="text-right">Open</th></tr>
-      </thead>
-      <tbody id="ci-rows">{% include "_ci_rows.html" %}</tbody>
-    </table>
-  </div>
-</div>
+{% call ui.card(flush=True) %}
+  {% call ui.table(["Name", "Type", "Policy", "Last released", "Next planned", {"label": "Open releases", "align": "end"}],
+                   body_id="ci-rows") %}{% include "_ci_rows.html" %}{% endcall %}
+{% endcall %}
 {% endblock %}
