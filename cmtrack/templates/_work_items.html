@@ -1,5 +1,5 @@
 {# report = service.work_report(...): parent tickets, each with its CSC tickets grouped by CSC #}
-{% from "macros.html" import tstatus, progress, ticket_link %}
+{% from "macros.html" import tstate, reason, state_counts, progress, ticket_link %}
 {% if not report['items'] %}
 <p class="text-base-content/60 text-sm">No CSC tickets are fixed in {{ 'this version' if report.versions | length == 1 else 'these versions' }}.</p>
 {% else %}
@@ -13,7 +13,8 @@
           <span onclick="event.stopPropagation()">{{ ticket_link(p) }}</span>
           <span class="font-semibold">{{ p.summary or "" }}</span>
           {% if p.type %}<span class="badge badge-outline badge-sm">{{ p.type }}</span>{% endif %}
-          {{ tstatus(p) }}
+          {{ tstate(p) }}
+          {% if p.state == "error" %}<span class="text-xs text-error" onclick="event.stopPropagation()">{{ p.state_reason }}</span>{% endif %}
         {% else %}
           <span class="font-semibold text-base-content/70">No parent ticket</span>
         {% endif %}
@@ -36,8 +37,9 @@
             {% for t in g.tickets %}
               <tr class="hover">
                 <td class="whitespace-nowrap w-32">{{ ticket_link(t) }}</td>
-                <td>{{ t.summary or "" }}{% if t.type and t.type != "Story" %} <span class="badge badge-outline badge-xs">{{ t.type }}</span>{% endif %}</td>
-                <td class="w-28">{{ tstatus(t) }}</td>
+                <td>{{ t.summary or "" }}{% if t.type and t.type != "Story" %} <span class="badge badge-outline badge-xs">{{ t.type }}</span>{% endif %}
+                  {{ reason(t) }}</td>
+                <td class="w-36">{{ tstate(t) }}</td>
                 <td class="text-right whitespace-nowrap">
                   {% for v in t.versions %}<a class="badge badge-ghost badge-sm font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a> {% endfor %}
                 </td>

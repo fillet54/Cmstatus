@@ -144,8 +144,9 @@ CREATE TABLE IF NOT EXISTS ticket (
     csc_id          INTEGER REFERENCES csc(id),         -- set for CSC tickets; NULL for parent tickets
     summary         TEXT,
     type            TEXT,                               -- source's issue type: Story, Bug, Feature, ...
-    status          TEXT,                               -- source's status name
-    status_category TEXT NOT NULL DEFAULT 'todo' CHECK (status_category IN ('todo', 'in_progress', 'done')),
+    state           TEXT NOT NULL DEFAULT 'error',      -- workflow state decided by the source (tickets.STATES)
+    state_reason    TEXT,                               -- why: what's wrong ('error'), what a merge waits on, ...
+    status          TEXT,                               -- source's raw status name, for display
     url             TEXT,
     assignee        TEXT,
     updated_at      TEXT,                               -- last change in the source

@@ -8,7 +8,7 @@ import unittest
 
 from cmtrack import create_app
 from cmtrack.demo import DEMO_TICKETS, seed
-from cmtrack.tickets import StaticSource, TicketRecord, load_sources, status_category
+from cmtrack.tickets import STATES, StaticSource, TicketRecord, load_sources, normalize_state
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -90,9 +90,16 @@ class WorkTests(unittest.TestCase):
 
     def test_work_report_groups_parent_csc_ticket(self):
         w = self.call("get", "/cis/NAV-SW/work?from=2026.Q4-b2&to=2027.Q1-b2")
-        self.assertEqual(w["progress"], {"todo": 1, "in_progress": 1, "done": 4, "total": 6})
+        p = w["progress"]
+        self.assertEqual(list(p), list(STATES) + ["total"])                    # every state, workflow order
+        self.assertEqual({k: v for k, v in p.items() if v},
+                         {"analysis_required": 1, "in_progress": 1, "peer_review": 1, "merge_blocked": 1,
+                          "verification": 2, "done": 2, "total": 8})
         by_parent = {(i["parent"] or {}).get("key"): i for i in w["items"]}
         self.assertEqual(list(by_parent), ["PRG-10", "PRG-12", "PRG-15", "PRG-18", None])   # orphans last
+        blocked = next(t for g in by_parent["PRG-10"]["cscs"] for t in g["tickets"] if t["key"] == "NAVL-106")
+        self.assertEqual((blocked["state"], blocked["status"]), ("merge_blocked", "Ready to Merge"))
+        self.assertIn("NAVX-205", blocked["state_reason"])
         self.assertEqual([(g["csc"], [t["key"] for t in g["tickets"]]) for g in by_parent["PRG-12"]["cscs"]],
                          [("nav-maps", ["NAVX-210", "NAVX-211"])])
         # explicit version list instead of a range
@@ -105,7 +112,7 @@ class WorkTests(unittest.TestCase):
         t = self.call("get", "/tickets/PRG-10")
         self.assertEqual([(g["ci"], g["csc"]) for g in t["children"]],
                          [("DISPLAY-SW", "hud"), ("NAV-SW", "nav-core"), ("NAV-SW", "nav-maps")])
-        self.assertEqual((t["progress"]["done"], t["progress"]["total"]), (3, 4))
+        self.assertEqual((t["progress"]["done"], t["progress"]["total"]), (3, 6))
         child = self.call("get", "/tickets/NAVL-105")
         self.assertEqual((child["parent"]["key"], child["csc"], [v["name"] for v in child["versions"]]),
                          ("PRG-10", "nav-core", ["2027.Q1-b1"]))
@@ -114,18 +121,24 @@ class WorkTests(unittest.TestCase):
     def test_push_upsert_warnings_and_stubs(self):
         out = self.call("post", "/tickets", {"records": [
             {"key": "NAVL-300", "summary": "new", "parent_key": "PRG-99", "project": "NAVL",
-             "affected_product": "core", "fix_versions": ["2027.Q1-b3", "nope"], "status_category": "indeterminate",
+             "affected_product": "core", "fix_versions": ["2027.Q1-b3", "nope"], "state": "Peer Review",
              "sprint": "S12"},
-            {"key": "ZZZ-1", "project": "ZZZ", "affected_product": "x", "fix_versions": ["2027.Q1-b3"]},
+            {"key": "ZZZ-1", "project": "ZZZ", "affected_product": "x", "fix_versions": ["2027.Q1-b3"],
+             "state": "blocked-ish", "state_reason": "two open sub-tasks"},
         ]})
         self.assertEqual(out["created"], ["NAVL-300", "ZZZ-1"])
         self.assertEqual(out["missing_parents"], ["PRG-99"])
         self.assertTrue(any("'nope' is not a version of NAV-SW" in w for w in out["warnings"]))
         self.assertTrue(any("no CSC mapped to (ZZZ, x)" in w for w in out["warnings"]))
         t = self.call("get", "/tickets/NAVL-300")
-        self.assertEqual((t["status_category"], t["attributes"], [v["name"] for v in t["versions"]]),
-                         ("in_progress", {"sprint": "S12"}, ["2027.Q1-b3"]))
-        self.assertIsNone(self.call("get", "/tickets/PRG-99")["synced_at"])                  # stub
+        self.assertEqual((t["state"], t["attributes"], [v["name"] for v in t["versions"]]),
+                         ("peer_review", {"sprint": "S12"}, ["2027.Q1-b3"]))
+        z = self.call("get", "/tickets/ZZZ-1")
+        self.assertEqual((z["state"], z["state_reason"]),
+                         ("error", "source sent unknown state 'blocked-ish'; two open sub-tasks"))
+        stub = self.call("get", "/tickets/PRG-99")
+        self.assertEqual((stub["synced_at"], stub["state"]), (None, "error"))
+        self.assertIn("not fetched", stub["state_reason"])
 
         # update in place; fix_versions omitted leaves links alone, [] clears them
         out = self.call("post", "/tickets", {"records": [{"key": "NAVL-300", "summary": "renamed",
@@ -164,15 +177,23 @@ class WorkTests(unittest.TestCase):
         self.assertNotIn("NAVL-120", frag)
         self.assertIn("<html", self.c.get("/cis/NAV-SW/work").get_data(as_text=True))
         self.assertIn("How each CSC implemented it", self.c.get("/tickets/PRG-10").get_data(as_text=True))
+        self.assertIn("NAVX-222 is still open", self.c.get("/tickets/NAVX-221").get_data(as_text=True))
+        dash = self.c.get("/").get_data(as_text=True)
+        self.assertIn("Tickets needing attention", dash)
+        self.assertIn("NAVX-221", dash)
+        self.assertEqual([s["state"] for s in self.call("get", "/ticket-states")], list(STATES))
         version = self.c.get(f"/versions/{self.vid('2027.Q1-b1')}").get_data(as_text=True)
         self.assertIn("Built from", version)
         self.assertIn("NAVL-105", version)
 
 
 class TicketUnitTests(unittest.TestCase):
-    def test_status_category(self):
-        self.assertEqual([status_category(x) for x in ("new", "Indeterminate", "DONE", None, "weird")],
-                         ["todo", "in_progress", "done", "todo", "todo"])
+    def test_normalize_state(self):
+        self.assertEqual(normalize_state("Merge Blocked"), ("merge_blocked", None))
+        self.assertEqual(normalize_state("peer-review", "r"), ("peer_review", "r"))
+        self.assertEqual(normalize_state(None), ("error", "source did not supply a state"))
+        self.assertEqual(normalize_state("error", "linked epic missing"), ("error", "linked epic missing"))
+        self.assertEqual(TicketRecord(key="A-1", state="Nope").state, "error")
 
     def test_load_sources(self):
         mod = types.ModuleType("fake_jira")

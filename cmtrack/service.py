@@ -981,11 +981,12 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
 
 # ----------------------------------------------------------------------------- tickets (work items)
 
-_TICKET_COLS = ("summary", "type", "status", "status_category", "url", "assignee", "updated_at", "attributes")
+_TICKET_COLS = ("summary", "type", "state", "state_reason", "status", "url", "assignee", "updated_at", "attributes")
 
 
 def _ticket_stub(conn, source, key):
-    conn.execute("INSERT OR IGNORE INTO ticket (source, key) VALUES (?, ?)", (source, key))
+    conn.execute("INSERT OR IGNORE INTO ticket (source, key, state_reason) VALUES (?, ?, ?)",
+                 (source, key, "referenced as a parent but not fetched from the source yet"))
     return conn.execute("SELECT id FROM ticket WHERE source = ? AND key = ?", (source, key)).fetchone()["id"]
 
 
@@ -1009,7 +1010,7 @@ def upsert_tickets(conn, records, source="jira"):
             if csc is None:
                 out["warnings"].append(f"{rec.key}: no CSC mapped to ({rec.project}, {rec.affected_product})")
         parent_id = _ticket_stub(conn, source, rec.parent_key) if rec.parent_key else None
-        values = (rec.summary, rec.type, rec.status, rec.status_category, rec.url, rec.assignee, rec.updated,
+        values = (rec.summary, rec.type, rec.state, rec.state_reason, rec.status, rec.url, rec.assignee, rec.updated,
                   json.dumps(rec.attributes or {}))
         row = conn.execute("SELECT id, synced_at FROM ticket WHERE source = ? AND key = ?", (source, rec.key)).fetchone()
         if row is None:
@@ -1067,10 +1068,16 @@ def sync_tickets(conn, source, ci_ref, versions):
 
 
 def _progress(rows):
-    counts = {c: 0 for c in tickets.STATUS_CATEGORIES}
+    """Ticket counts per state (all states, workflow order) plus total."""
+    counts = {s: 0 for s in tickets.STATES}
     for r in rows:
-        counts[r["status_category"]] += 1
+        counts[r["state"] if r["state"] in counts else tickets.ERROR] += 1
     return {**counts, "total": len(rows)}
+
+
+def tickets_in_error(conn, limit=50):
+    """Synced tickets the source flagged as 'error' (something to fix in the source), newest first."""
+    return _ticket_rows(conn, "t.state = 'error' AND t.synced_at IS NOT NULL", [])[:limit]
 
 
 def _ticket_rows(conn, where, args, version_filter=None):

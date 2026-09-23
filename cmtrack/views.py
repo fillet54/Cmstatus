@@ -85,8 +85,9 @@ def dashboard():
                           "WHERE b.status = 'approved' ORDER BY i.name"):
         stale += [{**e, "baseline": b["name"], "baseline_id": b["id"], "ifc": b["ifc"]}
                   for e in with_staleness(conn, svc.baseline_entries(conn, b["id"])) if e["effective"]]
-    return render_template("dashboard.html", counts=counts, open_children=open_children,
-                           upcoming=upcoming, stale=stale, events=svc.to_dicts(svc.list_events(conn, limit=10)))
+    return render_template("dashboard.html", counts=counts, open_children=open_children, upcoming=upcoming,
+                           stale=stale, ticket_errors=svc.tickets_in_error(conn),
+                           events=svc.to_dicts(svc.list_events(conn, limit=10)))
 
 
 @bp.get("/fragments/recent-events")

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import page_header, tstatus, progress, ticket_link, empty %}
+{% from "macros.html" import page_header, tstate, reason, state_counts, progress, ticket_link, empty %}
 {% block title %}{{ t.key }}{% endblock %}
 {% block content %}
 {% set crumbs = [] %}
@@ -7,8 +7,14 @@
 {% set _ = crumbs.append((t.key, None)) %}
 {% call page_header(t.key ~ (": " ~ t.summary if t.summary else ""), None, crumbs) %}
   {% if t.type %}<span class="badge badge-outline">{{ t.type }}</span>{% endif %}
-  {{ tstatus(t, "") }}
+  {{ tstate(t, "") }}
 {% endcall %}
+
+{% if t.state in ("error", "merge_blocked") and t.state_reason %}
+<div role="alert" class="alert {{ 'alert-error' if t.state == 'error' else 'alert-warning' }}">
+  <span><span class="font-semibold">{{ "Something is off in " ~ t.source ~ ":" if t.state == "error" else "Merge blocked:" }}</span> {{ t.state_reason }}</span>
+</div>
+{% endif %}
 
 <div class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full">
   {% if t.csc %}
@@ -20,7 +26,9 @@
   {% if t.children %}
   <div class="stat"><div class="stat-title">CSC tickets</div><div class="stat-value text-2xl">{{ t.progress.done }}/{{ t.progress.total }}</div>
     <div class="stat-desc">{{ progress(t.progress, "w-40 mt-1") }}</div></div>
+  <div class="stat"><div class="stat-title">CSC ticket states</div><div class="flex flex-wrap gap-1 mt-1 max-w-xs">{{ state_counts(t.progress) }}</div></div>
   {% endif %}
+  {% if t.status %}<div class="stat"><div class="stat-title">{{ t.source | capitalize }} status</div><div class="stat-value text-lg">{{ t.status }}</div></div>{% endif %}
   <div class="stat"><div class="stat-title">Assignee</div><div class="stat-value text-lg">{{ t.assignee or "—" }}</div></div>
   <div class="stat"><div class="stat-title">Source</div><div class="stat-value text-lg">{{ t.source }}{% if t.url %} <a class="link text-base" href="{{ t.url }}" target="_blank" rel="noopener" hx-boost="false">open ↗</a>{% endif %}</div>
     <div class="stat-desc">synced {{ t.synced_at | ts or "never (stub)" }}</div></div>
@@ -42,8 +50,8 @@
         {% for c in g.tickets %}
           <tr class="hover">
             <td class="whitespace-nowrap w-32">{{ ticket_link(c) }}</td>
-            <td>{{ c.summary or "" }}</td>
-            <td class="w-28">{{ tstatus(c) }}</td>
+            <td>{{ c.summary or "" }}{{ reason(c) }}</td>
+            <td class="w-36">{{ tstate(c) }}</td>
             <td class="text-right whitespace-nowrap">{% for v in c.versions %}<a class="badge badge-ghost badge-sm font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a> {% endfor %}</td>
           </tr>
         {% endfor %}

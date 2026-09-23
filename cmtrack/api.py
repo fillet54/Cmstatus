@@ -9,7 +9,7 @@ import io
 
 from flask import Blueprint, current_app, jsonify, request
 
-from . import service as svc
+from . import service as svc, tickets
 from .db import get_db
 
 bp = Blueprint("api", __name__)
@@ -320,6 +320,12 @@ def versions_arg(value):
     if value is None or isinstance(value, list):
         return value
     return [v.strip() for v in str(value).split(",") if v.strip()]
+
+
+@bp.get("/ticket-states")
+def ticket_states():
+    """The workflow states a TicketSource may report, in order."""
+    return jsonify([{"state": k, "label": v} for k, v in tickets.STATES.items()])
 
 
 @bp.post("/tickets")

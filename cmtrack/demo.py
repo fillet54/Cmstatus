@@ -84,29 +84,36 @@ def seed(client):
     call("post", "/tickets", {"source": "jira", "records": DEMO_TICKETS})
 
 
-def _t(key, summary, parent=None, pair=None, versions=None, cat="done", type="Story", status=None):
+def _t(key, summary, parent=None, pair=None, versions=None, state="done", type="Story", status=None, reason=None):
     project, product = pair or (None, None)
     return {"key": key, "summary": summary, "type": type, "parent_key": parent, "project": project,
-            "affected_product": product, "fix_versions": versions, "status_category": cat,
-            "status": status or {"done": "Done", "in_progress": "In Progress", "todo": "To Do"}[cat],
-            "url": f"https://jira.example.com/browse/{key}"}
+            "affected_product": product, "fix_versions": versions, "state": state, "state_reason": reason,
+            "status": status or state.replace("_", " ").title(), "url": f"https://jira.example.com/browse/{key}"}
 
 
 CORE, MAPS, HUD = ("NAVL", "core"), ("NAVX", "maps"), ("DSP", "hud")
 DEMO_TICKETS = [
-    _t("PRG-10", "GPS-denied navigation", type="Feature", cat="in_progress"),
-    _t("PRG-12", "Terrain database refresh", type="Feature"),
+    _t("PRG-10", "GPS-denied navigation", type="Feature", state="in_progress"),
+    _t("PRG-12", "Terrain database refresh", type="Feature", state="verification"),
     _t("PRG-15", "CR-1234: heading drift after cold start", type="Change Request"),
-    _t("PRG-18", "Moving map declutter", type="Feature", cat="todo"),
+    _t("PRG-18", "Moving map declutter", type="Feature", state="analysis_in_progress"),
     _t("NAVL-101", "Inertial-only dead reckoning mode", "PRG-10", CORE, ["2026.Q4-b1"]),
-    _t("NAVL-105", "Blend terrain-referenced fixes into the filter", "PRG-10", CORE, ["2027.Q1-b1"], "in_progress"),
+    _t("NAVL-105", "Blend terrain-referenced fixes into the filter", "PRG-10", CORE, ["2027.Q1-b1"], "peer_review",
+       status="In Review"),
+    _t("NAVL-106", "Terrain fix quality gating", "PRG-10", CORE, ["2027.Q1-b2"], "merge_blocked",
+       status="Ready to Merge", reason="waiting on NAVX-205 (shared interface change) to merge first"),
     _t("NAVX-201", "Terrain correlation service", "PRG-10", MAPS, ["2026.Q4-b2"]),
+    _t("NAVX-205", "Expose correlation quality in the terrain API", "PRG-10", MAPS, ["2027.Q1-b2"], "in_progress"),
     _t("DSP-31", "GPS-denied annunciator on PFD", "PRG-10", HUD, ["3.2.0"]),
-    _t("NAVX-210", "Load 2026 terrain tiles", "PRG-12", MAPS, ["2026.Q4-b3"]),
-    _t("NAVX-211", "Fix tile index overflow found in b3", "PRG-12", MAPS, ["2026.Q4-b4"], type="Bug"),
+    _t("NAVX-210", "Load 2026 terrain tiles", "PRG-12", MAPS, ["2026.Q4-b3"], "verification", status="In Test"),
+    _t("NAVX-211", "Fix tile index overflow found in b3", "PRG-12", MAPS, ["2026.Q4-b4"], "verification",
+       type="Bug", status="In Test"),
     _t("NAVL-120", "Re-seed heading from magnetometer on cold start", "PRG-15", CORE, ["2026.Q4.ER1"], type="Bug"),
-    _t("NAVX-220", "Declutter levels for moving map", "PRG-18", MAPS, ["2027.Q1-b2"], "todo"),
-    _t("DSP-40", "Declutter softkey", "PRG-18", HUD, ["3.3.0-rc1"], "todo"),
+    _t("NAVX-220", "Declutter levels for moving map", "PRG-18", MAPS, ["2027.Q1-b2"], "analysis_required",
+       status="Open"),
+    _t("NAVX-221", "Declutter preset storage", "PRG-18", MAPS, ["2027.Q1-b3"], "error", status="Closed",
+       reason="closed as Done but its sub-task NAVX-222 is still open"),
+    _t("DSP-40", "Declutter softkey", "PRG-18", HUD, ["3.3.0-rc1"], "ready_for_work", status="Ready"),
     _t("NAVL-130", "Log spam in nav filter", None, CORE, ["2027.Q1-b1"], type="Bug"),
 ]
 

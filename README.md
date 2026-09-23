@@ -69,11 +69,18 @@ team can split or implement it differently. Tickets come in through one of two p
   `POST /api/cis/<ci>/tickets/sync {to, from?}` pulls the CSC tickets for that range, then any parents they reference.
 - **push**: `POST /api/tickets {source?, records: [TicketRecord, ...]}` from another system.
 
-`TicketRecord`: `key`, `summary`, `type`, `status`, `status_category` (Jira's `new`/`indeterminate`/`done` or
-`todo`/`in_progress`/`done`), `parent_key`, `project` + `affected_product` (resolved to the CSC), `fix_versions`
-(cmtrack version names of that CSC's CSCI; omit to leave links alone, `[]` to clear them), `url`, `assignee`,
-`updated`, `attributes`. Unknown keys go into `attributes`. Unmapped Jira pairs and unknown fix versions are
-returned as warnings, not errors. Parents referenced before they're fetched are kept as stubs (`missing_parents`).
+`TicketRecord`: `key`, `summary`, `type`, `state`, `state_reason`, `status`, `parent_key`, `project` +
+`affected_product` (resolved to the CSC), `fix_versions` (cmtrack version names of that CSC's CSCI; omit to leave
+links alone, `[]` to clear them), `url`, `assignee`, `updated`, `attributes`. Unknown keys go into `attributes`.
+Unmapped Jira pairs and unknown fix versions are returned as warnings, not errors.
+
+**States** (`GET /api/ticket-states`), in workflow order: `analysis_required`, `analysis_in_progress`,
+`ready_for_work`, `in_progress`, `peer_review`, `merge_blocked` (code ready, something is holding up the merge),
+`verification`, `done`, `error`. The source decides the state, usually with domain logic over the ticket and
+everything linked to it rather than one Jira status, and says why in `state_reason` where that helps. `error`
+means the source data doesn't add up (e.g. closed with open sub-tasks). A missing or unrecognized state is stored
+as `error` with a reason, and so is a parent that was referenced but not fetched yet (`missing_parents`). Errors
+are listed on the dashboard so people can fix them in Jira. `status` keeps the raw Jira status for display.
 
 ## Policies
 

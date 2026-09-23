@@ -16,7 +16,9 @@ Both paths go through ``service.upsert_tickets``, so they behave the same.
                 jql = (f'project = {csc["jira_project"]} AND "Affected Product" = "{csc["affected_product"]}" '
                        f'AND fixVersion in ({", ".join(map(repr, versions))})')
                 for issue in my_jira.search(jql):
-                    yield TicketRecord(key=issue.key, summary=issue.summary, ...)
+                    state, reason = my_state_logic(issue, my_jira.linked(issue))   # your domain rules
+                    yield TicketRecord(key=issue.key, summary=issue.summary, state=state,
+                                       state_reason=reason, status=issue.status, ...)
         def fetch_by_keys(self, keys):
             ...
 
@@ -28,17 +30,29 @@ import importlib
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, List, Optional
 
-STATUS_CATEGORIES = ("todo", "in_progress", "done")
-_CATEGORY_ALIASES = {
-    "new": "todo", "to do": "todo", "todo": "todo", "open": "todo",              # Jira key 'new'
-    "indeterminate": "in_progress", "in progress": "in_progress", "in_progress": "in_progress",
-    "done": "done", "closed": "done", "resolved": "done",
+# Workflow states, in order. The source decides a ticket's state, typically with domain logic over the
+# ticket and every issue linked to it, not a 1:1 map of one Jira status. cmtrack only stores and reports it.
+STATES = {
+    "analysis_required":    "Analysis required",
+    "analysis_in_progress": "Analysis in progress",
+    "ready_for_work":       "Ready for work",
+    "in_progress":          "In progress",
+    "peer_review":          "Peer review",
+    "merge_blocked":        "Merge blocked",     # code is ready, but something is holding up the merge
+    "verification":         "Verification",
+    "done":                 "Done",
+    "error":                "Error",             # something is off in the source data; state_reason says what
 }
+DONE, ERROR = "done", "error"
 
 
-def status_category(value) -> str:
-    """Normalize a source's status category (Jira: new / indeterminate / done) to todo / in_progress / done."""
-    return _CATEGORY_ALIASES.get(str(value or "").strip().lower(), "todo")
+def normalize_state(state, reason=None):
+    """(state, reason) with anything missing or unrecognized turned into 'error' plus an explanation."""
+    key = str(state or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if key in STATES:
+        return key, reason
+    why = f"source sent unknown state {state!r}" if state else "source did not supply a state"
+    return ERROR, f"{why}; {reason}" if reason else why
 
 
 @dataclass
@@ -48,12 +62,17 @@ class TicketRecord:
     CSC tickets carry ``project`` + ``affected_product`` (resolved to a CSC through the CSC's Jira pair)
     and ``fix_versions`` (names of versions of that CSC's CSCI). Parent tickets usually have neither.
     ``fix_versions=None`` leaves existing version links alone; ``[]`` clears them.
+
+    ``state`` is one of ``STATES`` and is the source's call; ``state_reason`` explains it where useful
+    (why it's ``error``, what a ``merge_blocked`` ticket waits on). ``status`` is the raw source status,
+    kept for display.
     """
     key: str
     summary: Optional[str] = None
     type: Optional[str] = None
+    state: Optional[str] = None
+    state_reason: Optional[str] = None
     status: Optional[str] = None
-    status_category: str = "todo"
     parent_key: Optional[str] = None
     project: Optional[str] = None
     affected_product: Optional[str] = None
@@ -75,7 +94,7 @@ class TicketRecord:
         return rec
 
     def __post_init__(self):
-        self.status_category = status_category(self.status_category)
+        self.state, self.state_reason = normalize_state(self.state, self.state_reason)
         if isinstance(self.fix_versions, str):
             self.fix_versions = [self.fix_versions]
 
@@ -92,7 +111,9 @@ class TicketSource:
         """CSC tickets of ``ci`` whose fix version is one of ``versions`` (cmtrack version names).
 
         ``cscs`` are the CI's CSC rows (name, jira_project, affected_product, team), i.e. what to query.
-        Map the source's version naming to cmtrack's here if they differ.
+        Map the source's version naming to cmtrack's here if they differ, and work out each ticket's
+        ``state`` (from its status, sub-tasks, links, ...); use ``error`` + ``state_reason`` when the
+        source data doesn't add up, so users can see what to fix.
         """
         raise NotImplementedError
 
