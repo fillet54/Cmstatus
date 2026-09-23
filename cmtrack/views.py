@@ -3,9 +3,9 @@
 A view renders its fragment template for an htmx request and the full page otherwise, so every
 URL also works as a plain link, a bookmark or a history restore.
 """
-from flask import Blueprint, render_template, request, url_for
+from flask import Blueprint, current_app, render_template, request, url_for
 
-from . import service as svc
+from . import service as svc, tickets
 from .db import get_db
 
 bp = Blueprint("ui", __name__)
@@ -40,6 +40,20 @@ def entity_url(entity, entity_id):
 
 
 # ----------------------------------------------------------------------------- helpers
+
+def ticket_source():
+    try:
+        return tickets.pick_source(current_app.config["TICKET_SOURCES"], request.args.get("source"))
+    except KeyError as e:
+        raise svc.CMError(e.args[0]) from None
+
+
+def live(fn, *args, **kwargs):
+    """Call something that asks the ticket source: (result, None), or (None, message) if it can't answer."""
+    try:
+        return fn(*args, **kwargs), None
+    except svc.CMError as e:
+        return None, e.message
 
 def with_staleness(conn, entries):
     """Flag baseline entries whose version is no longer its release family's effective version."""
@@ -86,8 +100,7 @@ def dashboard():
         stale += [{**e, "baseline": b["name"], "baseline_id": b["id"], "ifc": b["ifc"]}
                   for e in with_staleness(conn, svc.baseline_entries(conn, b["id"])) if e["effective"]]
     return render_template("dashboard.html", counts=counts, open_children=open_children, upcoming=upcoming,
-                           stale=stale, ticket_errors=svc.tickets_in_error(conn),
-                           events=svc.to_dicts(svc.list_events(conn, limit=10)))
+                           stale=stale, events=svc.to_dicts(svc.list_events(conn, limit=10)))
 
 
 @bp.get("/fragments/recent-events")
@@ -151,7 +164,8 @@ def version(vid):
     return render_template(
         "version.html", v=ver, ci=svc.get_ci(conn, ver["ci_id"]), rel=svc.get_release(conn, ver["release_id"]),
         manifest=svc.manifest(conn, vid), used=svc.where_used(conn, vid), lineage=svc.lineage(conn, vid),
-        report=svc.work_report(conn, ver["ci_id"], versions=[vid]),
+        **dict(zip(("report", "source_error"), live(svc.work_report, conn, ticket_source(), ver["ci_id"],
+                                                   versions=[vid]))),
         events=svc.to_dicts(svc.list_events(conn, "version", vid, 50)))
 
 
@@ -177,13 +191,14 @@ def work(ref):
         shipped = [p for p in presets if p["status"] == "released" and p["kind"] == "planned"]
         pick = shipped[-1] if shipped else (presets or [None])[0]
         frm, to = (pick["from"], pick["to"]) if pick else (None, None)
-    report = svc.work_report(conn, ci["id"], to, frm) if to else None
-    return page("work.html", "_work.html", ci=ci, versions=versions, presets=presets, frm=frm, to=to, report=report)
+    report, source_error = live(svc.work_report, conn, ticket_source(), ci["id"], to, frm) if to else (None, None)
+    return page("work.html", "_work.html", ci=ci, versions=versions, presets=presets, frm=frm, to=to,
+                report=report, source_error=source_error)
 
 
 @bp.get("/tickets/<key>")
 def ticket(key):
-    return render_template("ticket.html", t=svc.ticket_detail(get_db(), key, request.args.get("source")))
+    return render_template("ticket.html", t=svc.ticket_detail(get_db(), ticket_source(), key))
 
 
 # ----------------------------------------------------------------------------- IFCs & baselines

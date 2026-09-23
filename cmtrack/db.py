@@ -21,8 +21,14 @@ MIGRATIONS = [
 ]
 
 
+# Tables that no longer exist in the model (tickets now live only in the ticket source).
+DROPPED = ["ticket_version", "ticket"]
+
+
 def init_db(conn):
     conn.executescript(SCHEMA.read_text())
+    for table in DROPPED:
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
     for table, column, definition in MIGRATIONS:
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:

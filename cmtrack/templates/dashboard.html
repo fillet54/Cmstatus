@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import badge, empty, ticket_link %}
+{% from "macros.html" import badge, empty %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 <div class="stats stats-vertical sm:stats-horizontal shadow w-full bg-base-100">
@@ -24,29 +24,6 @@
     <div class="stat-desc">fielding an older version than effective</div>
   </div>
 </div>
-
-{% if ticket_errors %}
-<div class="card bg-base-100 shadow-sm border border-error/40">
-  <div class="card-body">
-    <h2 class="card-title text-error">Tickets needing attention <span class="badge badge-error">{{ ticket_errors | length }}</span></h2>
-    <p class="text-sm text-base-content/60 -mt-1">The ticket source couldn't work out a state for these. Usually something to fix in Jira.</p>
-    <div class="overflow-x-auto">
-      <table class="table table-sm">
-        <thead><tr><th>Ticket</th><th>CI / CSC</th><th>Problem</th></tr></thead>
-        <tbody>
-        {% for t in ticket_errors %}
-          <tr class="hover">
-            <td class="whitespace-nowrap">{{ ticket_link(t) }}<div class="text-xs text-base-content/60 max-w-xs truncate">{{ t.summary or "" }}</div></td>
-            <td class="whitespace-nowrap">{% if t.ci %}<a class="link link-hover" href="{{ url_for('ui.ci', ref=t.ci) }}">{{ t.ci }}</a> / {{ t.csc }}{% else %}—{% endif %}</td>
-            <td class="text-error">{{ t.state_reason or "no reason given" }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-{% endif %}
 
 <div class="grid lg:grid-cols-2 gap-6">
   <div class="card bg-base-100 shadow-sm">

@@ -21,7 +21,7 @@
   <div class="stat"><div class="stat-title">CSC</div><div class="stat-value text-lg">{{ t.csc }}</div>
     <div class="stat-desc"><a class="link" href="{{ url_for('ui.ci', ref=t.ci) }}">{{ t.ci }}</a>{% if t.team %} · {{ t.team }}{% endif %}</div></div>
   <div class="stat"><div class="stat-title">Fix versions</div><div class="stat-value text-lg font-mono">
-    {% for v in t.versions %}<a class="link link-hover" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{{ ", " if not loop.last }}{% else %}—{% endfor %}</div></div>
+    {% for v in t.versions %}{% if v.id %}<a class="link link-hover" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{% else %}<span class="text-warning" title="not a version of {{ t.ci }}">{{ v.name }}</span>{% endif %}{{ ", " if not loop.last }}{% else %}—{% endfor %}</div></div>
   {% endif %}
   {% if t.children %}
   <div class="stat"><div class="stat-title">CSC tickets</div><div class="stat-value text-2xl">{{ t.progress.done }}/{{ t.progress.total }}</div>
@@ -31,7 +31,7 @@
   {% if t.status %}<div class="stat"><div class="stat-title">{{ t.source | capitalize }} status</div><div class="stat-value text-lg">{{ t.status }}</div></div>{% endif %}
   <div class="stat"><div class="stat-title">Assignee</div><div class="stat-value text-lg">{{ t.assignee or "—" }}</div></div>
   <div class="stat"><div class="stat-title">Source</div><div class="stat-value text-lg">{{ t.source }}{% if t.url %} <a class="link text-base" href="{{ t.url }}" target="_blank" rel="noopener" hx-boost="false">open ↗</a>{% endif %}</div>
-    <div class="stat-desc">synced {{ t.synced_at | ts or "never (stub)" }}</div></div>
+    <div class="stat-desc">live from the source</div></div>
 </div>
 
 {% if t.children %}
@@ -52,7 +52,7 @@
             <td class="whitespace-nowrap w-32">{{ ticket_link(c) }}</td>
             <td>{{ c.summary or "" }}{{ reason(c) }}</td>
             <td class="w-36">{{ tstate(c) }}</td>
-            <td class="text-right whitespace-nowrap">{% for v in c.versions %}<a class="badge badge-ghost badge-sm font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a> {% endfor %}</td>
+            <td class="text-right whitespace-nowrap">{% for v in c.versions %}{% if v.id %}<a class="badge badge-ghost badge-sm font-mono hover:badge-primary" href="{{ url_for('ui.version', vid=v.id) }}">{{ v.name }}</a>{% else %}<span class="badge badge-warning badge-outline badge-sm font-mono" title="not a cmtrack version of this CSC's CSCI">{{ v.name }}</span>{% endif %} {% endfor %}</td>
           </tr>
         {% endfor %}
         </tbody>
@@ -63,6 +63,10 @@
 </div>
 {% elif not t.csc %}
 <p class="text-base-content/60">No CSC tickets reference this ticket yet.</p>
+{% endif %}
+
+{% if t.warnings %}
+<div role="alert" class="alert alert-warning text-sm"><ul>{% for w in t.warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>
 {% endif %}
 
 {% if t.attributes %}

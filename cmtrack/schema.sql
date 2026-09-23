@@ -7,9 +7,8 @@
 --                     └───┘ parent    ├──< manifest_entry >── version   (composite CIs pin child versions)
 --                                     └──< version_parent >── version   (lineage DAG: what each build was built from)
 --
---   ticket ──< ticket (parent/child)             (a parent ticket is what reports show; CSC tickets are how each team did it)
---     │ └──> csc                                  (CSC tickets resolve to a CSC by Jira project/affected product)
---     └──< ticket_version >── version            (fix versions of the CSC's CSCI)
+--   Tickets are not stored: the ticket source (Jira) is the system of record and is queried live.
+--   cmtrack supplies the version set (lineage) and resolves tickets to CSCs via csc's Jira pair.
 --
 --   ifc ──< ifc (parent/child)
 --    └──< baseline ──< baseline_entry >── ci, version     (the HSCM list: one version per CI)
@@ -136,40 +135,12 @@ CREATE TABLE IF NOT EXISTS event (
     detail    TEXT NOT NULL DEFAULT '{}'
 );
 
-CREATE TABLE IF NOT EXISTS ticket (
-    id              INTEGER PRIMARY KEY,
-    source          TEXT NOT NULL DEFAULT 'jira',       -- which TicketSource it came from
-    key             TEXT NOT NULL,                      -- e.g. NAVL-123
-    parent_id       INTEGER REFERENCES ticket(id),      -- the parent (feature / CR) a CSC ticket implements
-    csc_id          INTEGER REFERENCES csc(id),         -- set for CSC tickets; NULL for parent tickets
-    summary         TEXT,
-    type            TEXT,                               -- source's issue type: Story, Bug, Feature, ...
-    state           TEXT NOT NULL DEFAULT 'error',      -- workflow state decided by the source (tickets.STATES)
-    state_reason    TEXT,                               -- why: what's wrong ('error'), what a merge waits on, ...
-    status          TEXT,                               -- source's raw status name, for display
-    url             TEXT,
-    assignee        TEXT,
-    updated_at      TEXT,                               -- last change in the source
-    attributes      TEXT NOT NULL DEFAULT '{}',         -- JSON, anything else the source wants to keep
-    synced_at       TEXT,                               -- NULL = stub (referenced as a parent, not fetched yet)
-    UNIQUE (source, key)
-);
-
-CREATE TABLE IF NOT EXISTS ticket_version (
-    ticket_id  INTEGER NOT NULL REFERENCES ticket(id),
-    version_id INTEGER NOT NULL REFERENCES version(id),
-    PRIMARY KEY (ticket_id, version_id)
-);
-
 CREATE INDEX IF NOT EXISTS ix_version_release  ON version(release_id);
 CREATE INDEX IF NOT EXISTS ix_release_parent   ON release(parent_id);
 CREATE INDEX IF NOT EXISTS ix_entry_version    ON baseline_entry(version_id);
 CREATE INDEX IF NOT EXISTS ix_manifest_child   ON manifest_entry(child_version_id);
 CREATE INDEX IF NOT EXISTS ix_event_entity     ON event(entity, entity_id);
 CREATE INDEX IF NOT EXISTS ix_vparent_parent   ON version_parent(parent_id);
-CREATE INDEX IF NOT EXISTS ix_ticket_parent    ON ticket(parent_id);
-CREATE INDEX IF NOT EXISTS ix_ticket_csc       ON ticket(csc_id);
-CREATE INDEX IF NOT EXISTS ix_tv_version       ON ticket_version(version_id);
 
 -- Backstop for duplicate spawns: one live patch/emergency per change request per release line.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_release_child_reason ON release(parent_id, kind, reason)

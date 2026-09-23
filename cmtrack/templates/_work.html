@@ -34,7 +34,9 @@
   </div>
 </form>
 
-{% if report %}
+{% if source_error %}
+<div role="alert" class="alert alert-error"><span><span class="font-semibold">Couldn't get tickets:</span> {{ source_error }}</span></div>
+{% elif report %}
 <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
   <div class="text-sm">
     <span class="font-semibold">{{ report.parents }}</span> parent ticket{{ 's' if report.parents != 1 }},
@@ -56,6 +58,12 @@
   </div>
 </div>
 {% include "_work_items.html" %}
+{% if report.warnings %}
+<details class="collapse collapse-arrow bg-base-100 border border-warning/50">
+  <summary class="collapse-title text-sm text-warning">{{ report.warnings | length }} ticket{{ 's' if report.warnings | length != 1 }} from {{ report.source }} couldn't be placed</summary>
+  <ul class="collapse-content text-sm list-disc pl-10">{% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+</details>
+{% endif %}
 {% else %}
 <p class="text-base-content/60">Pick a version range.</p>
 {% endif %}

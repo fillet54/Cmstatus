@@ -2,14 +2,15 @@
 
 Two planned CIs, a composite suite, a failed build and an ad hoc respin, patch and emergency
 releases, an IFC hierarchy, a scraped HSCM with placeholder CIs and a hand-made successor
-baseline, and Jira-style work items: parent tickets with CSC tickets under them, including an
-emergency fix merged into the next quarter (a two-parent version in the lineage DAG).
+baseline, and an emergency fix merged into the next quarter (a two-parent version in the lineage DAG).
+Tickets aren't stored; ``demo_source`` serves Jira-style parent and CSC tickets for the demo.
 Uses CMTRACK_POLICY_DIR (default ./policies) for the manual DISPLAY-SW plan.
 """
 import argparse
 import os
 
 from . import create_app
+from .tickets import StaticSource
 
 
 def seed(client):
@@ -81,7 +82,11 @@ def seed(client):
     # ...and fold it into the next quarter: 2027.Q1-b1 builds on Q4's release *and* the emergency fix
     q1 = next(r["id"] for r in call("get", "/cis/NAV-SW/releases") if r["name"] == "2027.Q1")
     call("put", f"/versions/{version(q1, '2027.Q1-b1')}/parents", {"parents": ["2026.Q4-b4", "2026.Q4.ER1"]})
-    call("post", "/tickets", {"source": "jira", "records": DEMO_TICKETS})
+
+
+def demo_source():
+    """Stand-in ticket source for the demo: CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source"""
+    return StaticSource(DEMO_TICKETS, name="jira")
 
 
 def _t(key, summary, parent=None, pair=None, versions=None, state="done", type="Story", status=None, reason=None):
@@ -125,4 +130,5 @@ if __name__ == "__main__":
     if os.path.exists(args.db):
         raise SystemExit(f"{args.db} already exists; pick another --db or delete it")
     seed(create_app({"DATABASE": args.db}).test_client())
-    print(f"seeded {args.db}; run: CMTRACK_DB={args.db} python -m cmtrack")
+    print(f"seeded {args.db}; run: CMTRACK_DB={args.db} CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source "
+          f"python -m cmtrack")

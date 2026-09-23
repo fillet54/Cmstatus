@@ -305,21 +305,18 @@ def diff_baselines(conn, a, b):
 
 
 # ----------------------------------------------------------------------------- tickets / work items
+# Tickets are read live from the configured TicketSource on every call; nothing is stored here.
 
-def ticket_source(name):
-    sources = current_app.config["TICKET_SOURCES"] or {}
-    if not name and len(sources) == 1:
-        return next(iter(sources.values()))
-    if name not in sources:
-        raise svc.CMError(f"unknown ticket source {name!r}; configured: {sorted(sources)}")
-    return sources[name]
+def ticket_source():
+    try:
+        return tickets.pick_source(current_app.config["TICKET_SOURCES"], request.args.get("source"))
+    except KeyError as e:
+        raise svc.CMError(e.args[0]) from None
 
 
 def versions_arg(value):
-    """A list, or a comma-separated string, of version refs."""
-    if value is None or isinstance(value, list):
-        return value
-    return [v.strip() for v in str(value).split(",") if v.strip()]
+    """A comma-separated string of version refs."""
+    return [v.strip() for v in str(value).split(",") if v.strip()] if value else None
 
 
 @bp.get("/ticket-states")
@@ -328,45 +325,19 @@ def ticket_states():
     return jsonify([{"state": k, "label": v} for k, v in tickets.STATES.items()])
 
 
-@bp.post("/tickets")
-@tx
-def push_tickets(conn):
-    """Push path: {source?: "jira", records: [TicketRecord, ...]}."""
-    d = body()
-    if not isinstance(d.get("records"), list):
-        raise svc.CMError("'records' must be a list")
-    return jsonify(svc.upsert_tickets(conn, d["records"], d.get("source") or "jira"))
-
-
-@bp.post("/cis/<ref>/tickets/sync")
-@tx
-def sync_tickets(conn, ref):
-    """Pull path: {source?, to, from?} or {source?, versions: [...]} -> TicketSource.fetch_for_versions."""
-    d = body()
-    source = ticket_source(d.get("source"))
-    names = versions_arg(d.get("versions"))
-    if names:
-        ci = svc.get_ci(conn, ref)
-        versions = [svc.find_version(conn, ci, v) for v in names]
-    elif d.get("to"):
-        versions = svc.version_range(conn, ref, d["to"], d.get("from"))
-    else:
-        raise svc.CMError("give 'to' (and optionally 'from'), or 'versions'")
-    return jsonify(svc.sync_tickets(conn, source, ref, versions))
-
-
 @bp.get("/cis/<ref>/work")
 @tx
 def work(conn, ref):
-    """?to=&from= (range over the lineage DAG) or ?versions=a,b: parent tickets -> CSC -> CSC tickets."""
+    """?to=&from= (range over the lineage DAG) or ?versions=a,b [&source=]: parent -> CSC -> CSC tickets."""
     a = request.args
-    return jsonify(svc.work_report(conn, ref, a.get("to"), a.get("from"), versions_arg(a.get("versions"))))
+    return jsonify(svc.work_report(conn, ticket_source(), ref, a.get("to"), a.get("from"),
+                                   versions_arg(a.get("versions"))))
 
 
 @bp.get("/tickets/<key>")
 @tx
 def get_ticket(conn, key):
-    return jsonify(svc.ticket_detail(conn, key, request.args.get("source")))
+    return jsonify(svc.ticket_detail(conn, ticket_source(), key))
 
 
 # ----------------------------------------------------------------------------- events

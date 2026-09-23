@@ -6,9 +6,11 @@ Python 3.10+, Flask, SQLite. No other dependencies.
 ```
 python -m cmtrack                      # dev server on :5000, DB in ./cmtrack.db
 python -m unittest discover -s tests   # end-to-end scenario + views
-python -m cmtrack.demo --db demo.db    # load a demo scenario, then: CMTRACK_DB=demo.db python -m cmtrack
+python -m cmtrack.demo --db demo.db    # load a demo scenario, then:
+CMTRACK_DB=demo.db CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source python -m cmtrack
 ```
-Env: `CMTRACK_DB` (SQLite path), `CMTRACK_POLICY_DIR` (where manual plan files live, default `./policies`).
+Env: `CMTRACK_DB` (SQLite path), `CMTRACK_POLICY_DIR` (where manual plan files live, default `./policies`),
+`CMTRACK_TICKET_SOURCES` (`name=module:factory`, see Work items).
 
 ## Model
 
@@ -23,7 +25,6 @@ Env: `CMTRACK_DB` (SQLite path), `CMTRACK_POLICY_DIR` (where manual plan files l
 | Manifest | `manifest_entry` | Composite CI version → pinned child versions. |
 | IFC | `ifc` | Capability, with `parent_id` hierarchy. |
 | Baseline | `baseline` + `baseline_entry` | The HSCM list: one version per CI. draft → approved → superseded. |
-| Ticket | `ticket` + `ticket_version` | Work items. A parent ticket (feature / CR) has CSC tickets under it; each CSC ticket resolves to its CSC by the Jira pair and carries fix versions of that CSC's CSCI. |
 | Event | `event` | Append-only log of every change (status accounting). |
 
 **Rules enforced**
@@ -59,28 +60,36 @@ under `unabsorbed` (and the UI flags it).
 
 ## Work items (tickets)
 
-Parent tickets are what reports show. CSC tickets under them are how each CSC team did the work, so each
-team can split or implement it differently. Tickets come in through one of two paths, which share
-`service.upsert_tickets`:
+The ticket source (Jira) is the system of record. **cmtrack stores no tickets**: every work report and ticket
+page asks the source, so it always shows what the source says now. Caching, if any, is the source's business.
+cmtrack contributes what the source doesn't know: the version set a range covers (lineage), which CSC and
+CSCI a (Jira project, affected product) pair belongs to, and the grouping. Parent tickets are what reports
+show; the CSC tickets under them are how each CSC team did the work, so each team can split or implement
+it differently.
 
-- **pull**: implement `cmtrack.tickets.TicketSource` (`fetch_for_versions(ci, cscs, versions)` and
-  `fetch_by_keys(keys)`, both returning `TicketRecord`s) around your Jira client, then register it:
-  `create_app({"TICKET_SOURCES": {"jira": JiraSource()}})` or `CMTRACK_TICKET_SOURCES=jira=mypkg.jira:JiraSource`.
-  `POST /api/cis/<ci>/tickets/sync {to, from?}` pulls the CSC tickets for that range, then any parents they reference.
-- **push**: `POST /api/tickets {source?, records: [TicketRecord, ...]}` from another system.
+Implement `cmtrack.tickets.TicketSource` around your Jira client, returning `TicketRecord`s:
+
+- `tickets_for_versions(ci, cscs, versions)`: CSC tickets of those CSCs whose fix versions include any of `versions`;
+- `get_tickets(keys)`: tickets by key (ticket pages, and the parents of a report's CSC tickets);
+- `get_children(key)`: the CSC tickets under a parent, across CIs.
+
+Register it with `create_app({"TICKET_SOURCES": {"jira": JiraSource()}})` or
+`CMTRACK_TICKET_SOURCES=jira=mypkg.jira:JiraSource`; with several, pick one per request with `?source=`.
+If the source raises, the API answers 502 and pages show the error in place of the tickets.
 
 `TicketRecord`: `key`, `summary`, `type`, `state`, `state_reason`, `status`, `parent_key`, `project` +
-`affected_product` (resolved to the CSC), `fix_versions` (cmtrack version names of that CSC's CSCI; omit to leave
-links alone, `[]` to clear them), `url`, `assignee`, `updated`, `attributes`. Unknown keys go into `attributes`.
-Unmapped Jira pairs and unknown fix versions are returned as warnings, not errors.
+`affected_product` (resolved to the CSC), `fix_versions` (cmtrack version names of that CSC's CSCI), `url`,
+`assignee`, `updated`, `attributes`. Tickets that can't be placed (unmapped Jira pair, fix versions outside
+the request, another CI's ticket) are left out of the report and listed under `warnings`; a parent the
+source can't find shows as an `error` placeholder.
 
 **States** (`GET /api/ticket-states`), in workflow order: `analysis_required`, `analysis_in_progress`,
 `ready_for_work`, `in_progress`, `peer_review`, `merge_blocked` (code ready, something is holding up the merge),
 `verification`, `done`, `error`. The source decides the state, usually with domain logic over the ticket and
 everything linked to it rather than one Jira status, and says why in `state_reason` where that helps. `error`
 means the source data doesn't add up (e.g. closed with open sub-tasks). A missing or unrecognized state is stored
-as `error` with a reason, and so is a parent that was referenced but not fetched yet (`missing_parents`). Errors
-are listed on the dashboard so people can fix them in Jira. `status` keeps the raw Jira status for display.
+as `error` with a reason. Errors (and merge-blocked reasons) show next to the ticket so people know what to fix
+in Jira. `status` keeps the raw Jira status for display.
 
 ## Policies
 
@@ -126,10 +135,9 @@ PUT  /baselines/<id>/entries   POST /baselines/<id>/clone   POST /baselines/<id>
 GET  /baselines/<a>/diff/<b>
 GET  /versions/<id>/lineage        PUT /versions/<id>/parents {parents}   DELETE /versions/<id>/parents
 GET  /cis/<ci>/versions?to=&from=  range over the lineage DAG, oldest first
-GET  /cis/<ci>/work?to=&from=      or ?versions=a,b   parent tickets -> CSC -> CSC tickets, with progress
-POST /cis/<ci>/tickets/sync        {source?, to, from?} or {source?, versions}   pull from a TicketSource
-POST /tickets                      {source?, records: [...]}                    push
-GET  /tickets/<key>                parent + CSC tickets grouped by CI/CSC, or a CSC ticket's fix versions
+GET  /cis/<ci>/work?to=&from=      or ?versions=a,b   parent tickets -> CSC -> CSC tickets (live from the source)
+GET  /tickets/<key>                a ticket, its parent, and CSC tickets under it by CI/CSC (live)
+GET  /ticket-states                the workflow states a source may report
 GET  /events?entity=&entity_id=
 ```
 
@@ -159,6 +167,7 @@ every URL works as a plain link.
 ```
 
 ## Not yet built (next iterations)
-- Jira: the `TicketSource` for your Jira client, discrepancy/feature trace, missing-ticket findings.
+- Jira: the `TicketSource` for your Jira client; discrepancy/feature trace; a cross-CI "tickets in error" view
+  (needs a source query for it, since nothing is stored).
 - Verification events as a first-class record behind the `tested` gate.
 - HW revisions beyond "a version of an HWCI"; per-CSC versions (only if a product needs them).

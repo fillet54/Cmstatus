@@ -980,91 +980,26 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
 
 
 # ----------------------------------------------------------------------------- tickets (work items)
+#
+# Tickets are not stored here: the TicketSource is the system of record and is asked on every request
+# (it may cache if it wants to). cmtrack contributes the version set (lineage ranges) and the CSC mapping.
 
-_TICKET_COLS = ("summary", "type", "state", "state_reason", "status", "url", "assignee", "updated_at", "attributes")
-
-
-def _ticket_stub(conn, source, key):
-    conn.execute("INSERT OR IGNORE INTO ticket (source, key, state_reason) VALUES (?, ?, ?)",
-                 (source, key, "referenced as a parent but not fetched from the source yet"))
-    return conn.execute("SELECT id FROM ticket WHERE source = ? AND key = ?", (source, key)).fetchone()["id"]
+class SourceError(CMError):
+    status = 502
 
 
-def upsert_tickets(conn, records, source="jira"):
-    """Insert or update tickets from a source. Returns what changed plus warnings.
-
-    A CSC ticket resolves to its CSC by (project, affected_product) and its fix versions by name within
-    that CSC's CSCI. Parents referenced but not supplied become stubs, listed in ``missing_parents``.
-    """
+def _ask(source, method, *args):
+    """Call a TicketSource method; normalize records; turn source failures into a 502 CMError."""
+    if source is None:
+        raise CMError("no ticket source configured (set CMTRACK_TICKET_SOURCES)")
     try:
-        recs = [r if isinstance(r, tickets.TicketRecord) else tickets.TicketRecord.from_dict(r) for r in records]
-    except (TypeError, ValueError) as e:
-        raise CMError(f"bad ticket record: {e}") from None
-    out = {"source": source, "created": [], "updated": [], "warnings": [], "missing_parents": []}
-    stamp = now()
-    for rec in recs:
-        csc = None
-        if rec.project or rec.affected_product:
-            csc = conn.execute("SELECT * FROM csc WHERE jira_project = ? AND affected_product = ?",
-                               (rec.project, rec.affected_product)).fetchone()
-            if csc is None:
-                out["warnings"].append(f"{rec.key}: no CSC mapped to ({rec.project}, {rec.affected_product})")
-        parent_id = _ticket_stub(conn, source, rec.parent_key) if rec.parent_key else None
-        values = (rec.summary, rec.type, rec.state, rec.state_reason, rec.status, rec.url, rec.assignee, rec.updated,
-                  json.dumps(rec.attributes or {}))
-        row = conn.execute("SELECT id, synced_at FROM ticket WHERE source = ? AND key = ?", (source, rec.key)).fetchone()
-        if row is None:
-            tid = conn.execute(
-                f"INSERT INTO ticket (source, key, parent_id, csc_id, {', '.join(_TICKET_COLS)}, synced_at) "
-                f"VALUES (?, ?, ?, ?, {', '.join('?' * len(_TICKET_COLS))}, ?)",
-                (source, rec.key, parent_id, csc["id"] if csc else None, *values, stamp)).lastrowid
-            out["created"].append(rec.key)
-        else:
-            tid = row["id"]
-            conn.execute(
-                f"UPDATE ticket SET parent_id = ?, csc_id = ?, {', '.join(c + ' = ?' for c in _TICKET_COLS)}, "
-                f"synced_at = ? WHERE id = ?", (parent_id, csc["id"] if csc else None, *values, stamp, tid))
-            (out["updated"] if row["synced_at"] else out["created"]).append(rec.key)
-        if rec.fix_versions is not None:
-            if csc is None and rec.fix_versions:
-                out["warnings"].append(f"{rec.key}: fix versions {rec.fix_versions} ignored (no CSC, so no CSCI)")
-            vids = []
-            for name in rec.fix_versions if csc else []:
-                v = conn.execute("SELECT id FROM version WHERE ci_id = ? AND name = ?", (csc["ci_id"], name)).fetchone()
-                if v is None:
-                    out["warnings"].append(f"{rec.key}: fix version {name!r} is not a version of "
-                                           f"{get_ci(conn, csc['ci_id'])['name']}")
-                else:
-                    vids.append(v["id"])
-            conn.execute("DELETE FROM ticket_version WHERE ticket_id = ?", (tid,))
-            conn.executemany("INSERT OR IGNORE INTO ticket_version VALUES (?, ?)", [(tid, vid) for vid in vids])
-    out["missing_parents"] = [r["key"] for r in conn.execute(
-        "SELECT DISTINCT p.key FROM ticket t JOIN ticket p ON p.id = t.parent_id "
-        "WHERE p.source = ? AND p.synced_at IS NULL ORDER BY p.key", (source,))]
-    if recs:
-        log(conn, "ticket", None, "upserted", source=source, created=len(out["created"]),
-            updated=len(out["updated"]), warnings=len(out["warnings"]))
-    return out
-
-
-def sync_tickets(conn, source, ci_ref, versions):
-    """Pull CSC tickets for ``versions`` of a CI from a ``TicketSource``, then the parents they reference."""
-    ci = get_ci(conn, ci_ref)
-    cscs = to_dicts(conn.execute("SELECT * FROM csc WHERE ci_id = ? ORDER BY name", (ci["id"],)))
-    names = [v["name"] for v in versions]
-    if not names:
-        raise CMError("no versions to sync")
-    out = upsert_tickets(conn, list(source.fetch_for_versions(to_dict(ci), cscs, names)), source.name)
-    if out["missing_parents"]:
-        more = upsert_tickets(conn, list(source.fetch_by_keys(out["missing_parents"])), source.name)
-        out["created"] += more["created"]
-        out["updated"] += more["updated"]
-        out["warnings"] += more["warnings"]
-        out["missing_parents"] = more["missing_parents"]
-    out.update(ci=ci["name"], versions=names)
-    log(conn, "ci", ci["id"], "tickets_synced", source=source.name, versions=names,
-        tickets=len(out["created"]) + len(out["updated"]))
-    return out
+        records = getattr(source, method)(*args)
+        return [r if isinstance(r, tickets.TicketRecord) else tickets.TicketRecord.from_dict(r)
+                for r in (records or [])]
+    except CMError:
+        raise
+    except Exception as e:                       # the source is outside our control; report, don't crash
+        raise SourceError(f"ticket source {source.name!r} failed in {method}: {e}") from e
 
 
 def _progress(rows):
@@ -1075,40 +1010,59 @@ def _progress(rows):
     return {**counts, "total": len(rows)}
 
 
-def tickets_in_error(conn, limit=50):
-    """Synced tickets the source flagged as 'error' (something to fix in the source), newest first."""
-    return _ticket_rows(conn, "t.state = 'error' AND t.synced_at IS NOT NULL", [])[:limit]
+class _Resolver:
+    """Maps source records onto cmtrack: Jira pair -> CSC/CI, fix version names -> versions of that CI."""
 
+    def __init__(self, conn, source_name):
+        self.conn, self.source = conn, source_name
+        self.cscs = {(r["jira_project"], r["affected_product"]): dict(r) for r in conn.execute(
+            "SELECT csc.*, ci.name AS ci FROM csc JOIN ci ON ci.id = csc.ci_id WHERE jira_project IS NOT NULL")}
+        self.warnings = []
 
-def _ticket_rows(conn, where, args, version_filter=None):
-    """CSC tickets with CSC/CI names and their fix versions (limited to ``version_filter`` ids if given)."""
-    vf = "AND tv.version_id IN (SELECT value FROM json_each(?))" if version_filter is not None else ""
-    vargs = [json.dumps(sorted(version_filter))] if version_filter is not None else []
-    rows = conn.execute(
-        f"""SELECT t.*, cs.name AS csc, cs.team, c.name AS ci,
-                   json_group_array(json_object('id', v.id, 'name', v.name)) AS versions
-            FROM ticket t LEFT JOIN csc cs ON cs.id = t.csc_id LEFT JOIN ci c ON c.id = cs.ci_id
-            LEFT JOIN ticket_version tv ON tv.ticket_id = t.id {vf}
-            LEFT JOIN version v ON v.id = tv.version_id
-            WHERE {where} GROUP BY t.id ORDER BY c.name, cs.name, t.key""", (*vargs, *args))
-    out = []
-    for r in rows:
-        d = to_dict(r)
-        d["versions"] = [v for v in json.loads(d["versions"]) if v["id"] is not None]
-        out.append(d)
-    return out
+    def ticket(self, rec, only_versions=None):
+        """Record -> dict for reports. ``only_versions`` ({name: id}) limits fix versions to a version set."""
+        csc = self.cscs.get((rec.project, rec.affected_product)) if (rec.project or rec.affected_product) else None
+        if csc is None and (rec.project or rec.affected_product):
+            self.warnings.append(f"{rec.key}: no CSC mapped to ({rec.project}, {rec.affected_product})")
+        versions = []
+        for name in rec.fix_versions or []:
+            if only_versions is not None:
+                if name in only_versions:
+                    versions.append({"id": only_versions[name], "name": name})
+            elif csc:
+                v = self.conn.execute("SELECT id FROM version WHERE ci_id = ? AND name = ?",
+                                      (csc["ci_id"], name)).fetchone()
+                if v is None:
+                    self.warnings.append(f"{rec.key}: fix version {name!r} is not a version of {csc['ci']}")
+                versions.append({"id": v["id"] if v else None, "name": name})
+            else:
+                versions.append({"id": None, "name": name})
+        d = rec.to_dict()
+        d.update(source=self.source, csc=csc["name"] if csc else None, team=csc["team"] if csc else None,
+                 ci=csc["ci"] if csc else None, versions=versions)
+        return d
+
+    def parents(self, source, keys):
+        """{key: ticket} for parent keys, with a placeholder 'error' ticket for any the source doesn't return."""
+        keys = sorted(set(keys))
+        found = {r.key: self.ticket(r) for r in _ask(source, "get_tickets", keys)} if keys else {}
+        for k in keys:
+            if k not in found:
+                found[k] = self.ticket(tickets.TicketRecord(
+                    key=k, state=tickets.ERROR, state_reason="parent ticket not found in the source"))
+        return found
 
 
 def _group_by_csc(rows):
     groups = {}
-    for r in rows:
+    for r in sorted(rows, key=lambda r: (r["ci"] or "~", r["csc"] or "~", r["key"])):
         groups.setdefault((r["ci"], r["csc"]), []).append(r)
     return [{"ci": ci, "csc": csc, "team": ts[0]["team"], "tickets": ts, "progress": _progress(ts)}
             for (ci, csc), ts in groups.items()]
 
 
-def work_report(conn, ci_ref, to=None, frm=None, versions=None):
-    """CSC tickets fixed in a set of versions, grouped under their parent tickets and then by CSC.
+def work_report(conn, source, ci_ref, to=None, frm=None, versions=None):
+    """CSC tickets fixed in a set of versions (asked of the source), grouped under parent tickets, then by CSC.
 
     The set is ``frm..to`` over the version DAG, or an explicit list of ``versions``.
     """
@@ -1119,44 +1073,45 @@ def work_report(conn, ci_ref, to=None, frm=None, versions=None):
         vs = version_range(conn, ci["id"], to, frm)
     else:
         raise CMError("give 'to' (and optionally 'from'), or 'versions'")
-    vids = {v["id"] for v in vs}
-    rows = [r for r in _ticket_rows(conn, "t.id IN (SELECT tv.ticket_id FROM ticket_version tv "
-                                          "WHERE tv.version_id IN (SELECT value FROM json_each(?)))",
-                                    [json.dumps(sorted(vids))], vids)]
-    parents = {r["id"]: to_dict(r) for r in conn.execute(
-        "SELECT * FROM ticket WHERE id IN (SELECT value FROM json_each(?))",
-        (json.dumps(sorted({r["parent_id"] for r in rows if r["parent_id"]})),))}
+    report = {"ci": ci["name"], "source": getattr(source, "name", None), "from": frm or None,
+              "to": to if not versions else None,
+              "versions": [{"id": v["id"], "name": v["name"], "status": v["status"]} for v in vs]}
+    cscs = to_dicts(conn.execute("SELECT * FROM csc WHERE ci_id = ? ORDER BY name", (ci["id"],)))
+    names = {v["name"]: v["id"] for v in vs}
+    res = _Resolver(conn, getattr(source, "name", None))
+    rows = []
+    for rec in _ask(source, "tickets_for_versions", to_dict(ci), cscs, list(names)):
+        t = res.ticket(rec, names)
+        if t["ci"] not in (None, ci["name"]):
+            res.warnings.append(f"{rec.key}: belongs to {t['ci']}, not {ci['name']}; skipped")
+        elif not t["versions"]:
+            res.warnings.append(f"{rec.key}: none of its fix versions {rec.fix_versions} are in the requested set")
+        else:
+            rows.append(t)
+    parents = res.parents(source, [r["parent_key"] for r in rows if r["parent_key"]])
     by_parent = {}
     for r in rows:
-        by_parent.setdefault(r["parent_id"], []).append(r)
-    items = [{"parent": parents.get(pid), "progress": _progress(ts), "cscs": _group_by_csc(ts)}
-             for pid, ts in sorted(by_parent.items(), key=lambda kv: (kv[0] is None, parents.get(kv[0], {}).get("key") or ""))]
-    return {"ci": ci["name"], "from": frm or None, "to": to if not versions else None,
-            "versions": [{"id": v["id"], "name": v["name"], "status": v["status"]} for v in vs],
-            "progress": _progress(rows), "parents": len([p for p in by_parent if p]), "items": items}
+        by_parent.setdefault(r["parent_key"], []).append(r)
+    report.update(
+        progress=_progress(rows), parents=len([k for k in by_parent if k]), warnings=res.warnings,
+        items=[{"parent": parents.get(k), "progress": _progress(ts), "cscs": _group_by_csc(ts)}
+               for k, ts in sorted(by_parent.items(), key=lambda kv: (kv[0] is None, kv[0] or ""))])
+    return report
 
 
-def get_ticket(conn, key, source=None):
-    sql, args = "SELECT * FROM ticket WHERE key = ?", [key]
-    if source:
-        sql += " AND source = ?"
-        args.append(source)
-    rows = conn.execute(sql + " ORDER BY id", args).fetchall()
-    if not rows:
-        raise NotFound(f"ticket {key!r} not found")
-    if len(rows) > 1:
-        raise CMError(f"ticket {key!r} exists in several sources; pass ?source=")
-    return rows[0]
-
-
-def ticket_detail(conn, key, source=None):
-    t = get_ticket(conn, key, source)
-    out = _ticket_rows(conn, "t.id = ?", [t["id"]])[0]
-    out["parent"] = to_dict(conn.execute("SELECT * FROM ticket WHERE id = ?", (t["parent_id"],)).fetchone()) \
-        if t["parent_id"] else None
-    children = _ticket_rows(conn, "t.parent_id = ?", [t["id"]])
+def ticket_detail(conn, source, key):
+    """A ticket from the source, its parent, and the CSC tickets under it grouped by CI/CSC."""
+    found = _ask(source, "get_tickets", [key])
+    rec = next((r for r in found if r.key == key), None)
+    if rec is None:
+        raise NotFound(f"ticket {key!r} not found in {source.name}")
+    res = _Resolver(conn, source.name)
+    out = res.ticket(rec)
+    out["parent"] = res.parents(source, [rec.parent_key])[rec.parent_key] if rec.parent_key else None
+    children = [res.ticket(c) for c in _ask(source, "get_children", key)]
     out["children"] = _group_by_csc(children)
     out["progress"] = _progress(children)
+    out["warnings"] = res.warnings
     return out
 
 

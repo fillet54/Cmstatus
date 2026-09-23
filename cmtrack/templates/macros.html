@@ -74,7 +74,6 @@
 {%- endmacro %}
 
 {% macro ticket_link(t) -%}
-{%- if t.synced_at -%}<a class="link link-primary font-mono" href="{{ url_for('ui.ticket', key=t.key, source=t.source if t.source != 'jira' else None) }}">{{ t.key }}</a>
-{%- else -%}<span class="font-mono" title="referenced as a parent but not synced yet">{{ t.key }}</span>{%- endif -%}
+<a class="link link-primary font-mono" href="{{ url_for('ui.ticket', key=t.key, source=request.args.get('source')) }}">{{ t.key }}</a>
 {%- if t.url %} <a class="link link-hover text-base-content/50 text-xs" href="{{ t.url }}" target="_blank" rel="noopener" hx-boost="false" title="open in {{ t.source }}">↗</a>{% endif -%}
 {%- endmacro %}

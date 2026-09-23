@@ -19,8 +19,9 @@
 <div class="grid lg:grid-cols-2 gap-6 items-start">
   <div class="card bg-base-100 shadow-sm lg:col-span-2">
     <div class="card-body">
-      <h2 class="card-title">Fixed in this version <span class="badge badge-ghost">{{ report.progress.total }}</span></h2>
-      {% include "_work_items.html" %}
+      <h2 class="card-title">Fixed in this version {% if report %}<span class="badge badge-ghost">{{ report.progress.total }}</span>{% endif %}</h2>
+      {% if report %}{% include "_work_items.html" %}
+      {% else %}<div role="alert" class="alert alert-warning text-sm"><span>Couldn't get tickets: {{ source_error }}</span></div>{% endif %}
     </div>
   </div>
 

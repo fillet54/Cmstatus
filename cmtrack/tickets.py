@@ -1,30 +1,40 @@
 """Ticket sources: where CSC work items come from.
 
-cmtrack stores tickets in a source-neutral shape (``TicketRecord``). A source is anything that can
-produce records; Jira is the expected one. Two ways to get tickets in:
+The ticket source (Jira, typically) is the system of record. cmtrack never stores tickets; every page
+and API call that shows tickets asks the source, so what you see is what the source says right now.
+Whether to cache, and for how long, is the source's decision.
 
-* pull: implement ``TicketSource`` and register it; ``POST /api/cis/<ci>/tickets/sync`` calls it
-  for a version range and upserts what it returns (then fetches any parent tickets it referenced);
-* push: another system posts records to ``POST /api/tickets`` in the ``TicketRecord`` JSON shape.
-
-Both paths go through ``service.upsert_tickets``, so they behave the same.
+cmtrack's part is everything the source doesn't know: which versions a range like 2026.Q4-b4..2027.Q1-b2
+covers (the lineage DAG), which CSC/CSCI a (Jira project, affected product) pair belongs to, and the
+grouping into parent ticket -> CSC -> CSC tickets.
 
     class JiraSource(TicketSource):
         name = "jira"
-        def fetch_for_versions(self, ci, cscs, versions):
+
+        def tickets_for_versions(self, ci, cscs, versions):
             for csc in cscs:
                 jql = (f'project = {csc["jira_project"]} AND "Affected Product" = "{csc["affected_product"]}" '
                        f'AND fixVersion in ({", ".join(map(repr, versions))})')
                 for issue in my_jira.search(jql):
-                    state, reason = my_state_logic(issue, my_jira.linked(issue))   # your domain rules
-                    yield TicketRecord(key=issue.key, summary=issue.summary, state=state,
-                                       state_reason=reason, status=issue.status, ...)
-        def fetch_by_keys(self, keys):
-            ...
+                    yield self.record(issue)
+
+        def get_tickets(self, keys):
+            return [self.record(i) for i in my_jira.search(f"key in ({', '.join(keys)})")]
+
+        def get_children(self, key):
+            return [self.record(i) for i in my_jira.search(f"parent = {key}")]
+
+        def record(self, issue):
+            state, reason = my_state_logic(issue, my_jira.linked(issue))   # your domain rules
+            return TicketRecord(key=issue.key, summary=issue.summary, state=state, state_reason=reason,
+                                status=issue.status, parent_key=issue.parent, project=issue.project,
+                                affected_product=issue.affected_product, fix_versions=issue.fix_versions,
+                                url=issue.url)
 
 Register it with ``create_app({"TICKET_SOURCES": {"jira": JiraSource()}})`` or, without touching the
 app factory, ``CMTRACK_TICKET_SOURCES="jira=mypackage.jira:JiraSource"`` (the factory is called with
-no arguments, so read credentials from the environment there).
+no arguments, so read credentials from the environment there). Exceptions raised by a source are
+reported to the user (HTTP 502 / an alert in the page) rather than crashing the request.
 """
 import importlib
 from dataclasses import asdict, dataclass, field
@@ -60,8 +70,8 @@ class TicketRecord:
     """One ticket as a source reports it.
 
     CSC tickets carry ``project`` + ``affected_product`` (resolved to a CSC through the CSC's Jira pair)
-    and ``fix_versions`` (names of versions of that CSC's CSCI). Parent tickets usually have neither.
-    ``fix_versions=None`` leaves existing version links alone; ``[]`` clears them.
+    and ``fix_versions`` (names of versions of that CSC's CSCI, as cmtrack names them). Parent tickets
+    usually have neither.
 
     ``state`` is one of ``STATES`` and is the source's call; ``state_reason`` explains it where useful
     (why it's ``error``, what a ``merge_blocked`` ticket waits on). ``status`` is the raw source status,
@@ -103,12 +113,12 @@ class TicketRecord:
 
 
 class TicketSource:
-    """Implement this for a ticket system. Methods may be generators."""
+    """Implement this for a ticket system. Called on every request; methods may return generators."""
 
     name = "jira"
 
-    def fetch_for_versions(self, ci: dict, cscs: List[dict], versions: List[str]) -> Iterable[TicketRecord]:
-        """CSC tickets of ``ci`` whose fix version is one of ``versions`` (cmtrack version names).
+    def tickets_for_versions(self, ci: dict, cscs: List[dict], versions: List[str]) -> Iterable[TicketRecord]:
+        """CSC tickets of ``ci`` whose fix versions include any of ``versions`` (cmtrack version names).
 
         ``cscs`` are the CI's CSC rows (name, jira_project, affected_product, team), i.e. what to query.
         Map the source's version naming to cmtrack's here if they differ, and work out each ticket's
@@ -117,27 +127,44 @@ class TicketSource:
         """
         raise NotImplementedError
 
-    def fetch_by_keys(self, keys: List[str]) -> Iterable[TicketRecord]:
-        """Tickets by key; used to fill in parent tickets referenced by CSC tickets."""
-        return []
+    def get_tickets(self, keys: List[str]) -> Iterable[TicketRecord]:
+        """Tickets by key (a ticket page, and the parents of CSC tickets in a report). Omit unknown keys."""
+        raise NotImplementedError
+
+    def get_children(self, key: str) -> Iterable[TicketRecord]:
+        """The CSC tickets under a parent ticket, across all CIs."""
+        raise NotImplementedError
 
 
 class StaticSource(TicketSource):
-    """In-memory source (tests, demos, or a JSON export): filters a fixed list of records."""
+    """In-memory source (tests, demos, a JSON export): answers from a fixed list of records."""
 
     def __init__(self, records: Iterable, name: str = "static"):
         self.name = name
         self.records = [r if isinstance(r, TicketRecord) else TicketRecord.from_dict(r) for r in records]
 
-    def fetch_for_versions(self, ci, cscs, versions):
+    def tickets_for_versions(self, ci, cscs, versions):
         pairs = {(c["jira_project"], c["affected_product"]) for c in cscs}
         wanted = set(versions)
         return [r for r in self.records
                 if (r.project, r.affected_product) in pairs and wanted & set(r.fix_versions or ())]
 
-    def fetch_by_keys(self, keys):
+    def get_tickets(self, keys):
         keys = set(keys)
         return [r for r in self.records if r.key in keys]
+
+    def get_children(self, key):
+        return [r for r in self.records if r.parent_key == key]
+
+
+def pick_source(sources: Optional[dict], name: Optional[str] = None) -> Optional[TicketSource]:
+    """The source called ``name``; with no name, the only (or first) configured source; None if none."""
+    sources = sources or {}
+    if name:
+        if name not in sources:
+            raise KeyError(f"unknown ticket source {name!r}; configured: {sorted(sources)}")
+        return sources[name]
+    return next(iter(sources.values()), None)
 
 
 def load_sources(spec: Optional[str]) -> dict:

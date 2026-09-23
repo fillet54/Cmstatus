@@ -1,6 +1,7 @@
 """Version lineage (DAG), ticket ingestion and work-item reports.  Run: python -m unittest discover -s tests"""
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import types
@@ -113,57 +114,77 @@ class WorkTests(unittest.TestCase):
         self.assertEqual([(g["ci"], g["csc"]) for g in t["children"]],
                          [("DISPLAY-SW", "hud"), ("NAV-SW", "nav-core"), ("NAV-SW", "nav-maps")])
         self.assertEqual((t["progress"]["done"], t["progress"]["total"]), (3, 6))
+        self.assertEqual(t["state"], "in_progress")
         child = self.call("get", "/tickets/NAVL-105")
         self.assertEqual((child["parent"]["key"], child["csc"], [v["name"] for v in child["versions"]]),
                          ("PRG-10", "nav-core", ["2027.Q1-b1"]))
         self.call("get", "/tickets/NOPE-1", status=404)
 
-    def test_push_upsert_warnings_and_stubs(self):
-        out = self.call("post", "/tickets", {"records": [
-            {"key": "NAVL-300", "summary": "new", "parent_key": "PRG-99", "project": "NAVL",
-             "affected_product": "core", "fix_versions": ["2027.Q1-b3", "nope"], "state": "Peer Review",
-             "sprint": "S12"},
-            {"key": "ZZZ-1", "project": "ZZZ", "affected_product": "x", "fix_versions": ["2027.Q1-b3"],
-             "state": "blocked-ish", "state_reason": "two open sub-tasks"},
-        ]})
-        self.assertEqual(out["created"], ["NAVL-300", "ZZZ-1"])
-        self.assertEqual(out["missing_parents"], ["PRG-99"])
-        self.assertTrue(any("'nope' is not a version of NAV-SW" in w for w in out["warnings"]))
-        self.assertTrue(any("no CSC mapped to (ZZZ, x)" in w for w in out["warnings"]))
-        t = self.call("get", "/tickets/NAVL-300")
-        self.assertEqual((t["state"], t["attributes"], [v["name"] for v in t["versions"]]),
-                         ("peer_review", {"sprint": "S12"}, ["2027.Q1-b3"]))
-        z = self.call("get", "/tickets/ZZZ-1")
-        self.assertEqual((z["state"], z["state_reason"]),
+    def test_source_is_definitive(self):
+        """Nothing is stored: every request asks the source, so a change there shows up immediately."""
+        calls = []
+        orig = self.source.tickets_for_versions
+        self.source.tickets_for_versions = lambda *a: calls.append(a[2]) or orig(*a)
+        rng = "/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2"
+        state = lambda: next(t["state"] for i in self.call("get", rng)["items"] for g in i["cscs"]
+                             for t in g["tickets"] if t["key"] == "NAVL-106")
+        self.assertEqual(state(), "merge_blocked")
+        next(r for r in self.source.records if r.key == "NAVL-106").state = "verification"
+        self.assertEqual(state(), "verification")
+        self.assertEqual(calls, [["2026.Q4.ER1", "2027.Q1-b1", "2027.Q1-b2"]] * 2)   # the range, asked twice
+        with sqlite3.connect(os.path.join(self.tmp, "t.db")) as db:
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        self.assertFalse({"ticket", "ticket_version"} & tables)
+
+    def test_records_that_dont_fit(self):
+        self.source.records += [
+            TicketRecord(key="NAVL-300", parent_key="PRG-99", project="NAVL", affected_product="core",
+                         fix_versions=["2027.Q1-b3", "nope"], state="Peer Review"),
+            TicketRecord(key="NAVX-301", project="NAVX", affected_product="maps", fix_versions=["2027.Q1-b3"],
+                         state="blocked-ish", state_reason="two open sub-tasks"),
+        ]
+        w = self.call("get", "/cis/NAV-SW/work?versions=2027.Q1-b3")
+        tickets = {t["key"]: t for i in w["items"] for g in i["cscs"] for t in g["tickets"]}
+        self.assertEqual((tickets["NAVL-300"]["state"], [v["name"] for v in tickets["NAVL-300"]["versions"]]),
+                         ("peer_review", ["2027.Q1-b3"]))                    # only fix versions in the set
+        self.assertEqual((tickets["NAVX-301"]["state"], tickets["NAVX-301"]["state_reason"]),
                          ("error", "source sent unknown state 'blocked-ish'; two open sub-tasks"))
-        stub = self.call("get", "/tickets/PRG-99")
-        self.assertEqual((stub["synced_at"], stub["state"]), (None, "error"))
-        self.assertIn("not fetched", stub["state_reason"])
+        parent = next(i["parent"] for i in w["items"] if i["parent"] and i["parent"]["key"] == "PRG-99")
+        self.assertEqual((parent["state"], parent["state_reason"]), ("error", "parent ticket not found in the source"))
 
-        # update in place; fix_versions omitted leaves links alone, [] clears them
-        out = self.call("post", "/tickets", {"records": [{"key": "NAVL-300", "summary": "renamed",
-                                                          "project": "NAVL", "affected_product": "core"}]})
-        self.assertEqual((out["created"], out["updated"]), ([], ["NAVL-300"]))
-        self.assertEqual(len(self.call("get", "/tickets/NAVL-300")["versions"]), 1)
-        self.call("post", "/tickets", {"records": [{"key": "NAVL-300", "project": "NAVL", "affected_product": "core",
-                                                    "fix_versions": []}]})
-        self.assertEqual(self.call("get", "/tickets/NAVL-300")["versions"], [])
-        self.call("post", "/tickets", {"records": [{"summary": "no key"}]}, 400)
-        self.call("post", "/tickets", {"records": "nope"}, 400)
+        detail = self.call("get", "/tickets/NAVL-300")
+        self.assertEqual([(v["name"], v["id"] is None) for v in detail["versions"]], [("2027.Q1-b3", False), ("nope", True)])
+        self.assertIn("NAVL-300: fix version 'nope' is not a version of NAV-SW", detail["warnings"])
 
-    def test_pull_sync_fetches_parents(self):
-        self.source.records.append(TicketRecord(key="NAVX-400", summary="pulled", parent_key="PRG-40",
-                                                project="NAVX", affected_product="maps", fix_versions=["2027.Q1-b3"]))
-        self.source.records.append(TicketRecord(key="PRG-40", summary="Pulled parent", type="Feature"))
-        out = self.call("post", "/cis/NAV-SW/tickets/sync", {"from": "2027.Q1-b2", "to": "2027.Q1-b3"})
-        self.assertEqual(out["versions"], ["2027.Q1-b3"])
-        self.assertIn("NAVX-400", out["created"])
-        self.assertIn("PRG-40", out["created"])                 # filled in via fetch_by_keys
-        self.assertEqual(out["missing_parents"], [])
-        self.assertEqual(self.call("get", "/tickets/PRG-40")["summary"], "Pulled parent")
-        out = self.call("post", "/cis/NAV-SW/tickets/sync", {"versions": ["2026.Q4-b1"]})
-        self.assertEqual(out["updated"], ["NAVL-101"])
-        self.call("post", "/cis/NAV-SW/tickets/sync", {"source": "nope", "to": "2026.Q4-b1"}, 400)
+        # a source that answers with tickets outside the request is reported, not trusted
+        self.source.records.append(TicketRecord(key="ZZZ-1", project="ZZZ", affected_product="x",
+                                                fix_versions=["2027.Q1-b3"], state="done"))
+        orig = self.source.tickets_for_versions
+        self.source.tickets_for_versions = lambda *a: orig(*a) + [self.source.records[-1]]
+        w = self.call("get", "/cis/NAV-SW/work?versions=2027.Q1-b3")
+        self.assertIn("ZZZ-1: no CSC mapped to (ZZZ, x)", w["warnings"])
+
+    def test_source_failures(self):
+        def boom(*a):
+            raise ConnectionError("jira is down")
+        self.source.tickets_for_versions = boom
+        err = self.call("get", "/cis/NAV-SW/work?to=2027.Q1-b1", status=502)
+        self.assertIn("jira is down", err["error"])
+        page = self.c.get("/cis/NAV-SW/work?to=2027.Q1-b1")
+        self.assertEqual(page.status_code, 200)                              # the page still renders
+        self.assertIn("Couldn't get tickets", page.get_data(as_text=True))
+        version = self.c.get(f"/versions/{self.vid('2027.Q1-b1')}")
+        self.assertEqual(version.status_code, 200)
+        self.assertIn("jira is down", version.get_data(as_text=True))
+        self.call("get", "/tickets/PRG-10?source=nope", status=400)
+
+    def test_no_source_configured(self):
+        app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"), "POLICY_DIR": self.tmp, "TICKET_SOURCES": {}})
+        c = app.test_client()
+        r = c.get("/api/cis/NAV-SW/work?to=2027.Q1-b1")
+        self.assertEqual((r.status_code, r.get_json()["error"]),
+                         (400, "no ticket source configured (set CMTRACK_TICKET_SOURCES)"))
+        self.assertIn("no ticket source configured", c.get("/cis/NAV-SW/work?to=2027.Q1-b1").get_data(as_text=True))
 
     # ------------------------------------------------------------------ views
 
@@ -178,9 +199,6 @@ class WorkTests(unittest.TestCase):
         self.assertIn("<html", self.c.get("/cis/NAV-SW/work").get_data(as_text=True))
         self.assertIn("How each CSC implemented it", self.c.get("/tickets/PRG-10").get_data(as_text=True))
         self.assertIn("NAVX-222 is still open", self.c.get("/tickets/NAVX-221").get_data(as_text=True))
-        dash = self.c.get("/").get_data(as_text=True)
-        self.assertIn("Tickets needing attention", dash)
-        self.assertIn("NAVX-221", dash)
         self.assertEqual([s["state"] for s in self.call("get", "/ticket-states")], list(STATES))
         version = self.c.get(f"/versions/{self.vid('2027.Q1-b1')}").get_data(as_text=True)
         self.assertIn("Built from", version)
