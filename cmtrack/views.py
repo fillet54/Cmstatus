@@ -2,9 +2,9 @@
 
 A view renders its fragment template for an htmx request and the full page otherwise, so every
 URL also works as a plain link, a bookmark or a history restore. Every page extends ui/layout.html and is
-built from the macros in ui/components.html. Pages are read-only except backlogs, whose forms post here and
-get the refreshed list fragment back; drag-and-drop ranking (static/backlog.js) calls the JSON API
-(POST /api/backlogs/<b>/items/<key>/move).
+built from the macros in ui/components.html. Forms post here: backlog forms get the refreshed list fragment
+back (drag-and-drop ranking in static/backlog.js calls the JSON API, POST /api/backlogs/<b>/items/<key>/move);
+release and version forms (sync, add, correct, remap, detach) redirect back to the page they came from.
 """
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
@@ -141,7 +141,7 @@ def recent_events():
 def cis():
     a = request.args
     filters = {"q": a.get("q", "").strip(), "type": a.get("type", ""), "managed": a.get("managed", "")}
-    sql = """SELECT c.*, p.name AS policy,
+    sql = """SELECT c.*,
                     (SELECT COUNT(*) FROM release r WHERE r.ci_id = c.id AND r.status IN ('planned', 'active'))
                         AS open_releases,
                     (SELECT r.name FROM release r WHERE r.ci_id = c.id AND r.status = 'released'
@@ -150,7 +150,7 @@ def cis():
                         AND r.status IN ('planned', 'active') ORDER BY r.target_date LIMIT 1) AS next_release,
                     (SELECT r.target_date FROM release r WHERE r.ci_id = c.id AND r.kind = 'planned'
                         AND r.status IN ('planned', 'active') ORDER BY r.target_date LIMIT 1) AS next_target
-             FROM ci c LEFT JOIN policy p ON p.id = c.policy_id WHERE 1=1"""
+             FROM ci c WHERE 1=1"""
     args = []
     if filters["q"]:
         sql += " AND (c.name LIKE ? OR c.description LIKE ?)"
@@ -167,15 +167,34 @@ def cis():
 
 @bp.get("/cis/<ref>")
 def ci(ref):
-    conn = get_db()
+    return render_ci(get_db(), ref)
+
+
+def render_ci(conn, ref, preview=None):
     detail = svc.ci_detail(conn, ref)
     fielded = svc.to_dicts(conn.execute(
         "SELECT b.id, b.name, i.name AS ifc, v.id AS version_id, v.name AS version FROM baseline_entry e "
         "JOIN baseline b ON b.id = e.baseline_id JOIN ifc i ON i.id = b.ifc_id "
         "JOIN version v ON v.id = e.version_id WHERE e.ci_id = ? AND b.status = 'approved' ORDER BY i.name",
         (detail["id"],)))
+    missing = any(a["kind"].startswith("missing") for a in detail["attention"])
     return render_template("ci.html", ci=detail, families=release_families(detail["releases"]), fielded=fielded,
-                           backlogs=svc.list_backlogs(conn, detail["id"]), overview=ci_overview(conn, detail["releases"]))
+                           backlogs=svc.list_backlogs(conn, detail["id"]), overview=ci_overview(conn, detail["releases"]),
+                           candidates=svc.remap_candidates(conn, detail["id"]) if missing else None,
+                           source_configured=detail["release_source"] in (current_app.config["RELEASE_SOURCES"] or {}),
+                           preview=preview)
+
+
+def edit_options(conn, r):
+    """Choices for a release's edit form: planned releases (parents) and released versions of its line (bases)."""
+    if r["kind"] == "planned":
+        return {}
+    parents = conn.execute("SELECT id, name FROM release WHERE ci_id = ? AND kind = 'planned' ORDER BY "
+                           "target_date IS NULL, target_date, id", (r["ci_id"],)).fetchall()
+    bases = conn.execute("SELECT v.name FROM version v JOIN release x ON x.id = v.release_id "
+                         "WHERE (x.id = ? OR x.parent_id = ?) AND x.id != ? AND v.status IN ('released', 'external') "
+                         "ORDER BY v.id", (r["parent_id"], r["parent_id"], r["id"])).fetchall()
+    return {"parents": [p["name"] for p in parents], "bases": [b["name"] for b in bases]}
 
 
 @bp.get("/releases/<int:rid>")
@@ -183,7 +202,8 @@ def release(rid):
     conn = get_db()
     r = svc.release_detail(conn, rid)
     return page("release.html", "_release.html", r=r, built_from=built_from(conn, r),
-                work_range=svc.release_range(conn, rid))
+                work_range=svc.release_range(conn, rid), options=edit_options(conn, r),
+                ci_row=svc.get_ci(conn, r["ci_id"]))
 
 
 @bp.get("/versions/<int:vid>")
@@ -191,7 +211,7 @@ def version(vid):
     conn = get_db()
     ver = svc.to_dict(svc.get_version(conn, vid))
     return render_template(
-        "version.html", v=ver, ci=svc.get_ci(conn, ver["ci_id"]), rel=svc.get_release(conn, ver["release_id"]),
+        "version.html", v=ver, ci=svc.get_ci(conn, ver["ci_id"]), rel=svc.to_dict(svc.get_release(conn, ver["release_id"])),
         manifest=svc.manifest(conn, vid), used=svc.where_used(conn, vid), lineage=svc.lineage(conn, vid),
         **dict(zip(("report", "source_error"), live(svc.work_report, conn, ticket_source(), ver["ci_id"],
                                                    versions=[vid]))),
@@ -386,3 +406,117 @@ def backlog_rebalance(ref):
         out = svc.rebalance_backlog(conn, b["id"])
         return f"Re-spaced {out['items']} ranks (longest is now {out['max_rank_length']} characters)"
     return _backlog_action(ref, rebalance)
+
+
+# ----------------------------------------------------------------------------- release & version forms
+#
+# Plain HTML forms (boosted by htmx). Each runs one service call in a transaction and redirects back to
+# ``next`` (a local path the form carries) or the given default; errors render the error page.
+
+def _back(default):
+    nxt = request.form.get("next") or ""
+    return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else default, 303)
+
+
+def _run(fn, *args, **kwargs):
+    conn = get_db()
+    with conn:
+        return fn(conn, *args, **kwargs)
+
+
+def _form(*keys):
+    """The named form fields that were sent (empty strings kept: they clear a value)."""
+    return {k: request.form[k] for k in keys if k in request.form}
+
+
+@bp.post("/cis/<ref>/sync")
+def sync_ci(ref):
+    conn = get_db()
+    ci = svc.get_ci(conn, ref)
+    source = (current_app.config["RELEASE_SOURCES"] or {}).get(ci["release_source"])
+    if request.form.get("dry_run"):
+        with conn:
+            summary = svc.sync_ci(conn, source, ci["id"], dry_run=True)
+        return render_ci(conn, ci["name"], preview=summary)
+    _run(svc.sync_ci, source, ci["id"])
+    return _back(url_for("ui.ci", ref=ci["name"]))
+
+
+@bp.post("/cis/<ref>/releases")
+def create_release(ref):
+    f = _form("name", "kind", "target_date", "parent", "reason")
+    builds = [b.strip() for b in request.form.get("builds", "").split(",") if b.strip()]
+    rel = _run(svc.create_release, ref, builds=builds or None, **{k: v for k, v in f.items() if v})
+    return _back(url_for("ui.ci", ref=rel["ci"]))
+
+
+@bp.post("/releases/<int:rid>/edit")
+def edit_release(rid):
+    _run(svc.update_release, rid, **_form("name", "target_date", "reason", "parent", "base_version"))
+    return _back(url_for("ui.release", rid=rid))
+
+
+@bp.post("/releases/<int:rid>/correct")
+def correct_release(rid):
+    _run(svc.update_release, rid, released_at=request.form.get("released_at"), note=request.form.get("note"))
+    return _back(url_for("ui.release", rid=rid))
+
+
+@bp.post("/releases/<int:rid>/unpin")
+def unpin_release(rid):
+    _run(svc.update_release, rid, unpin=[request.form.get("field", "")])
+    return _back(url_for("ui.release", rid=rid))
+
+
+@bp.post("/releases/<int:rid>/builds")
+def add_build(rid):
+    _run(svc.add_version, rid, request.form.get("name"), request.form.get("planned_date"))
+    return _back(url_for("ui.release", rid=rid))
+
+
+@bp.post("/releases/<int:rid>/remap")
+def remap_release(rid):
+    rel = _run(svc.remap_release, rid, request.form.get("to"))
+    return _back(url_for("ui.ci", ref=rel["ci"]))
+
+
+@bp.post("/releases/<int:rid>/detach")
+def detach_release(rid):
+    rel = _run(svc.detach_release, rid)
+    return _back(url_for("ui.ci", ref=rel["ci"]))
+
+
+@bp.post("/releases/<int:rid>/cancel")
+def cancel_release(rid):
+    rel = _run(svc.cancel_release, rid, request.form.get("note"))
+    return _back(url_for("ui.ci", ref=rel["ci"]))
+
+
+@bp.post("/versions/<int:vid>/edit")
+def edit_version(vid):
+    _run(svc.update_version, vid, **_form("name", "planned_date"))
+    return _back(url_for("ui.version", vid=vid))
+
+
+@bp.post("/versions/<int:vid>/correct")
+def correct_version(vid):
+    _run(svc.update_version, vid, built_at=request.form.get("built_at"), note=request.form.get("note"))
+    return _back(url_for("ui.version", vid=vid))
+
+
+@bp.post("/versions/<int:vid>/unpin")
+def unpin_version(vid):
+    _run(svc.update_version, vid, unpin=[request.form.get("field", "")])
+    return _back(url_for("ui.version", vid=vid))
+
+
+@bp.post("/versions/<int:vid>/remap")
+def remap_version(vid):
+    ver = _run(svc.remap_version, vid, request.form.get("to"))
+    return _back(url_for("ui.version", vid=ver["id"]))
+
+
+@bp.post("/versions/<int:vid>/detach")
+def detach_version(vid):
+    _run(svc.detach_version, vid)
+    return _back(url_for("ui.version", vid=vid))

@@ -105,13 +105,13 @@
   {% set code %}{% raw %}
 {% call ui.page_header("NAV-SW", "Navigation software",
                        crumbs=[("Configuration items", url_for("ui.cis")), ("NAV-SW", None)],
-                       meta=["CSCI", "Policy quarterly-monthly", "2 CSCs"]) %}
+                       meta=["CSCI", "Releases from jira", "2 CSCs"]) %}
   {{ ui.button("Release notes") }}{{ ui.button("Work items", variant="primary") }}
 {% endcall %}
 {% endraw %}{% endset %}
   {% call example("page_header · breadcrumbs", code) %}
     {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", "#"), ("NAV-SW", None)],
-                           meta=["CSCI", "Policy quarterly-monthly", "2 CSCs · nav-core, nav-maps"]) %}
+                           meta=["CSCI", "Releases from jira", "2 CSCs · nav-core, nav-maps"]) %}
       {{ ui.button("Release notes") }}{{ ui.button("Work items", variant="primary") }}
     {% endcall %}
   {% endcall %}
@@ -145,7 +145,7 @@
     {% call ui.card() %}
       {% call ui.card_header("Release 2027.Q1", "NAV-SW") %}{{ ui.badge("Active", "info", outline=True, strong=True) }}{% endcall %}
       {% call ui.card_section("Built from") %}{{ ui.lineage([{"name": "2026.Q4-b4", "href": "#"}, {"name": "2026.Q4.ER1", "merge": True}]) }}{% endcall %}
-      {% call ui.card_section("Details") %}{{ ui.dl([("Target", "2027-03-15"), ("Policy", "quarterly-monthly")]) }}{% endcall %}
+      {% call ui.card_section("Details") %}{{ ui.dl([("Target", "2027-03-15"), ("Source", "jira")]) }}{% endcall %}
       {% call ui.card_footer() %}Last change · 2027.Q1-b2 built · j.doe · 2026-09-23 14:24Z{% endcall %}
     {% endcall %}
     </div>
@@ -157,13 +157,13 @@
   <h2 class="sg-h">Identifiers, chips, badges, time</h2>
   {% set code %}{% raw %}
 {{ ui.ident("2027.Q1-b2", href=url_for("ui.version", vid=v.id)) }}   {{ ui.ident("CR-1234") }}
-{{ ui.chip("quarterly-monthly", mono=True) }}   {{ ui.badge("emergency", "danger") }}
+{{ ui.chip("jira", icon="refresh") }}   {{ ui.badge("emergency", "danger") }}
 {{ ui.kbd("/") }}   {{ ui.timestamp(v.built_at) }}   {{ "2026-09-23 14:24:00" | utc }}
 {% endraw %}{% endset %}
   {% call example("ident · chip · badge · kbd · timestamp", code) %}
     <div class="ui-stack" style="--ui-gap: 12px;">
       <div class="sg-demo">{{ ui.ident("NAV-SW", href="#") }} {{ ui.ident("2027.Q1-b2") }} {{ ui.ident("NAVL-106", href="#") }} {{ ui.ident("CR-1234") }}</div>
-      <div class="sg-demo">{{ ui.chip("CSCI") }} {{ ui.chip("quarterly-monthly", mono=True) }} {{ ui.chip("2 CSCs", icon="layers") }}</div>
+      <div class="sg-demo">{{ ui.chip("CSCI") }} {{ ui.chip("jira", icon="refresh") }} {{ ui.chip("2 CSCs", icon="layers") }}</div>
       <div class="sg-demo">
         {% for tone in ["neutral", "info", "success", "warning", "danger", "accent"] %}{{ ui.badge(tone, tone) }}{% endfor %}
         {{ ui.badge("patch", "warning", outline=True) }} {{ ui.badge("Active", "info", outline=True, strong=True) }}
@@ -200,6 +200,18 @@
       </div>
     {% endcall %}
   </div>
+  {% set code %}{% raw %}
+{{ ui.source_state(r, ci.release_source) }}   {# synced (key in the tooltip) · missing from source · by hand #}
+{{ ui.pinned(r.pinned, url_for('ui.unpin_release', rid=r.id)) }}   {# fields set by hand; x unpins #}
+{% endraw %}{% endset %}
+  {% call example("source_state · pinned (releases and builds from a release source)", code) %}
+    <div class="ui-stack" style="--ui-gap: 10px;">
+      <div>{{ ui.source_state({"source_key": "10001", "source_state": "synced"}, "jira") }}</div>
+      <div>{{ ui.source_state({"source_key": "10020", "source_state": "missing"}, "jira") }}</div>
+      <div>{{ ui.source_state({"source_key": None}) }}</div>
+      {{ ui.pinned(["target_date", "base_version_id"], "#status") }}
+    </div>
+  {% endcall %}
   {% set code %}{% raw %}
 {{ ui.state_bar(report.progress, size="lg") }}
 {{ ui.state_counts(report.progress) }}
@@ -308,6 +320,23 @@
       </div>
     {% endcall %}
   </div>
+  {% set code %}{% raw %}
+{% call ui.disclosure("Correct the build date", "recorded 2026-10-16 09:12Z") %}
+  <form ...>...</form>
+{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("disclosure (edit forms, secondary details)", code) %}
+    {% call ui.card() %}
+      {% call ui.disclosure("Correct the build date", "recorded 2026-10-16 09:12Z", open=True) %}
+        <form class="ui-row" style="--ui-gap: 8px; align-items: flex-end;" onsubmit="return false">
+          {% call ui.field("Built at (UTC)", "sg-built") %}{{ ui.input("built_at", "2026-10-16 09:12Z", id="sg-built", mono=True) }}{% endcall %}
+          {% call ui.field("Why", "sg-why") %}{{ ui.input("note", id="sg-why", placeholder="build ran Friday, recorded Monday") }}{% endcall %}
+          {{ ui.button("Correct", type="submit") }}
+        </form>
+      {% endcall %}
+      {% call ui.disclosure("Add a build") %}<span class="ui-muted">collapsed by default</span>{% endcall %}
+    {% endcall %}
+  {% endcall %}
 </section>
 
 {# ------------------------------------------------------------------------------------------ data #}
@@ -346,7 +375,7 @@
 {% endraw %}{% endset %}
     {% call example("dl", code) %}
       <div class="ui-stack">
-        {{ ui.dl([("Target", "2027-03-15"), ("Released as", "—"), ("Built on", "2026.Q4-b4"), ("Source", "policy")]) }}
+        {{ ui.dl([("Target", "2027-03-15"), ("Released as", "—"), ("Built on", "2026.Q4-b4"), ("Source", "jira")]) }}
         {{ ui.dl([("Released version", "2026.Q4-b4"), ("Effective version", "2026.Q4.ER1"), ("Reason / CR", "CR-1234"), ("Released at", "2026-09-23 14:24Z")], cols=True) }}
       </div>
     {% endcall %}
@@ -408,7 +437,7 @@
   <h2 class="sg-h">Pattern: CI overview (Engineering Ledger)</h2>
   <p class="sg-lead">The whole page below is composed from the macros above, with no page-specific CSS.</p>
   {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", "#"), ("NAV-SW", None)],
-                         meta=["CSCI", "Policy quarterly-monthly", "2 CSCs · nav-core, nav-maps"]) %}
+                         meta=["CSCI", "Releases from jira", "2 CSCs · nav-core, nav-maps"]) %}
     {{ ui.button("Release notes") }}{{ ui.button("Work items", variant="primary") }}
   {% endcall %}
   {% call ui.stats("NAV-SW at a glance") %}

@@ -12,12 +12,15 @@ def create_app(config=None):
     app = Flask(__name__)
     app.config.update(
         DATABASE=os.environ.get("CMTRACK_DB", "cmtrack.db"),
-        POLICY_DIR=os.environ.get("CMTRACK_POLICY_DIR", "policies"),
         TICKET_SOURCES=None,       # {name: TicketSource}; defaults to CMTRACK_TICKET_SOURCES
+        RELEASE_SOURCES=None,      # {name: ReleaseSource}; defaults to CMTRACK_RELEASE_SOURCES
     )
     app.config.update(config or {})
     if app.config["TICKET_SOURCES"] is None:
         app.config["TICKET_SOURCES"] = tickets.load_sources(os.environ.get("CMTRACK_TICKET_SOURCES"))
+    if app.config["RELEASE_SOURCES"] is None:
+        app.config["RELEASE_SOURCES"] = tickets.load_sources(os.environ.get("CMTRACK_RELEASE_SOURCES"),
+                                                             "release source")
     app.json.sort_keys = False
 
     conn = db.connect(app.config["DATABASE"])

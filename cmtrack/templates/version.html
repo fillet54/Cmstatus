@@ -6,7 +6,8 @@
 {% call ui.page_header(v.name, ci.name ~ " version", mono=True,
                        crumbs=[("Configuration items", url_for('ui.cis')), (ci.name, url_for('ui.ci', ref=ci.name)),
                                (rel.name, url_for('ui.release', rid=rel.id)), (v.name, None)]) %}
-  {% if not v.planned and rel.kind == "planned" %}{{ ui.badge("ad hoc", "warning", outline=True) }}{% endif %}
+  {{ ui.source_state(v, ci.release_source) }}
+  {% if not v.planned and rel.kind == "planned" and ci.release_source %}{{ ui.badge("ad hoc", "warning", outline=True) }}{% endif %}
   {{ ui.version_status(v.status) }}
 {% endcall %}
 
@@ -15,6 +16,28 @@
   {{ ui.stat("Planned", v.planned_date or "—", mono=True) }}
   {{ ui.stat("Built", v.built_at | utc if v.built_at else "—", mono=True) }}
   {{ ui.stat("Artifact", v.artifact_ref or "—", mono=True) }}
+{% endcall %}
+
+{% call ui.card(attrs={"aria-label": "Edit " ~ v.name}) %}
+  {% call ui.card_header("Details", "name and planned date come from " ~ ci.release_source ~ "; editing them pins them" if v.source_key else "entered by hand") %}
+    {% if v.pinned %}{{ ui.pinned(v.pinned, url_for('ui.unpin_version', vid=v.id)) }}{% endif %}
+  {% endcall %}
+  {% call ui.disclosure("Edit") %}
+    <form class="ui-row" style="--ui-gap: 8px; align-items: flex-end;" method="post" hx-push-url="false" action="{{ url_for('ui.edit_version', vid=v.id) }}">
+      {% call ui.field("Name", "ev-name") %}{{ ui.input("name", v.name, id="ev-name", mono=True, required=True) }}{% endcall %}
+      {% call ui.field("Planned date", "ev-date") %}{{ ui.input("planned_date", v.planned_date, type="date", id="ev-date") }}{% endcall %}
+      {{ ui.button("Save", type="submit") }}
+    </form>
+  {% endcall %}
+  {% if v.built_at %}
+  {% call ui.disclosure("Correct the build date", "recorded " ~ (v.built_at | utc)) %}
+    <form class="ui-row" style="--ui-gap: 8px; align-items: flex-end;" method="post" hx-push-url="false" action="{{ url_for('ui.correct_version', vid=v.id) }}">
+      {% call ui.field("Built at (UTC)", "cv-at", hint="YYYY-MM-DD or YYYY-MM-DD HH:MM") %}{{ ui.input("built_at", v.built_at | utc, id="cv-at", mono=True, required=True) }}{% endcall %}
+      {% call ui.field("Why", "cv-note") %}{{ ui.input("note", id="cv-note", required=True, placeholder="build ran Friday, recorded Monday") }}{% endcall %}
+      {{ ui.button("Correct", type="submit") }}
+    </form>
+  {% endcall %}
+  {% endif %}
 {% endcall %}
 
 {% call ui.card(flush=True) %}
@@ -27,7 +50,7 @@
 
 <div class="ui-grid">
   {% call ui.card() %}
-    {% call ui.card_header("Lineage", "parents derived from the release plan" if lineage.lineage == "auto" else "parents set by hand (PUT /api/versions/" ~ v.id ~ "/parents)") %}
+    {% call ui.card_header("Lineage", "parents derived from the releases" if lineage.lineage == "auto" else "parents set by hand (PUT /api/versions/" ~ v.id ~ "/parents)") %}
       {{ ui.badge(lineage.lineage, "warning" if lineage.lineage == "manual" else "neutral") }}
     {% endcall %}
     {% call ui.card_section("Built from") %}

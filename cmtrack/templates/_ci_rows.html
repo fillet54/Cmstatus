@@ -10,7 +10,7 @@
     {%- if c.description %}<span class="ui-muted ui-clip" style="font-size: 12px;">{{ c.description }}</span>{% endif %}
   </td>
   <td><div class="ui-row" style="--ui-gap: 4px;">{{ ui.chip(c.type) }}{% if c.kind == "composite" %}{{ ui.chip("composite") }}{% endif %}</div></td>
-  <td>{% if c.policy %}{{ ui.ident(c.policy, plain=True) }}{% else %}<span class="ui-muted">none</span>{% endif %}</td>
+  <td>{% if c.release_source %}{{ ui.chip(c.release_source, icon="refresh") }}{% elif c.managed %}<span class="ui-muted">by hand</span>{% else %}<span class="ui-muted">—</span>{% endif %}</td>
   <td>{% if c.last_release %}{{ ui.ident(c.last_release, plain=True) }}{% else %}<span class="ui-muted">—</span>{% endif %}</td>
   <td>{% if c.next_release %}{{ ui.ident(c.next_release, plain=True) }} <span class="ui-muted ui-mono" style="font-size: 12px;">{{ c.next_target or "" }}</span>{% else %}<span class="ui-muted">—</span>{% endif %}</td>
   <td class="ui-end">{{ c.open_releases }}</td>

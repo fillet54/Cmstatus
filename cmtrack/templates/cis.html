@@ -16,7 +16,7 @@
 </form>
 
 {% call ui.card(flush=True) %}
-  {% call ui.table(["Name", "Type", "Policy", "Last released", "Next planned", {"label": "Open releases", "align": "end"}],
+  {% call ui.table(["Name", "Type", "Releases from", "Last released", "Next planned", {"label": "Open releases", "align": "end"}],
                    body_id="ci-rows") %}{% include "_ci_rows.html" %}{% endcall %}
 {% endcall %}
 {% endblock %}

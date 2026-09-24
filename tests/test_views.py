@@ -5,7 +5,8 @@ import tempfile
 import unittest
 
 from cmtrack import create_app
-from cmtrack.demo import seed
+from cmtrack.demo import NAV_VERSIONS, seed
+from cmtrack.releases import StaticVersionSource
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HX = {"HX-Request": "true"}
@@ -15,8 +16,7 @@ class ViewTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
-        shutil.copy(os.path.join(HERE, "..", "policies", "display-sw.txt"), cls.tmp)
-        cls.app = create_app({"DATABASE": os.path.join(cls.tmp, "t.db"), "POLICY_DIR": cls.tmp})
+        cls.app = create_app({"DATABASE": os.path.join(cls.tmp, "t.db")})
         seed(cls.app.test_client())
 
     @classmethod
@@ -98,6 +98,105 @@ class ViewTests(unittest.TestCase):
     def test_not_found_is_html_outside_api(self):
         self.assertIn("CI &#39;NOPE&#39; not found", self.get("/cis/NOPE", status=404))
         self.assertEqual(self.c.get("/api/cis/NOPE").get_json(), {"error": "CI 'NOPE' not found"})
+
+
+class FormTests(unittest.TestCase):
+    """The release and version forms: sync, preview, add, edit (pins), corrections, remap, detach."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.source = StaticVersionSource({"NAV": [dict(v) for v in NAV_VERSIONS]}, name="jira")
+        self.app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"), "RELEASE_SOURCES": {"jira": self.source}})
+        self.c = self.app.test_client()
+        seed(self.c)
+        self.api = lambda path: self.c.get("/api" + path).get_json()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def rel(self, name, ci="NAV-SW"):
+        return next(r for r in self.api(f"/cis/{ci}/releases") if r["name"] == name)
+
+    def post(self, path, data=None, status=303):
+        r = self.c.post(path, data=data or {})
+        self.assertEqual(r.status_code, status, r.get_data(as_text=True)[-600:])
+        return r
+
+    def test_ci_page_sync_and_attention(self):
+        page = self.c.get("/cis/NAV-SW").get_data(as_text=True)
+        self.assertIn("Sync from jira", page)
+        self.assertIn('aria-label="Needs attention"', page)
+        self.assertIn("2027.Q3-b1", page)                                   # the build Jira has no release for
+        self.assertIn("Last synced", page)
+        manual = self.c.get("/cis/DISPLAY-SW").get_data(as_text=True)
+        self.assertNotIn("Sync from", manual)
+        self.assertIn("entered by hand", manual)
+
+        self.source.projects["NAV"][0].date = "2026-12-18"
+        preview = self.post("/cis/NAV-SW/sync", {"dry_run": "1"}, 200).get_data(as_text=True)
+        self.assertIn("Sync preview", preview)
+        self.assertIn("2026-12-15 → 2026-12-18", preview)
+        self.assertEqual(self.rel("2026.Q4")["target_date"], "2026-12-15")      # nothing changed yet
+        self.assertEqual(self.post("/cis/NAV-SW/sync").headers["Location"], "/cis/NAV-SW")
+        self.assertEqual(self.rel("2026.Q4")["target_date"], "2026-12-18")
+
+    def test_rename_remap_through_the_page(self):
+        q2 = self.rel("2027.Q2")
+        # Jira: Q2 and its builds are gone; a Q3 appears (and picks up the Q3 build the last sync couldn't place)
+        nav = self.source.projects["NAV"]
+        self.source.projects["NAV"] = [v for v in nav if not v.name.startswith("2027.Q2")]
+        self.source.projects["NAV"].append(type(nav[0])("20030", "2027.Q3", "2027-09-15"))
+        self.post("/cis/NAV-SW/sync")
+        page = self.c.get("/cis/NAV-SW").get_data(as_text=True)
+        self.assertIn("no longer in the release source", page)
+        self.assertIn(f'action="/releases/{q2["id"]}/remap"', page)
+        r = self.post(f"/releases/{q2['id']}/remap", {"to": "2027.Q3", "next": "/cis/NAV-SW"})
+        self.assertEqual(r.headers["Location"], "/cis/NAV-SW")
+        moved = self.api(f"/releases/{q2['id']}")
+        self.assertEqual((moved["name"], [v["name"] for v in moved["versions"]]),
+                         ("2027.Q3", ["2027.Q3-b1", "2027.Q2-b2", "2027.Q2-b3"]))
+        kinds = [(a["kind"], a["name"]) for a in self.api("/cis/NAV-SW/attention")]
+        self.assertEqual(kinds, [("missing_version", "2027.Q2-b2"), ("missing_version", "2027.Q2-b3")])
+        b2 = moved["versions"][1]["id"]
+        self.post(f"/versions/{b2}/detach")
+        self.assertEqual(len(self.api("/cis/NAV-SW/attention")), 1)
+
+    def test_edit_pin_correct(self):
+        q1 = self.rel("2027.Q1")
+        panel = self.c.get(f"/releases/{q1['id']}", headers={"HX-Request": "true"}).get_data(as_text=True)
+        self.assertIn(f'action="/releases/{q1["id"]}/edit"', panel)
+        self.post(f"/releases/{q1['id']}/edit", {"name": "2027.Q1", "target_date": "2027-03-20", "reason": ""})
+        detail = self.api(f"/releases/{q1['id']}")
+        self.assertEqual((detail["target_date"], detail["pinned"]), ("2027-03-20", ["target_date"]))
+        self.assertIn("Unpin", self.c.get(f"/releases/{q1['id']}").get_data(as_text=True))
+        self.post(f"/releases/{q1['id']}/unpin", {"field": "target_date"})
+        self.post("/cis/NAV-SW/sync")
+        self.assertEqual(self.api(f"/releases/{q1['id']}")["target_date"], "2027-03-15")
+
+        q4 = self.rel("2026.Q4")
+        released = self.api(f"/releases/{q4['id']}")["released_at"]
+        r = self.c.post(f"/releases/{q4['id']}/correct", data={"released_at": "2026-12-16", "note": ""})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("needs a note", r.get_data(as_text=True))              # the error page, htmx swaps it too
+        self.assertNotEqual(self.api(f"/releases/{q4['id']}")["released_at"], "2026-12-16T00:00:00+00:00")
+        self.assertTrue(released)
+        vid = self.api(f"/releases/{q4['id']}")["released_version_id"]
+        built = self.api(f"/versions/{vid}")["built_at"]
+        self.post(f"/versions/{vid}/correct", {"built_at": built[:10], "note": "clock skew"})
+        self.assertIn("corrected", self.c.get(f"/versions/{vid}").get_data(as_text=True))
+        self.assertIn("htmx-config", self.c.get("/").get_data(as_text=True))
+
+    def test_add_release_and_build_by_hand(self):
+        self.post("/cis/DISPLAY-SW/releases", {"kind": "planned", "name": "3.4.0", "target_date": "2027-08-31",
+                                               "builds": "3.4.0-rc1, 3.4.0"})
+        rel = self.rel("3.4.0", "DISPLAY-SW")
+        self.assertEqual((rel["target_date"], rel["planned_versions"] + rel["unplanned_versions"]), ("2027-08-31", 2))
+        self.post(f"/releases/{rel['id']}/builds", {"name": "", "planned_date": "2027-08-15", "next": "/cis/DISPLAY-SW"})
+        names = [v["name"] for v in self.api(f"/releases/{rel['id']}")["versions"]]
+        self.assertEqual(names, ["3.4.0-rc1", "3.4.0", "3.4.0-b3"])
+        self.post("/cis/DISPLAY-SW/releases", {"kind": "patch", "parent": "3.2.0"})
+        self.assertEqual(self.rel("3.2.0.P1", "DISPLAY-SW")["base_version_id"],
+                         self.api(f"/releases/{self.rel('3.2.0', 'DISPLAY-SW')['id']}")["released_version_id"])
 
 
 if __name__ == "__main__":

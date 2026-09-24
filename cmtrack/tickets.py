@@ -184,14 +184,14 @@ def pick_source(sources: Optional[dict], name: Optional[str] = None) -> Optional
     return next(iter(sources.values()), None)
 
 
-def load_sources(spec: Optional[str]) -> dict:
-    """Parse CMTRACK_TICKET_SOURCES: 'name=module:factory[,name=module:factory]'."""
+def load_sources(spec: Optional[str], what: str = "ticket source") -> dict:
+    """Parse CMTRACK_TICKET_SOURCES (or CMTRACK_RELEASE_SOURCES): 'name=module:factory[,name=module:factory]'."""
     sources = {}
     for part in filter(None, (p.strip() for p in (spec or "").split(","))):
         name, _, target = part.partition("=")
         module, _, attr = target.partition(":")
         if not (name and module and attr):
-            raise ValueError(f"bad ticket source {part!r}; expected name=module:factory")
+            raise ValueError(f"bad {what} {part!r}; expected name=module:factory")
         source = getattr(importlib.import_module(module), attr)()
         source.name = name
         sources[name] = source

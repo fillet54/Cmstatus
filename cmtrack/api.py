@@ -28,8 +28,9 @@ def pick(data, *keys):
     return {k: data[k] for k in keys if k in data}
 
 
-def policy_dir():
-    return current_app.config["POLICY_DIR"]
+def release_source(ci):
+    """The configured release source a CI syncs from (None if it isn't configured)."""
+    return (current_app.config["RELEASE_SOURCES"] or {}).get(ci["release_source"])
 
 
 def tx(fn):
@@ -54,19 +55,12 @@ def index():
     return jsonify([{"path": p, "methods": m} for p, m in rules])
 
 
-# ----------------------------------------------------------------------------- policies
+# ----------------------------------------------------------------------------- release sources
 
-@bp.get("/policies")
-@tx
-def list_policies(conn):
-    return jsonify(svc.to_dicts(svc.list_policies(conn)))
-
-
-@bp.post("/policies")
-@tx
-def create_policy(conn):
-    d = body()
-    return created(svc.create_policy(conn, d.get("name"), d.get("type"), d.get("params"), policy_dir()))
+@bp.get("/release-sources")
+def list_release_sources():
+    return jsonify([{"name": n, "type": type(src).__name__}
+                    for n, src in (current_app.config["RELEASE_SOURCES"] or {}).items()])
 
 
 # ----------------------------------------------------------------------------- CIs & CSCs
@@ -84,7 +78,8 @@ def list_cis(conn):
 def create_ci(conn):
     d = body()
     return created(svc.create_ci(conn, d.get("name"), **pick(
-        d, "type", "kind", "managed", "policy", "description", "attributes")))
+        d, "type", "kind", "managed", "release_source", "source_params", "require_tested", "description",
+        "attributes")))
 
 
 @bp.get("/cis/<ref>")
@@ -112,11 +107,27 @@ def lookup_csc(conn):
     return jsonify(svc.to_dict(svc.find_csc(conn, request.args.get("project"), request.args.get("product"))))
 
 
-@bp.post("/cis/<ref>/plan")
+@bp.post("/cis/<ref>/sync")
 @tx
-def plan_ci(conn, ref):
+def sync_ci(conn, ref):
+    """Reconcile the CI's releases with its release source. {dry_run: true} reports without changing anything."""
+    ci = svc.get_ci(conn, ref)
+    return jsonify(svc.sync_ci(conn, release_source(ci), ci["id"], bool(body().get("dry_run"))))
+
+
+@bp.get("/cis/<ref>/attention")
+@tx
+def ci_attention(conn, ref):
+    return jsonify(svc.ci_attention(conn, ref))
+
+
+@bp.post("/cis/<ref>/releases")
+@tx
+def create_release(conn, ref):
+    """A release entered by hand: {name?, kind, target_date?, parent?, base_version?, reason?, builds?}."""
     d = body()
-    return jsonify(svc.plan_ci(conn, ref, d.get("start"), d.get("end"), policy_dir()))
+    return created(svc.create_release(conn, ref, **pick(
+        d, "name", "kind", "target_date", "parent", "base_version", "reason", "builds")))
 
 
 @bp.get("/cis/<ref>/releases")
@@ -133,21 +144,34 @@ def get_release(conn, rid):
     return jsonify(svc.release_detail(conn, rid))
 
 
+@bp.patch("/releases/<int:rid>")
+@tx
+def update_release(conn, rid):
+    """{name, target_date, reason, parent, base_version} (pins them on a synced release), {released_at, note}
+    (a correction), {unpin: [field, ...]} (hand fields back to the source)."""
+    d = body()
+    return jsonify(svc.update_release(conn, rid, **pick(
+        d, "name", "target_date", "reason", "parent", "base_version", "released_at", "note", "unpin")))
+
+
 @bp.post("/releases/<int:rid>/versions")
 @tx
 def add_version(conn, rid):
     d = body()
-    return created(svc.add_version(conn, rid, d.get("name"), d.get("planned_date"), policy_dir()))
+    return created(svc.add_version(conn, rid, d.get("name"), d.get("planned_date")))
 
 
-@bp.post("/releases/<int:rid>/spawn")
+@bp.post("/releases/<int:rid>/remap")
 @tx
-def spawn_release(conn, rid):
-    """201 when a new release is spawned; 200 with the existing one if this change request already has one."""
-    d = body()
-    out = svc.spawn_release(conn, rid, d.get("kind"), base_dir=policy_dir(),
-                            **pick(d, "reason", "base_version", "target_date"))
-    return jsonify(out), 201 if out["spawned"] else 200
+def remap_release(conn, rid):
+    """{to: release}: this (missing) release is what the source now calls ``to``; ``to`` is folded into it."""
+    return jsonify(svc.remap_release(conn, rid, body().get("to")))
+
+
+@bp.post("/releases/<int:rid>/detach")
+@tx
+def detach_release(conn, rid):
+    return jsonify(svc.detach_release(conn, rid))
 
 
 @bp.post("/releases/<int:rid>/cancel")
@@ -167,13 +191,29 @@ def get_version(conn, vid):
 @bp.patch("/versions/<int:vid>")
 @tx
 def update_version(conn, vid):
-    return jsonify(svc.to_dict(svc.update_version(conn, vid, **pick(body(), "status", "artifact_ref", "built_at"))))
+    """{status, built_at?} moves it along; {built_at, note} corrects the build date; {name, planned_date} pin
+    those on a synced build; {unpin: [...]} hands them back to the source."""
+    return jsonify(svc.to_dict(svc.update_version(conn, vid, **pick(
+        body(), "status", "artifact_ref", "built_at", "planned_date", "name", "note", "unpin"))))
 
 
 @bp.post("/versions/<int:vid>/release")
 @tx
 def release_version(conn, vid):
-    return jsonify(svc.release_version(conn, vid, policy_dir()))
+    """{released_at?}: backdate the release (default now)."""
+    return jsonify(svc.release_version(conn, vid, body().get("released_at")))
+
+
+@bp.post("/versions/<int:vid>/remap")
+@tx
+def remap_version(conn, vid):
+    return jsonify(svc.to_dict(svc.remap_version(conn, vid, body().get("to"))))
+
+
+@bp.post("/versions/<int:vid>/detach")
+@tx
+def detach_version(conn, vid):
+    return jsonify(svc.to_dict(svc.detach_version(conn, vid)))
 
 
 @bp.put("/versions/<int:vid>/manifest")

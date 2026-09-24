@@ -36,6 +36,8 @@
   "copy": '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5 L10.5 3.5 A1 1 0 0 0 9.5 2.5 L3.5 2.5 A1 1 0 0 0 2.5 3.5 L2.5 9.5 A1 1 0 0 0 3.5 10.5 L5.5 10.5"/>',
   "list": '<path d="M6 4 L14 4 M6 8 L14 8 M6 12 L14 12 M2.5 4 L2.6 4 M2.5 8 L2.6 8 M2.5 12 L2.6 12"/>',
   "layers": '<path d="M8 2 L14 5 L8 8 L2 5 Z M2 8 L8 11 L14 8 M2 11 L8 14 L14 11" stroke-linejoin="round"/>',
+  "edit": '<path d="M10.5 2.5 L13.5 5.5 L6 13 L2.5 13.5 L3 10 Z" stroke-linejoin="round"/>',
+  "pin": '<path d="M6 2 L10 2 M7 2 L6.5 6.5 L4 9 L12 9 L9.5 6.5 L9 2 M8 9 L8 14" stroke-linejoin="round"/>',
   "grip": '<g fill="currentColor" stroke="none"><circle cx="5.5" cy="3.5" r="1.2"/><circle cx="10.5" cy="3.5" r="1.2"/><circle cx="5.5" cy="8" r="1.2"/><circle cx="10.5" cy="8" r="1.2"/><circle cx="5.5" cy="12.5" r="1.2"/><circle cx="10.5" cy="12.5" r="1.2"/></g>',
 } %}
 
@@ -498,6 +500,40 @@
     {%- endfor %}
   </ul>
 </details>
+{%- endmacro %}
+
+{#- A collapsible section (edit forms, details). Body is the caller; `pad` gives it card padding. #}
+{% macro disclosure(title, subtitle=None, open=False, pad=True, cls="") -%}
+<details class="ui-disclosure {{ cls }}"{% if open %} open{% endif %}>
+  <summary class="ui-disclosure__summary">
+    {{ icon("chevron-right", 14, cls="ui-disclosure__chevron") }}
+    <div class="ui-disclosure__main"><span class="ui-disclosure__title">{{ title }}</span>
+      {%- if subtitle %} <span class="ui-muted" style="font-size: 12px;">{{ subtitle }}</span>{% endif %}</div>
+  </summary>
+  <div class="ui-disclosure__body{{ ' ui-disclosure__pad' if pad }}">{{ caller() }}</div>
+</details>
+{%- endmacro %}
+
+{#- Where a release or build comes from: row.source_key / source_state (see service "release sources"). #}
+{% macro source_state(row, source=None) -%}
+{%- if row.source_state == "missing" -%}{{ badge("missing from " ~ (source or "source"), "danger") }}
+{%- elif row.source_key -%}<span class="ui-status ui-muted" title="{{ source or 'source' }} key {{ row.source_key }}">{{ icon("refresh", 14) }}{{ source or "synced" }}</span>
+{%- else -%}<span class="ui-status ui-muted">{{ icon("edit", 14) }}by hand</span>{%- endif -%}
+{%- endmacro %}
+
+{#- Fields set by hand on a synced row, each with an unpin button posting `field` to `action`. #}
+{% macro pinned(fields, action=None, next=None) -%}
+{%- if fields -%}
+<div class="ui-row" style="--ui-gap: 6px;">
+  {%- for f in fields %}
+  <form method="post" hx-push-url="false" action="{{ action }}" class="ui-pin">
+    <input type="hidden" name="field" value="{{ f }}">{% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <span class="ui-pin__label" title="set by hand; syncs leave it alone">{{ icon("pin", 12) }}{{ f | replace("_id", "") | replace("_", " ") }}</span>
+    {%- if action %}<button class="ui-pin__x" type="submit" aria-label="Unpin {{ f }}: take the source's value on the next sync" title="Unpin: take the source's value on the next sync">{{ icon("x", 12) }}</button>{% endif %}
+  </form>
+  {%- endfor %}
+</div>
+{%- endif -%}
 {%- endmacro %}
 
 {% macro group_label(text) -%}<div class="ui-group-label">{{ text }}</div>{%- endmacro %}

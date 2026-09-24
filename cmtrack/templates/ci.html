@@ -7,12 +7,31 @@
 {% set meta = [ci.type] %}
 {% if ci.kind == "composite" %}{% set _ = meta.append("composite") %}{% endif %}
 {% if not ci.managed %}{% set _ = meta.append("placeholder (known only from HSCMs)") %}{% endif %}
-{% if ci.policy %}{% set _ = meta.append("Policy " ~ ci.policy.name) %}{% endif %}
+{% set _ = meta.append("Releases from " ~ ci.release_source if ci.release_source else "Releases entered by hand") %}
 {% set _ = meta.append(ci.cscs | length ~ " CSC" ~ ("s" if ci.cscs | length != 1 else "")
                        ~ (" · " ~ ci.cscs | map(attribute="name") | join(", ") if ci.cscs else "")) %}
 {% call ui.page_header(ci.name, ci.description, crumbs=[("Configuration items", url_for('ui.cis')), (ci.name, None)], meta=meta) %}
+  {% if ci.release_source %}
+  <form method="post" hx-push-url="false" action="{{ url_for('ui.sync_ci', ref=ci.name) }}" class="ui-row" style="--ui-gap: 6px;">
+    {{ ui.button("Preview sync", type="submit", size=None, attrs={"name": "dry_run", "value": "1", "title": "Ask " ~ ci.release_source ~ " and show what would change, without changing anything"}) }}
+    {{ ui.button("Sync from " ~ ci.release_source, type="submit", icon="refresh", attrs={"title": "Create, update and flag releases and builds to match " ~ ci.release_source}) }}
+  </form>
+  {% endif %}
   {{ ui.button("Work items", variant="primary", href=url_for('ui.work', ref=ci.name)) }}
 {% endcall %}
+
+{% if preview %}
+{% call ui.card(attrs={"aria-label": "Sync preview"}) %}
+  {% call ui.card_header("Sync preview", "what syncing from " ~ preview.source ~ " would do now; nothing has changed yet") %}{{ ui.badge("dry run", "info") }}{% endcall %}
+  {% call ui.card_body() %}{% include "_sync_summary.html" with context %}{% endcall %}
+  {% call ui.card_footer() %}
+    <form method="post" hx-push-url="false" action="{{ url_for('ui.sync_ci', ref=ci.name) }}" class="ui-row">
+      {{ ui.button("Apply: sync now", variant="primary", type="submit", icon="refresh") }}
+      {{ ui.button("Discard", variant="ghost", href=url_for('ui.ci', ref=ci.name)) }}
+    </form>
+  {% endcall %}
+{% endcall %}
+{% endif %}
 
 {% call ui.stats(ci.name ~ " at a glance") %}
   {% if o.current %}
@@ -23,7 +42,7 @@
   {% if o.next %}
     {{ ui.stat("Next release", o.next.name, "target " ~ (o.next.target_date or "not set") ~ " · " ~ o.next_built ~ " of " ~ o.next_total ~ " built", mono=True) }}
   {% else %}
-    {{ ui.stat("Next release", "—", "nothing planned; plan via POST /api/cis/" ~ ci.name ~ "/plan") }}
+    {{ ui.stat("Next release", "—", "nothing planned" ~ ("; sync from " ~ ci.release_source if ci.release_source else "; add one by hand")) }}
   {% endif %}
   {{ ui.stat("Open patches / emergencies", o.open_children | length,
              o.open_children | map(attribute="name") | join(", ") if o.open_children else "none open",
@@ -40,8 +59,10 @@
 
 <div class="ui-split">
   <div class="ui-stack">
+    {% if ci.attention %}{% include "_attention.html" %}{% endif %}
+
     {% call ui.card(flush=True) %}
-      {% call ui.card_header("Releases", "Patch and emergency releases sit under the release they were spawned from. Select one for details.") %}{% endcall %}
+      {% call ui.card_header("Releases", "Patch and emergency releases sit under the release they patch. Select one for details.") %}{% endcall %}
       {% call ui.table(["Release", "Kind", "Status", "Target / CR", "Released as", {"label": "Versions", "align": "end"}], body_id="release-rows") %}
         {% for root, kids in families %}
           {% for r in [root] + kids %}
@@ -50,18 +71,19 @@
               hx-get="{{ url_for('ui.release', rid=r.id) }}" hx-target="#release-panel" hx-push-url="false"
               hx-on::after-request="this.closest('tbody').querySelectorAll('.ui-row--selected').forEach(e => e.classList.remove('ui-row--selected')); this.classList.add('ui-row--selected')">
             <td>{% if child %}<span class="ui-tree-mark">└</span>{% endif %}<a class="ui-ident ui-ident--plain" href="{{ url_for('ui.release', rid=r.id) }}"
-                   hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a></td>
+                   hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a>
+              {%- if r.source_state == "missing" %} {{ ui.badge("missing", "danger", outline=True) }}{% elif ci.release_source and not r.source_key and r.kind != "external" %} {{ ui.badge("by hand", outline=True) }}{% endif %}</td>
             <td>{{ ui.release_kind(r.kind) }}</td>
             <td>{{ ui.version_status(r.status) }}</td>
             <td>{% if child and r.reason %}{{ ui.ident(r.reason, plain=True) }}{% else %}<span class="ui-mono">{{ r.target_date or "—" }}</span>{% endif %}</td>
             <td>{% if r.released_version %}{{ ui.ident(r.released_version, plain=True) }}{% endif %}</td>
             <td class="ui-end">
-              {%- if r.kind != "planned" %}{{ r.planned_versions + r.unplanned_versions }}
-              {%- else %}{{ r.planned_versions }}{% if r.unplanned_versions %} <span class="ui-tone-warning" title="ad hoc versions (added outside the plan)">+{{ r.unplanned_versions }}</span>{% endif %}{% endif -%}
+              {%- if r.kind != "planned" or not ci.release_source %}{{ r.planned_versions + r.unplanned_versions }}
+              {%- else %}{{ r.planned_versions }}{% if r.unplanned_versions %} <span class="ui-tone-warning" title="builds added by hand, not in the release source">+{{ r.unplanned_versions }}</span>{% endif %}{% endif -%}
             </td>
           </tr>
           {% endfor %}
-        {% else %}{{ ui.empty_row("No releases yet. Plan this CI via POST /api/cis/" ~ ci.name ~ "/plan", 6) }}{% endfor %}
+        {% else %}{{ ui.empty_row("No releases yet. " ~ ("Sync from " ~ ci.release_source ~ " to load them." if ci.release_source else "Add one under “Add a release”."), 6) }}{% endfor %}
       {% endcall %}
     {% endcall %}
 
@@ -90,14 +112,40 @@
     </div>
 
     {% call ui.card() %}
-      {% call ui.card_header("Policy") %}{% if ci.policy %}{{ ui.badge(ci.policy.type) }}{% endif %}{% endcall %}
+      {% call ui.card_header("Release source") %}{% if ci.release_source %}{{ ui.badge(ci.release_source) }}{% else %}{{ ui.badge("by hand", outline=True) }}{% endif %}{% endcall %}
       {% call ui.card_body() %}
-        {% if ci.policy %}
+        {% if ci.release_source %}
           <div class="ui-stack" style="--ui-gap: 8px;">
-            {{ ui.ident(ci.policy.name) }}
-            {% if ci.policy.params %}<pre class="ui-pre">{{ ci.policy.params | tojson(indent=2) }}</pre>{% endif %}
+            {% if not source_configured %}
+              {% call ui.alert("danger", "Release source not configured") %}Nothing called “{{ ci.release_source }}” is set up; add it to CMTRACK_RELEASE_SOURCES.{% endcall %}
+            {% endif %}
+            {% if ci.last_sync %}
+              <span>Last synced {{ ui.timestamp(ci.last_sync.at) }}</span>
+              {% set n = ci.last_sync.counts %}
+              <span class="ui-muted" style="font-size: 12px;">{{ n.created }} created · {{ n.updated }} updated · {{ n.missing }} missing · {{ n.issues }} unplaced</span>
+            {% else %}<span class="ui-muted">Never synced.</span>{% endif %}
+            {% if ci.source_params %}<pre class="ui-pre">{{ ci.source_params | pretty_json }}</pre>{% endif %}
           </div>
-        {% else %}<span class="ui-muted">No policy: nothing is planned automatically.</span>{% endif %}
+        {% else %}
+          <span class="ui-muted">Releases and builds are entered by hand. Give the CI a <span class="ui-mono">release_source</span> (PATCH /api/cis/{{ ci.name }}) to sync them instead; releases with the same names are adopted.</span>
+        {% endif %}
+      {% endcall %}
+      {% if ci.last_sync and (ci.last_sync.created or ci.last_sync.updated or ci.last_sync.missing or ci.last_sync.pinned) %}
+        {% call ui.disclosure("What the last sync did") %}{% with preview = ci.last_sync %}{% include "_sync_summary.html" %}{% endwith %}{% endcall %}
+      {% endif %}
+      {% call ui.disclosure("Add a release", "by hand" if ci.release_source else None, open=not ci.releases and not ci.release_source) %}
+        {% set planned = ci.releases | selectattr("kind", "equalto", "planned") | map(attribute="name") | list %}
+        <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.create_release', ref=ci.name) }}">
+          <div class="ui-form-grid">
+            {% call ui.field("Kind", "nr-kind") %}{{ ui.select("kind", [("planned", "Planned"), ("patch", "Patch"), ("emergency", "Emergency")], id="nr-kind") }}{% endcall %}
+            {% call ui.field("Name", "nr-name", hint="patches are named for you if blank") %}{{ ui.input("name", id="nr-name", mono=True, placeholder="2027.Q1") }}{% endcall %}
+            {% call ui.field("Target date", "nr-date") %}{{ ui.input("target_date", type="date", id="nr-date") }}{% endcall %}
+            {% if planned %}{% call ui.field("Patches (patch / emergency)", "nr-parent") %}{{ ui.select("parent", [("", "—")] + planned, id="nr-parent", mono=True) }}{% endcall %}{% endif %}
+            {% call ui.field("Reason / CR", "nr-reason", hint="required for an emergency") %}{{ ui.input("reason", id="nr-reason", mono=True, placeholder="CR-1234") }}{% endcall %}
+            {% call ui.field("Builds", "nr-builds", hint="comma separated, in order") %}{{ ui.input("builds", id="nr-builds", mono=True, placeholder="2027.Q1-b1, 2027.Q1-b2") }}{% endcall %}
+          </div>
+          <div>{{ ui.button("Add release", type="submit", icon="plus") }}</div>
+        </form>
       {% endcall %}
     {% endcall %}
 

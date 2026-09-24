@@ -14,6 +14,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {#- htmx normally drops 4xx/5xx responses; swap them so a failed form post shows its error page #}
+  <meta name="htmx-config" content='{"responseHandling": [{"code": "204", "swap": false}, {"code": "[2345]..", "swap": true, "error": false}]}'>
   <title>{% block title %}cmtrack{% endblock %}{% if ui_marking %} · {{ ui_marking.text }}{% endif %}</title>
   {%- if ui_fonts_css %}
   <link rel="stylesheet" href="{{ ui_fonts_css }}">

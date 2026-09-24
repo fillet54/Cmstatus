@@ -53,9 +53,8 @@ class RankTests(unittest.TestCase):
 class BacklogTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        shutil.copy(os.path.join(HERE, "..", "policies", "display-sw.txt"), self.tmp)
         self.source = StaticSource(DEMO_TICKETS, name="jira")
-        self.app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"), "POLICY_DIR": self.tmp,
+        self.app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"),
                                "TICKET_SOURCES": {"jira": self.source}})
         self.c = self.app.test_client()
         seed(self.c)       # creates "Nav & Display", pulls, moves PRG-20 to the top and PRG-15 to the bottom

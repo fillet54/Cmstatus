@@ -4,10 +4,11 @@ The order to type cmtrack in by hand. The code on `main` is the answer key; each
 functions to copy across. Every phase ends with something that **runs and can be checked**, so stop at any
 phase boundary and have a working tool.
 
-**Priority scope (Phases 0–6):** one CI with CSCs on a quarterly release policy → a CI overview → drill into
-releases and versions → the tickets implemented since the previous release → the shared backlog.
-**Later (Phases 7–10):** patch/emergency releases and merges, dashboard and events, IFCs and HSCM baselines,
-composites, and the manual policy.
+**Priority scope (Phases 0–7):** one CI with CSCs whose quarterly releases and builds sync from Jira (or are
+entered by hand) → a CI overview → drill into releases and versions → the tickets implemented since the
+previous release → the shared backlog.
+**Later (Phases 8–11):** patch/emergency releases and merges, dashboard and events, IFCs and HSCM baselines,
+composites and the rest.
 
 ---
 
@@ -15,7 +16,7 @@ composites, and the manual policy.
 
 - **Type each table in its final shape.** Tables can arrive in later phases (`CREATE TABLE IF NOT EXISTS`
   makes that safe), but when you create a table, give it every column it ends up with (e.g. `release.parent_id`,
-  `release.released_at`, `version.lineage`). Then `db.MIGRATIONS` stays empty and your early databases never
+  `release.source_key`, `version.lineage`, `ci.last_sync`). Then `db.MIGRATIONS` stays empty and your early databases never
   need migrating. Only add a `MIGRATIONS` entry when you change a table that already holds data you care about.
 - **Stub, don't skip, cross-phase references.** A few functions return data from features that come later
   (`release_detail` returns `baselines_behind` and `unabsorbed`). Return `[]` for them until that phase,
@@ -42,63 +43,84 @@ api() { m=$1; p=$2; shift 2; curl -s -X "$m" "localhost:5000/api$p" -H 'Content-
 
 | File | Type in |
 |---|---|
-| `cmtrack/schema.sql` | `policy`, `ci`, `csc`, `event` tables only |
-| `cmtrack/db.py` | `connect`, `init_db` (with the empty `MIGRATIONS` / `DROPPED` loops), `get_db`, `close_db` |
-| `cmtrack/service.py` | module docstring, `CMError` / `NotFound` / `Conflict`, helpers: `to_dict`, `to_dicts`, `now`, `log`, `_one`, `_by_ref`, `_date` (needs `parse_date`: type a stub or jump ahead to `policies.parse_date`) |
+| `cmtrack/schema.sql` | `ci` (in full: `release_source`, `source_params`, `require_tested`, `last_sync`), `csc`, `event` |
+| `cmtrack/db.py` | `connect`, `init_db` (with the empty `MIGRATIONS` / `DROPPED` loops and the `INDEXES` loop), `get_db`, `close_db` |
+| `cmtrack/service.py` | module docstring, `CMError` / `NotFound` / `Conflict`, helpers: `to_dict`, `to_dicts`, `now`, `log`, `_one`, `_by_ref`, `_date`, `_when` |
 | `cmtrack/api.py` | blueprint, `body`, `pick`, `tx`, `created`, `index` (`GET /api/`) |
-| `cmtrack/__init__.py` | `create_app` with `DATABASE` and `POLICY_DIR` config, `CMError` and `IntegrityError` handlers (JSON only for now) |
+| `cmtrack/__init__.py` | `create_app` with `DATABASE` config, `CMError` and `IntegrityError` handlers (JSON only for now) |
 | `cmtrack/__main__.py` | the dev server entry point |
 | `.gitignore` | `__pycache__/`, `*.pyc`, `*.db` |
 
 **Working when**
 - `python -m cmtrack` starts; `GET /api/` lists the routes as JSON.
-- `sqlite3 cmtrack.db .tables` shows the four tables.
+- `sqlite3 cmtrack.db .tables` shows the three tables.
 
 ---
 
-## Phase 1: policy, CI and CSC (API)
+## Phase 1: CI and CSC (API)
 
-**Goal:** define a quarterly cadence policy, a CI that uses it, and the CI's CSCs with their Jira pairs.
+**Goal:** a CI and its CSCs with their Jira pairs.
 
 | File | Type in |
 |---|---|
-| `cmtrack/policies.py` | `PolicyError`, `PlannedVersion`, `PlannedRelease`, `add_months`, `parse_date`, `Policy` (all of it: defaults, `validate`, `plan`, `version_name`, `child_release_name`, `release_gate`, `_check_format`), `CadencePolicy`, `REGISTRY` / `register` / `build`. **Skip `ManualPolicy`** (Phase 10). |
-| `service.py` | policies section (`create_policy`, `get_policy`, `list_policies`, `policy_for`); CI section (`get_ci`, `list_cis`, `create_ci`, `update_ci`, `ci_detail` without `releases` for now); CSC section (`add_csc`, `find_csc`) |
-| `api.py` | `GET/POST /policies`, `GET/POST /cis`, `GET/PATCH /cis/<ci>`, `POST /cis/<ci>/cscs`, `GET /cscs/lookup` |
-| `tests/test_flow.py` | `PolicyUnitTests` (quarterly/monthly naming, fiscal-year tokens, bad params) |
+| `service.py` | CI section (`get_ci`, `list_cis`, `_source_settings`, `create_ci`, `update_ci`, `ci_detail` without `releases` / `attention` for now); CSC section (`add_csc`, `find_csc`) |
+| `api.py` | `GET/POST /cis`, `GET/PATCH /cis/<ci>`, `POST /cis/<ci>/cscs`, `GET /cscs/lookup` |
 
 **Working when**
 ```bash
-api POST /policies -d '{"name": "quarterly", "type": "cadence"}'
-api POST /cis -d '{"name": "NAV-SW", "policy": "quarterly"}'
+api POST /cis -d '{"name": "NAV-SW"}'
 api POST /cis/NAV-SW/cscs -d '{"name": "nav-core", "jira_project": "NAVL", "affected_product": "core", "team": "Nav"}'
 api POST /cis/NAV-SW/cscs -d '{"name": "other", "jira_project": "NAVL", "affected_product": "core"}'   # 409: pair taken
 api GET "/cscs/lookup?project=NAVL&product=core"                                                      # -> NAV-SW
 ```
-`CadencePolicy({}).plan(2026-10-01, 2027-04-01)` gives `2026.Q4` (b1–b3) and `2027.Q1`.
 
 ---
 
-## Phase 2: releases and versions for the quarterly policy (API)
+## Phase 2: releases and versions by hand (API)
 
-**Goal:** plan a CI's quarters, move builds through their lifecycle, add an ad hoc build, and promote one to be
-the release.
+**Goal:** enter a quarter and its builds, move builds through their lifecycle, add an ad hoc build, promote one
+to be the release, and correct dates after the fact.
 
 | File | Type in |
 |---|---|
-| `schema.sql` | `release` and `version` **in full** (including `parent_id`, `base_version_id`, `released_version_id`, `released_at`, `reason`, and `version.lineage`), plus the partial unique index `ux_release_child_reason` and `ix_version_release` |
-| `service.py` | `RELEASED`, `VERSION_TRANSITIONS`; `plan_ci`; `get_release`, `get_version`, `find_version`, `list_releases`, `release_detail` (**stub** `baselines_behind` and `unabsorbed` as `[]`), `_insert_version`, `add_version`, `update_version`, `release_version` (**skip** the composite/manifest block, Phase 10), `root_release`, `effective_version`. `ci_detail` now includes `releases`. |
-| `api.py` | `POST /cis/<ci>/plan`, `GET /cis/<ci>/releases`, `GET /releases/<id>`, `POST /releases/<id>/versions`, `GET/PATCH /versions/<id>`, `POST /versions/<id>/release` |
-| tests | the planning / build / ad hoc b4 / promote part of `test_full_flow` |
+| `schema.sql` | `release` and `version` **in full** (including `parent_id`, `base_version_id`, `released_version_id`, `released_at`, `reason`, `source_key` / `source_state` / `pinned`, and `version.lineage`), plus `ix_version_release`; the two `ux_*_source_key` indexes go in `db.INDEXES` |
+| `service.py` | `RELEASED`, `VERSION_TRANSITIONS`; `get_release`, `get_version`, `find_version`, `find_release`, `list_releases`, `release_detail` (**stub** `baselines_behind` and `unabsorbed` as `[]`), `_next_seq`, `_insert_version`, `add_version`, `create_release` (**planned only**: patches are Phase 8), `SYNCED_*_FIELDS`, `PIN_ALIASES`, `_label`, `_pins`, `_note`, `update_release`, `update_version`, `release_version` (**skip** the composite/manifest block, Phase 11), `root_release`, `effective_version`. `ci_detail` now includes `releases`. |
+| `api.py` | `POST /cis/<ci>/releases`, `GET /cis/<ci>/releases`, `GET/PATCH /releases/<id>`, `POST /releases/<id>/versions`, `GET/PATCH /versions/<id>`, `POST /versions/<id>/release` |
+| tests | `ManualFlowTests`: the release / build / ad hoc b4 / promote part, and `test_date_corrections` |
 
 **Working when**
-- `POST /cis/NAV-SW/plan {"start": "2026-10-01", "end": "2027-07-01"}` creates 3 quarters; running it again creates nothing.
+- `POST /cis/NAV-SW/releases {"name": "2026.Q4", "target_date": "2026-12-15", "builds": ["2026.Q4-b1", "2026.Q4-b2", "2026.Q4-b3"]}`.
 - b1–b3 → `built`; promoting b3 fails (`must be tested`); reject b3, add ad hoc b4, move it to `tested`, promote it.
-- `GET /cis/NAV-SW/releases` shows Q4 `released` with 3 planned + 1 unplanned versions.
+- Correct b4's build date with a note; one in the future, or without a note, is refused.
 
 ---
 
-## Phase 3: web shell and CI overview
+## Phase 3: sync releases from Jira (API)
+
+**Goal:** the CI's releases and builds come from its Jira project; anything that doesn't line up is flagged and
+fixed by hand.
+
+| File | Type in |
+|---|---|
+| `cmtrack/releases.py` | all of it (`ReleaseRecord`, `BuildRecord`, `Unplaced`, `ReleaseSource`, `SourceVersion`, `PatternSource`, `StaticVersionSource`), **then `PatternSourceTests` first** |
+| `tickets.py` | `load_sources` (the `what` argument is for release sources; the rest of the file is Phase 6) |
+| `service.py` | release sources section: `SourceError`, `_issue`, `_source_records`, `_adopt_or_find`, `_apply`, `sync_ci`, `_sync`, `_in_use`, `_drop_unused`, `_take_over`, `remap_release`, `remap_version`, `detach_release`, `detach_version`, `ci_attention`, `remap_candidates`; `ci_detail` gains `attention` |
+| `__init__.py` | `RELEASE_SOURCES` config, falling back to `CMTRACK_RELEASE_SOURCES` |
+| `api.py` | `release_source`, `GET /release-sources`, `POST /cis/<ci>/sync`, `GET /cis/<ci>/attention`, remap / detach for releases and versions |
+| `demo.py` | `NAV_PARAMS`, `NAV_VERSIONS`, `demo_release_source` |
+| tests | `SyncTests` |
+
+**Working when**
+- `PATCH /cis/NAV-SW {"release_source": "jira", "source_params": <NAV_PARAMS>}` with the demo source, then
+  `POST /cis/NAV-SW/sync` creates the quarters and builds; again creates nothing; `{"dry_run": true}` changes nothing.
+- Rename or re-date a version in the (static) source: the next sync updates it. Remove one: it's `missing`, and
+  `remap` / `detach` clear it from `GET /cis/NAV-SW/attention`. Edit a synced date by hand: it's pinned and kept.
+- **Then:** write your `JiraReleases(PatternSource)` (the docstring at the top of `releases.py` is the
+  template), point `CMTRACK_RELEASE_SOURCES` at it, and sync your real project.
+
+---
+
+## Phase 4: web shell and CI overview
 
 **Goal:** browse CIs and open a CI to see its releases, with a release panel loaded by htmx.
 
@@ -109,21 +131,24 @@ the release.
 | `templates/ui/layout.html` + `cmtrack/ui.py` | the page shell; marking config, `utc`/`iso` filters, shell context. Point `UI_NAV` at the pages that exist so far. |
 | `templates/error.html` | |
 | `templates/cis.html`, `_ci_rows.html` | CI list; the search/filter form swaps `#ci-rows` |
-| `templates/ci.html` | releases table + `#release-panel` + policy + CSCs. **Leave out** "Fielded in" (Phase 9), the "Work items" button (Phase 5) and the Backlogs card (Phase 6). |
-| `templates/_release.html`, `release.html` | release panel / full page. **Leave out** the work link, the unabsorbed alert and the baselines-behind alert. |
-| `cmtrack/views.py` | `is_fragment`, `page`, `ci_overview`, `built_from`, `release_families`, and the views `cis`, `ci` (without the `fielded` query: it reads baseline tables, Phase 9), `release`. Make `/` redirect to `/cis` until Phase 8. |
+| `templates/ci.html`, `_attention.html`, `_sync_summary.html` | releases table + `#release-panel` + Needs attention + release source card (sync, preview, last sync, add a release) + CSCs. **Leave out** "Fielded in" (Phase 10), the "Work items" button (Phase 6) and the Backlogs card (Phase 7). |
+| `templates/_release.html`, `release.html`, `version.html` | release panel / full page with its edit, unpin, add-build, cancel and correct forms; version page with edit / correct. **Leave out** the work link, the unabsorbed alert, the baselines-behind alert, and the lineage / tickets / where-used cards. |
+| `ui/components.html` | also `disclosure`, `source_state`, `pinned` (+ `.ui-pin`, `.ui-form-grid`, `.ui-plain-list` CSS) |
+| `cmtrack/views.py` | `is_fragment`, `page`, `ci_overview`, `built_from`, `release_families`, `render_ci`, `edit_options`, and the views `cis`, `ci` (without the `fielded` query: it reads baseline tables, Phase 10), `release`, `version`, plus the form posts at the bottom (`_back`, `_run`, `_form`, sync … detach). Make `/` redirect to `/cis` until Phase 9. |
 | `__init__.py` | `ui.init_app(app)`; register the `ui` blueprint; `CMError` renders `error.html` outside `/api` |
 | `tests/test_views.py` | page renders + fragment-vs-page checks for the views above |
 
 **Working when**
 - `/cis` narrows as you type in the search box (the URL updates), and the type/managed filters work.
-- `/cis/NAV-SW` lists the quarters with their status and planned + ad hoc version counts; clicking one loads its
+- `/cis/NAV-SW` lists the quarters with their status and source + ad hoc version counts; clicking one loads its
   panel on the right, and middle-clicking opens `/releases/<id>` as a full page.
+- "Preview sync" shows what would change; "Sync from jira" applies it. A version the source lost shows under
+  Needs attention with Remap / Detach / Cancel. Editing a target date in the panel pins it (× unpins).
 - `/cis/NOPE` shows the HTML error page, while `/api/cis/NOPE` still returns JSON.
 
 ---
 
-## Phase 4: version lineage and ranges
+## Phase 5: version lineage and ranges
 
 **Goal:** know what each build was built from, so a range like "since the last release" is a well-defined set
 of versions.
@@ -131,11 +156,11 @@ of versions.
 | File | Type in |
 |---|---|
 | `schema.sql` | `version_parent` + `ix_vparent_parent` |
-| `service.py` | lineage section: `release_head`, `rebuild_lineage`, `backfill_lineage`, `_closure`, `ancestor_ids`, `descendant_ids`, `version_parents`, `lineage`, `version_range`, `_topo_order`, `ci_versions`, `release_range`. **Skip** `set_version_parents` and `unabsorbed_fixes` (Phase 7). Add `rebuild_lineage(...)` calls at the end of `plan_ci`, `add_version` and `release_version`. |
+| `service.py` | lineage section: `release_head`, `rebuild_lineage`, `backfill_lineage`, `_closure`, `ancestor_ids`, `descendant_ids`, `version_parents`, `lineage`, `version_range`, `_topo_order`, `ci_versions`, `release_range`. **Skip** `set_version_parents` and `unabsorbed_fixes` (Phase 8). Add the `rebuild_lineage(...)` calls in `create_release`, `add_version`, `update_release`, `release_version`, `sync_ci`, the remaps and `detach_release`. |
 | `__init__.py` | call `backfill_lineage` at startup |
 | `api.py` | `GET /versions/<id>/lineage`, `GET /cis/<ci>/versions?to=&from=` |
-| `templates/version.html` + `views.version` | version page: stats, lineage card, history (no manifest / where-used / tickets yet) |
-| tests | `test_auto_lineage` (planned releases only) |
+| `templates/version.html` | the lineage card |
+| tests | `test_auto_lineage` (planned releases only), `SyncTests.test_detach_and_phantoms` |
 
 **Working when**
 - `GET /api/cis/NAV-SW/versions?to=2026.Q4-b4` → b1, b2, b3, b4 (rejected b3 stays in the chain).
@@ -145,15 +170,15 @@ of versions.
 
 ---
 
-## Phase 5: tickets implemented since a previous release
+## Phase 6: tickets implemented since a previous release
 
 **Goal:** for any range of versions, show the parent tickets and, under each, how each CSC implemented them,
 read live from the ticket source. Start against the in-memory `StaticSource`, then plug in your Jira code.
 
 | File | Type in |
 |---|---|
-| `cmtrack/tickets.py` | `STATES`, `DONE` / `ERROR`, `normalize_state`, `TicketRecord` (leave `cis` out until Phase 6 if you like), `TicketSource` (`tickets_for_versions`, `get_tickets`, `get_children`), `StaticSource`, `pick_source`, `load_sources` |
-| `service.py` | tickets section: `SourceError`, `_ask`, `_progress`, `_Resolver`, `_group_by_csc`, `work_report`, `ticket_detail` |
+| `cmtrack/tickets.py` | `STATES`, `DONE` / `ERROR`, `normalize_state`, `TicketRecord` (leave `cis` out until Phase 7 if you like), `TicketSource` (`tickets_for_versions`, `get_tickets`, `get_children`), `StaticSource`, `pick_source` |
+| `service.py` | tickets section: `_ask`, `_progress`, `_Resolver`, `_group_by_csc`, `work_report`, `ticket_detail` |
 | `__init__.py` | `TICKET_SOURCES` config, falling back to `CMTRACK_TICKET_SOURCES` |
 | `api.py` | `ticket_source`, `versions_arg`, `GET /ticket-states`, `GET /cis/<ci>/work`, `GET /tickets/<key>` |
 | `views.py` | `ticket_source`, `live`, `work` (with the "What's new in" presets), `ticket`; the version view gains `report` / `source_error` |
@@ -172,7 +197,7 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 
 ---
 
-## Phase 6: shared backlog
+## Phase 7: shared backlog
 
 **Goal:** a ranked backlog of top-level tickets shared by several teams, reordered by drag and drop.
 
@@ -196,37 +221,37 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 - ⤒ ↑ ↓ work too; a stale move (e.g. two tabs) gets a 409, a toast, and a reloaded list.
 - Adding a CSC ticket by key is refused and names its parent.
 
-> **Milestone: the priority scope is done.** A quarterly CI with CSCs, CI overview, release drill-down, tickets
-> since the previous release from Jira, and the shared backlog.
+> **Milestone: the priority scope is done.** A CI with CSCs whose quarters sync from Jira, CI overview, release
+> drill-down, tickets since the previous release from Jira, and the shared backlog.
 
 ---
 
-## Phase 7: patch/emergency releases and merges
+## Phase 8: patch/emergency releases and merges
 
 **Goal:** fixes released between quarters, and making sure the next quarter includes them.
 
 | File | Type in |
 |---|---|
-| `service.py` | `spawn_release`, `cancel_release`, `behind_effective` (**keep returning `[]`** until Phase 9: it reads baselines), `set_version_parents`, `unabsorbed_fixes` (un-stub it in `release_detail`). Add `rebuild_lineage` calls to `spawn_release` and `cancel_release`. |
-| `api.py` | `POST /releases/<id>/spawn`, `POST /releases/<id>/cancel`, `PUT` / `DELETE /versions/<id>/parents` |
+| `service.py` | `_base_version` and the patch/emergency branch of `create_release`; `cancel_release`; the base-version fill at the end of `_sync`; the `no_base` / `no_reason` / `open_children` checks in `ci_attention`; `behind_effective` (**keep returning `[]`** until Phase 10: it reads baselines), `set_version_parents`, `unabsorbed_fixes` (un-stub it in `release_detail`). |
+| `api.py` | `POST /releases/<id>/cancel`, `PUT` / `DELETE /versions/<id>/parents` |
 | templates | the unabsorbed alert in `_release.html`; `release_families` already nests children in `ci.html` |
-| tests | the patch / emergency / duplicate-guard / cancel parts of `test_full_flow`; `test_merge_range_and_reset`, `test_parents_validation`, `test_lineage_survives_replanning` |
+| tests | the patch / emergency / cancel parts of `ManualFlowTests`; `SyncTests.test_patches_come_from_the_source`; `test_merge_range_and_reset`, `test_parents_validation`, `test_lineage_survives_resync` |
 
 **Working when**
-- Spawn `2026.Q4.ER1` with a reason and ship it; the same reason again returns the existing release (200);
-  a second open emergency is a 409.
+- Add `2026.Q4.ER1` to the source (or by hand, with a reason) and sync: it hangs under 2026.Q4 and gets
+  its base version once Q4 is released. Ship it. Two open emergencies on a line show under Needs attention.
 - The Q1 panel warns "Not built on 1 earlier fix" until you `PUT /versions/<Q1-b1>/parents
   {"parents": ["2026.Q4-b4", "2026.Q4.ER1"]}`. After that, "What's new in 2027.Q1" includes ER1's tickets.
 
 ---
 
-## Phase 8: dashboard and events
+## Phase 9: dashboard and events
 
 | File | Type in |
 |---|---|
 | `service.py` | `list_events` (with `before_id`) |
 | `api.py` | `GET /events` |
-| `views.py` | `entity_url`, `dashboard` (without the stale-baseline card), `recent_events`, `events`. Drop the Phase 3 redirect of `/`. |
+| `views.py` | `entity_url`, `dashboard` (without the stale-baseline card), `recent_events`, `events`. Drop the Phase 4 redirect of `/`. |
 | templates | `dashboard.html`, `_recent_events.html`, `events.html`, `_event_rows.html`; Events in the nav |
 
 **Working when:** `/` shows counts, open patch/emergency releases, upcoming releases and recent activity (refreshing
@@ -234,7 +259,7 @@ every 30s); `/events` filters by entity and loads more as you scroll.
 
 ---
 
-## Phase 9: IFC capabilities and HSCM baselines
+## Phase 10: IFC capabilities and HSCM baselines
 
 | File | Type in |
 |---|---|
@@ -250,17 +275,17 @@ diff the two. Ship an emergency and the dashboard and baseline page flag the ent
 
 ---
 
-## Phase 10: composites, manual policy, the rest
+## Phase 11: composites, the rest
 
 - `manifest_entry` table; `set_manifest`, `manifest`, `where_used`; the composite block in `release_version`;
   `PUT /versions/<id>/manifest`, `GET /versions/<id>/where-used`; the manifest / where-used cards in `version.html`.
-- `ManualPolicy` + `policies/display-sw.txt`.
-- The full `demo.py` seed and the rest of `test_full_flow`.
+- The full `demo.py` seed and the rest of `test_full_flow.py` and `test_views.py` (`FormTests`).
 
 ---
 
 ## After the rebuild (not on `main` yet)
 
-- CSRF protection and login before exposing the UI beyond your own machine (the backlog forms change data).
+- CSRF protection and login before exposing the UI beyond your own machine (the backlog, release and version
+  forms change data).
 - IFC ↔ CI membership (`ifc_ci`) and parent-IFC rollups, discussed earlier but not built.
 - A cross-CI "tickets in error" view: it needs a source query, since tickets aren't stored.

@@ -10,6 +10,7 @@ Config (app.config, or the environment at startup):
     UI_HTMX_JS      htmx script URL (CMTRACK_UI_HTMX_JS); self-host it the same way.
 """
 import datetime as dt
+import json
 import os
 
 from flask import current_app, g, url_for
@@ -81,6 +82,11 @@ def iso(value):
     return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else (str(value) if value else "")
 
 
+def pretty_json(value):
+    """Indented JSON for display in <pre> (autoescaped by Jinja, unlike tojson's \u003c escapes)."""
+    return json.dumps(value, indent=2, ensure_ascii=False)
+
+
 def _nav():
     items = []
     for key, label, endpoint in current_app.config["UI_NAV"]:
@@ -99,6 +105,7 @@ def init_app(app):
     app.config.setdefault("UI_NAV", NAV)
     app.jinja_env.filters["utc"] = utc
     app.jinja_env.filters["iso"] = iso
+    app.jinja_env.filters["pretty_json"] = pretty_json
     app.jinja_env.globals["ui_states"] = tickets.STATES
     app.jinja_env.globals["ui_version_statuses"] = VERSION_STATUSES
 

@@ -1,0 +1,34 @@
+{#- What a sync did (or, for a dry run, would do). `preview` is a service.sync_ci summary. -#}
+{% import "ui/components.html" as ui %}
+{% set s = preview %}
+{% set nothing = not (s.created or s.updated or s.adopted or s.rekeyed or s.restored or s.missing or s.bases or s.pinned or s.issues) %}
+{% if nothing %}<span class="ui-muted">In step with the source: nothing to change.</span>
+{% else %}
+<div class="ui-stack" style="--ui-gap: 10px; font-size: 13px;">
+  {% for label, names in [("Created", s.created), ("Adopted (entered by hand, now synced)", s.adopted), ("Re-keyed (re-created in the source under the same name)", s.rekeyed), ("Back in the source", s.restored), ("Missing from the source", s.missing)] if names %}
+  <div>{{ ui.section_label(label ~ " · " ~ names | length) }}<div class="ui-row" style="--ui-gap: 4px;">{% for n in names %}{{ ui.chip(n, mono=True) }}{% endfor %}</div></div>
+  {% endfor %}
+  {% if s.updated %}
+  <div>{{ ui.section_label("Updated · " ~ s.updated | length) }}
+    <ul class="ui-plain-list">{% for u in s.updated %}<li>{{ ui.ident(u.name, plain=True) }}
+      {% for f, change in u.changes.items() %}<span class="ui-muted">{{ f | replace("_id", "") | replace("_", " ") }}</span> <span class="ui-mono">{{ change[0] or "—" }} → {{ change[1] or "—" }}</span>{{ "; " if not loop.last }}{% endfor %}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  {% if s.bases %}
+  <div>{{ ui.section_label("Base versions filled in") }}
+    <ul class="ui-plain-list">{% for b in s.bases %}<li>{{ ui.ident(b.name, plain=True) }} builds on {{ ui.ident(b.base, plain=True) }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  {% if s.pinned %}
+  <div>{{ ui.section_label("Kept (pinned by hand)") }}
+    <ul class="ui-plain-list">{% for p in s.pinned %}<li>{{ ui.ident(p.name, plain=True) }} <span class="ui-muted">{{ p.field | replace("_id", "") | replace("_", " ") }}</span>
+      <span class="ui-mono">{{ p.kept or "—" }}</span> <span class="ui-muted">(source says</span> <span class="ui-mono">{{ p.source or "—" }}</span><span class="ui-muted">)</span></li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  {% if s.issues %}
+  <div>{{ ui.section_label("Couldn't place · " ~ s.issues | length) }}
+    <ul class="ui-plain-list">{% for i in s.issues %}<li>{{ ui.ident(i.name, plain=True) }} <span class="ui-muted">{{ i.why }}</span></li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+</div>
+{% endif %}

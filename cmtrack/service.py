@@ -8,8 +8,7 @@ import datetime as dt
 import json
 import sqlite3
 
-from . import policies, rank, tickets
-from .policies import PolicyError, add_months, parse_date
+from . import rank, releases as rsrc, tickets
 
 RELEASED = ("released", "external")          # version states a baseline may reference
 VERSION_TRANSITIONS = {
@@ -38,7 +37,7 @@ class Conflict(CMError):
 
 # ----------------------------------------------------------------------------- helpers
 
-_JSON_COLS = {"attributes", "params", "detail", "teams"}
+_JSON_COLS = {"attributes", "params", "detail", "teams", "source_params", "last_sync", "pinned"}
 
 
 def to_dict(row):
@@ -78,45 +77,28 @@ def _by_ref(conn, table, ref, what):
 
 
 def _date(value, what="date"):
+    """ISO date string (YYYY-MM-DD) or None."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, (dt.date, dt.datetime)):
+        return value.isoformat()[:10]
     try:
-        return parse_date(value, what)
-    except PolicyError as e:
-        raise CMError(str(e)) from None
+        return dt.date.fromisoformat(str(value).strip()[:10]).isoformat()
+    except ValueError:
+        raise CMError(f"invalid {what} {value!r}; expected YYYY-MM-DD") from None
 
 
-# ----------------------------------------------------------------------------- policies
-
-def create_policy(conn, name, type, params=None, base_dir=None):
-    if not name:
-        raise CMError("name is required")
+def _when(value, what):
+    """A past-or-present UTC timestamp (a date means midnight UTC), for correcting when something happened."""
+    raw = str(value or "").strip()
     try:
-        policies.build(type, params, base_dir)          # validate
-        cur = conn.execute("INSERT INTO policy (name, type, params) VALUES (?, ?, ?)",
-                           (name, type, json.dumps(params or {})))
-    except PolicyError as e:
-        raise CMError(str(e)) from None
-    except sqlite3.IntegrityError:
-        raise Conflict(f"policy {name!r} already exists") from None
-    log(conn, "policy", cur.lastrowid, "created", type=type, params=params or {})
-    return get_policy(conn, cur.lastrowid)
-
-
-def get_policy(conn, ref):
-    return _by_ref(conn, "policy", ref, "policy")
-
-
-def list_policies(conn):
-    return conn.execute("SELECT * FROM policy ORDER BY name").fetchall()
-
-
-def policy_for(conn, ci, base_dir=None):
-    if ci["policy_id"] is None:
-        return policies.Policy()
-    row = get_policy(conn, ci["policy_id"])
-    try:
-        return policies.build(row["type"], json.loads(row["params"]), base_dir)
-    except PolicyError as e:
-        raise CMError(f"policy {row['name']!r}: {e}") from None
+        d = dt.datetime.fromisoformat(raw.replace("Z", "+00:00").replace(" ", "T", 1))
+    except ValueError:
+        raise CMError(f"invalid {what} {value!r}; expected YYYY-MM-DD or an ISO timestamp") from None
+    d = d.replace(tzinfo=dt.timezone.utc) if d.tzinfo is None else d.astimezone(dt.timezone.utc)
+    if d > dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5):
+        raise CMError(f"{what} {raw} is in the future")
+    return d.isoformat(timespec="seconds")
 
 
 # ----------------------------------------------------------------------------- configuration items
@@ -136,42 +118,55 @@ def list_cis(conn, type=None, managed=None):
     return conn.execute(sql + " ORDER BY name", args).fetchall()
 
 
-def create_ci(conn, name, type="CSCI", kind="simple", managed=True, policy=None,
-              description=None, attributes=None):
+def _source_settings(release_source, source_params):
+    if release_source is not None and not isinstance(release_source, str):
+        raise CMError("release_source must be a source name, or null to manage releases by hand")
+    if source_params is not None and not isinstance(source_params, dict):
+        raise CMError("source_params must be a JSON object")
+    return (release_source or "").strip() or None, json.dumps(source_params or {})
+
+
+def create_ci(conn, name, type="CSCI", kind="simple", managed=True, release_source=None, source_params=None,
+              require_tested=True, description=None, attributes=None):
     if not name:
         raise CMError("name is required")
     if type not in ("CSCI", "HWCI"):
         raise CMError("type must be CSCI or HWCI")
     if kind not in ("simple", "composite"):
         raise CMError("kind must be simple or composite")
-    policy_id = get_policy(conn, policy)["id"] if policy else None
+    release_source, source_params = _source_settings(release_source, source_params)
     try:
         cur = conn.execute(
-            "INSERT INTO ci (name, type, kind, managed, policy_id, description, attributes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, type, kind, 1 if managed else 0, policy_id, description, json.dumps(attributes or {})))
+            "INSERT INTO ci (name, type, kind, managed, release_source, source_params, require_tested, description, "
+            "attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, type, kind, 1 if managed else 0, release_source, source_params, 1 if require_tested else 0,
+             description, json.dumps(attributes or {})))
     except sqlite3.IntegrityError:
         raise Conflict(f"CI {name!r} already exists") from None
-    log(conn, "ci", cur.lastrowid, "created", name=name, type=type, kind=kind, managed=bool(managed))
+    log(conn, "ci", cur.lastrowid, "created", name=name, type=type, kind=kind, managed=bool(managed),
+        release_source=release_source)
     return get_ci(conn, cur.lastrowid)
 
 
 def update_ci(conn, ref, **fields):
-    """Update managed/kind/policy/description/attributes (e.g. adopt a placeholder)."""
+    """Update managed/kind/release source/gate/description/attributes (e.g. adopt a placeholder)."""
     ci = get_ci(conn, ref)
-    allowed = {"managed", "kind", "policy", "description", "attributes"}
+    allowed = {"managed", "kind", "release_source", "source_params", "require_tested", "description", "attributes"}
     unknown = set(fields) - allowed
     if unknown:
         raise CMError(f"cannot update {sorted(unknown)}")
     sets = {}
-    if "managed" in fields:
-        sets["managed"] = 1 if fields["managed"] else 0
+    for flag in ("managed", "require_tested"):
+        if flag in fields:
+            sets[flag] = 1 if fields[flag] else 0
     if "kind" in fields:
         if fields["kind"] not in ("simple", "composite"):
             raise CMError("kind must be simple or composite")
         sets["kind"] = fields["kind"]
-    if "policy" in fields:
-        sets["policy_id"] = get_policy(conn, fields["policy"])["id"] if fields["policy"] else None
+    if "release_source" in fields:
+        sets["release_source"] = _source_settings(fields["release_source"], None)[0]
+    if "source_params" in fields:
+        sets["source_params"] = _source_settings(None, fields["source_params"])[1]
     if "description" in fields:
         sets["description"] = fields["description"]
     if "attributes" in fields:
@@ -186,9 +181,9 @@ def update_ci(conn, ref, **fields):
 def ci_detail(conn, ref):
     ci = get_ci(conn, ref)
     out = to_dict(ci)
-    out["policy"] = to_dict(get_policy(conn, ci["policy_id"])) if ci["policy_id"] else None
     out["cscs"] = to_dicts(conn.execute("SELECT * FROM csc WHERE ci_id = ? ORDER BY name", (ci["id"],)))
     out["releases"] = list_releases(conn, ci["id"])
+    out["attention"] = ci_attention(conn, ci["id"])
     return out
 
 
@@ -220,51 +215,11 @@ def find_csc(conn, jira_project, affected_product):
                 f"CSC for ({jira_project}, {affected_product})")
 
 
-# ----------------------------------------------------------------------------- planning
-
-def plan_ci(conn, ci_ref, start=None, end=None, base_dir=None):
-    """Apply the CI's policy: create/update planned releases and version slots. Idempotent."""
-    ci = get_ci(conn, ci_ref)
-    pol = policy_for(conn, ci, base_dir)
-    start = _date(start, "start") or dt.date.today()
-    end = _date(end, "end") or add_months(start, 12, start.day if start.day <= 28 else 28)
-    try:
-        planned = pol.plan(start, end)
-    except PolicyError as e:
-        raise CMError(str(e)) from None
-
-    summary = {"ci": ci["name"], "policy": pol.type, "created_releases": [], "updated_releases": [],
-               "created_versions": [], "updated_versions": []}
-    for pr in planned:
-        rel = conn.execute("SELECT * FROM release WHERE ci_id = ? AND name = ?", (ci["id"], pr.name)).fetchone()
-        if rel is None:
-            cur = conn.execute(
-                "INSERT INTO release (ci_id, name, kind, target_date, source) VALUES (?, ?, 'planned', ?, 'policy')",
-                (ci["id"], pr.name, pr.target_date))
-            rel = get_release(conn, cur.lastrowid)
-            summary["created_releases"].append(pr.name)
-        elif rel["status"] == "planned" and pr.target_date and rel["target_date"] != pr.target_date:
-            conn.execute("UPDATE release SET target_date = ? WHERE id = ?", (pr.target_date, rel["id"]))
-            summary["updated_releases"].append(pr.name)
-
-        for pv in pr.versions:
-            ver = conn.execute("SELECT * FROM version WHERE ci_id = ? AND name = ?", (ci["id"], pv.name)).fetchone()
-            if ver is None:
-                _insert_version(conn, rel, pv.name, pv.planned_date, planned=True)
-                summary["created_versions"].append(pv.name)
-            elif ver["release_id"] != rel["id"]:
-                raise Conflict(f"version {pv.name} already belongs to another release of {ci['name']}")
-            elif ver["status"] == "planned" and pv.planned_date and ver["planned_date"] != pv.planned_date:
-                conn.execute("UPDATE version SET planned_date = ? WHERE id = ?", (pv.planned_date, ver["id"]))
-                summary["updated_versions"].append(pv.name)
-
-    rebuild_lineage(conn, ci["id"])
-    log(conn, "ci", ci["id"], "planned", start=start, end=end,
-        **{k: v for k, v in summary.items() if k.startswith(("created", "updated"))})
-    return summary
-
-
 # ----------------------------------------------------------------------------- releases & versions
+#
+# A CI's releases and builds come from its release source (see "release sources" below) or are entered by
+# hand. Either way cmtrack owns what happens to them: build status, build and release dates, the release
+# gate, manifests, lineage.
 
 def get_release(conn, release_id):
     return _one(conn, "SELECT * FROM release WHERE id = ?", (release_id,), f"release {release_id}")
@@ -280,6 +235,14 @@ def find_version(conn, ci, ref):
     col = "id" if ref.isdigit() else "name"
     return _one(conn, f"SELECT * FROM version WHERE ci_id = ? AND {col} = ?", (ci["id"], ref),
                 f"version {ref!r} of {ci['name']}")
+
+
+def find_release(conn, ci, ref):
+    """Release of ``ci`` by id or name."""
+    ref = str(ref)
+    col = "id" if ref.isdigit() else "name"
+    return _one(conn, f"SELECT * FROM release WHERE ci_id = ? AND {col} = ?", (ci["id"], ref),
+                f"release {ref!r} of {ci['name']}")
 
 
 def list_releases(conn, ci_ref):
@@ -313,36 +276,205 @@ def release_detail(conn, release_id):
     return out
 
 
-def _insert_version(conn, rel, name, planned_date=None, planned=False, status="planned"):
-    seq = conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM version WHERE release_id = ?",
-                       (rel["id"],)).fetchone()[0]
+def _next_seq(conn, release_id):
+    return conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM version WHERE release_id = ?",
+                        (release_id,)).fetchone()[0]
+
+
+def _insert_version(conn, rel, name, planned_date=None, planned=False, status="planned", source_key=None):
     try:
         cur = conn.execute(
-            "INSERT INTO version (release_id, ci_id, seq, name, status, planned, planned_date) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (rel["id"], rel["ci_id"], seq, name, status, 1 if planned else 0, planned_date))
+            "INSERT INTO version (release_id, ci_id, seq, name, status, planned, planned_date, source_key, "
+            "source_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (rel["id"], rel["ci_id"], _next_seq(conn, rel["id"]), name, status, 1 if planned else 0, planned_date,
+             source_key, "synced" if source_key else None))
     except sqlite3.IntegrityError:
         raise Conflict(f"version {name!r} already exists for this CI") from None
     log(conn, "version", cur.lastrowid, "created", release=rel["name"], name=name, planned=planned)
     return get_version(conn, cur.lastrowid)
 
 
-def add_version(conn, release_id, name=None, planned_date=None, base_dir=None):
-    """Add an ad hoc version (e.g. a 4th build after a failed candidate). Counted as variance."""
+def add_version(conn, release_id, name=None, planned_date=None):
+    """Add a build by hand (e.g. a 4th build after a failed candidate). Counted as variance on a synced CI."""
     rel = get_release(conn, release_id)
     if rel["status"] in ("released", "cancelled"):
         raise CMError(f"release {rel['name']} is {rel['status']}")
-    if not name:
-        seq = conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM version WHERE release_id = ?",
-                           (rel["id"],)).fetchone()[0]
-        name = policy_for(conn, get_ci(conn, rel["ci_id"]), base_dir).version_name(rel, seq)
-    planned_date = _date(planned_date, "planned_date")
-    ver = _insert_version(conn, rel, name, planned_date.isoformat() if planned_date else None)
+    name = (name or "").strip() or \
+        f"{rel['name']}-{'b' if rel['kind'] == 'planned' else 'r'}{_next_seq(conn, rel['id'])}"
+    ver = _insert_version(conn, rel, name, _date(planned_date, "planned_date"))
     rebuild_lineage(conn, rel["ci_id"])
     return ver
 
 
-def update_version(conn, version_id, status=None, artifact_ref=None, built_at=None):
+def _base_version(conn, ci, root, ref=None):
+    """The version a patch/emergency on ``root``'s line builds on: ``ref`` (checked), else the line's effective
+    version (None while nothing on the line is released)."""
+    if ref in (None, ""):
+        return effective_version(conn, root["id"])
+    base = find_version(conn, ci, ref)
+    if root_release(conn, base["release_id"])["id"] != root["id"]:
+        raise CMError(f"base version {base['name']} is not part of release {root['name']}")
+    if base["status"] not in RELEASED:
+        raise CMError(f"base version {base['name']} is {base['status']}, not released")
+    return base
+
+
+def create_release(conn, ci_ref, name=None, kind="planned", target_date=None, parent=None, base_version=None,
+                   reason=None, builds=None):
+    """Add a release by hand (a CI without a release source, or something the source doesn't track).
+
+    ``builds``: names (or {name, planned_date}) of its builds, in order. A patch/emergency needs the planned
+    release it patches (``parent``), gets a build named after itself unless ``builds`` says otherwise, and
+    builds on ``base_version`` (default: the line's effective version). Emergencies need a ``reason``.
+    """
+    ci = get_ci(conn, ci_ref)
+    if kind not in rsrc.KINDS:
+        raise CMError(f"kind must be one of {', '.join(rsrc.KINDS)}")
+    name, reason = (name or "").strip() or None, (reason or "").strip() or None
+    root = base = None
+    if kind == "planned":
+        if parent or base_version:
+            raise CMError("only patch and emergency releases have a parent and a base version")
+        if not name:
+            raise CMError("name is required")
+    else:
+        if not parent:
+            raise CMError(f"a {kind} release needs the planned release it patches ('parent')")
+        root = root_release(conn, find_release(conn, ci, parent)["id"])
+        if root["kind"] != "planned":
+            raise CMError(f"{root['name']} is {root['kind']}; patches go on planned releases")
+        if kind == "emergency" and not reason:
+            raise CMError("emergency releases need a reason / change request")
+        base = _base_version(conn, ci, root, base_version)
+        if not name:
+            n = conn.execute("SELECT COUNT(*) FROM release WHERE parent_id = ? AND kind = ?",
+                             (root["id"], kind)).fetchone()[0] + 1
+            name = f"{root['name']}.{'P' if kind == 'patch' else 'ER'}{n}"
+    try:
+        cur = conn.execute(
+            "INSERT INTO release (ci_id, name, kind, parent_id, base_version_id, target_date, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (ci["id"], name, kind, root and root["id"], base and base["id"], _date(target_date, "target_date"),
+             reason))
+    except sqlite3.IntegrityError:
+        raise Conflict(f"release {name!r} already exists for {ci['name']}") from None
+    rel = get_release(conn, cur.lastrowid)
+    log(conn, "release", rel["id"], "created", name=name, kind=kind, parent=root and root["name"],
+        base=base and base["name"], reason=reason)
+    if builds is None:
+        builds = [] if kind == "planned" else [name]
+    for b in builds:
+        b = b if isinstance(b, dict) else {"name": b}
+        if not str(b.get("name") or "").strip():
+            raise CMError("every build needs a name")
+        _insert_version(conn, rel, str(b["name"]).strip(), _date(b.get("planned_date"), "planned_date"))
+    rebuild_lineage(conn, ci["id"])
+    return release_detail(conn, rel["id"])
+
+
+# Fields a sync owns. Changing one by hand on a synced row pins it, so later syncs leave it alone.
+SYNCED_RELEASE_FIELDS = ("name", "kind", "target_date", "reason", "parent_id")
+SYNCED_VERSION_FIELDS = ("name", "planned_date", "release_id")
+PIN_ALIASES = {"parent": "parent_id", "base_version": "base_version_id", "release": "release_id"}
+
+
+def _label(conn, field, value):
+    """A field value as people read it (names instead of row ids)."""
+    if value is None:
+        return None
+    if field in ("parent_id", "release_id"):
+        return get_release(conn, value)["name"]
+    if field in ("base_version_id", "released_version_id"):
+        return get_version(conn, value)["name"]
+    return value
+
+
+def _pins(row, changed, pinnable, unpin):
+    pins = set(json.loads(row["pinned"] or "[]"))
+    if row["source_key"]:
+        pins |= set(changed) & set(pinnable)
+    wanted = {PIN_ALIASES.get(f, f) for f in (unpin or ())}
+    bad = wanted - set(pinnable)
+    if bad:
+        raise CMError(f"can't unpin {sorted(bad)}; pinnable fields: {list(pinnable)}")
+    return pins - wanted
+
+
+def _note(note, what):
+    note = (note or "").strip()
+    if not note:
+        raise CMError(f"correcting {what} needs a note saying why")
+    return note
+
+
+def update_release(conn, release_id, note=None, unpin=None, **fields):
+    """Correct a release by hand: name, target_date, reason, parent, base_version, released_at.
+
+    On a synced release the source-owned fields changed here are pinned (later syncs keep your value and
+    report the difference); ``unpin`` hands fields back to the source. ``released_at`` corrects when it was
+    released and needs a ``note``.
+    """
+    rel = get_release(conn, release_id)
+    ci = get_ci(conn, rel["ci_id"])
+    unknown = set(fields) - {"name", "target_date", "reason", "parent", "base_version", "released_at"}
+    if unknown:
+        raise CMError(f"cannot update {sorted(unknown)}")
+    sets = {}
+    if "name" in fields:
+        sets["name"] = str(fields["name"] or "").strip()
+        if not sets["name"]:
+            raise CMError("name can't be empty")
+    if "target_date" in fields:
+        sets["target_date"] = _date(fields["target_date"], "target_date")
+    if "reason" in fields:
+        sets["reason"] = str(fields["reason"] or "").strip() or None
+    if ("parent" in fields or "base_version" in fields) and rel["kind"] == "planned":
+        raise CMError("only patch and emergency releases have a parent and a base version")
+    root = get_release(conn, rel["parent_id"]) if rel["parent_id"] else None
+    if "parent" in fields:
+        root = root_release(conn, find_release(conn, ci, fields["parent"])["id"])
+        if root["kind"] != "planned" or root["id"] == rel["id"]:
+            raise CMError(f"{root['name']} can't be the parent of {rel['name']}")
+        sets["parent_id"] = root["id"]
+    if "base_version" in fields:
+        base = _base_version(conn, ci, root, fields["base_version"]) if fields["base_version"] else None
+        if base and base["release_id"] == rel["id"]:
+            raise CMError(f"{rel['name']} can't build on its own version")
+        sets["base_version_id"] = base and base["id"]
+    if "released_at" in fields:
+        if rel["status"] != "released":
+            raise CMError(f"{rel['name']} hasn't been released")
+        note = _note(note, "the release date")
+        sets["released_at"] = _when(fields["released_at"], "released_at")
+        built = get_version(conn, rel["released_version_id"])["built_at"] if rel["released_version_id"] else None
+        if built and sets["released_at"] < built:
+            raise CMError(f"released_at {sets['released_at']} is before the release build was built ({built})")
+
+    changes = {k: v for k, v in sets.items() if rel[k] != v}
+    pins = _pins(rel, changes, SYNCED_RELEASE_FIELDS + ("base_version_id",), unpin)
+    if changes or pins != set(json.loads(rel["pinned"])):
+        cols = {**changes, "pinned": json.dumps(sorted(pins))}
+        try:
+            conn.execute(f"UPDATE release SET {', '.join(k + ' = ?' for k in cols)} WHERE id = ?",
+                         (*cols.values(), rel["id"]))
+        except sqlite3.IntegrityError:
+            raise Conflict(f"release {sets.get('name')!r} already exists for {ci['name']}") from None
+        log(conn, "release", rel["id"], "corrected" if "released_at" in changes else "edited",
+            **{k: [_label(conn, k, rel[k]), _label(conn, k, v)] for k, v in changes.items()},
+            **({"note": note} if note else {}), **({"unpinned": list(unpin)} if unpin else {}))
+        if {"target_date", "parent_id", "base_version_id"} & set(changes):
+            rebuild_lineage(conn, ci["id"])
+    return release_detail(conn, rel["id"])
+
+
+def update_version(conn, version_id, status=None, artifact_ref=None, built_at=None, planned_date=None, name=None,
+                   note=None, unpin=None):
+    """Move a version through its states, or correct it.
+
+    ``built_at`` with ``status='built'`` records when it was built (default now); on its own it corrects the
+    build date of an already-built version and needs a ``note``. ``name`` / ``planned_date`` on a synced
+    version pin those fields (``unpin`` hands them back to the source).
+    """
     ver = get_version(conn, version_id)
     sets = {}
     if status and status != ver["status"]:
@@ -350,28 +482,58 @@ def update_version(conn, version_id, status=None, artifact_ref=None, built_at=No
             raise CMError(f"cannot move version {ver['name']} from {ver['status']} to {status}")
         sets["status"] = status
         if status == "built":
-            sets["built_at"] = built_at or now()
+            sets["built_at"] = _when(built_at, "built_at") if built_at else now()
+    elif built_at not in (None, ""):
+        if not ver["built_at"]:
+            raise CMError(f"{ver['name']} hasn't been built; set status 'built' with built_at instead")
+        note = _note(note, "the build date")
+        sets["built_at"] = _when(built_at, "built_at")
+        rel = get_release(conn, ver["release_id"])
+        if rel["released_version_id"] == ver["id"] and rel["released_at"] and sets["built_at"] > rel["released_at"]:
+            raise CMError(f"built_at {sets['built_at']} is after {rel['name']} was released ({rel['released_at']})")
     if artifact_ref is not None:
         sets["artifact_ref"] = artifact_ref
-    if sets:
-        conn.execute(f"UPDATE version SET {', '.join(k + ' = ?' for k in sets)} WHERE id = ?",
-                     (*sets.values(), ver["id"]))
-        if sets.get("status") == "built":
+    if planned_date is not None:
+        sets["planned_date"] = _date(planned_date, "planned_date")
+    if name is not None:
+        sets["name"] = str(name).strip()
+        if not sets["name"]:
+            raise CMError("name can't be empty")
+
+    changes = {k: v for k, v in sets.items() if ver[k] != v}
+    pins = _pins(ver, changes, SYNCED_VERSION_FIELDS, unpin)
+    if changes or pins != set(json.loads(ver["pinned"])):
+        cols = {**changes, "pinned": json.dumps(sorted(pins))}
+        try:
+            conn.execute(f"UPDATE version SET {', '.join(k + ' = ?' for k in cols)} WHERE id = ?",
+                         (*cols.values(), ver["id"]))
+        except sqlite3.IntegrityError:
+            raise Conflict(f"version {sets.get('name')!r} already exists for this CI") from None
+        if changes.get("status") == "built":
             conn.execute("UPDATE release SET status = 'active' WHERE id = ? AND status = 'planned'",
                          (ver["release_id"],))
-        log(conn, "version", ver["id"], "updated", **sets)
+        corrected = "built_at" in changes and "status" not in changes
+        log(conn, "version", ver["id"], "corrected" if corrected else "updated",
+            **({k: [ver[k], v] for k, v in changes.items()} if corrected else changes),
+            **({"note": note} if note else {}), **({"unpinned": list(unpin)} if unpin else {}))
     return get_version(conn, ver["id"])
 
 
-def release_version(conn, version_id, base_dir=None):
-    """Promote a version to be its release. Enforces the policy gate and composite rules."""
+def release_version(conn, version_id, released_at=None):
+    """Promote a version to be its release. Enforces the CI's gate and the composite rules.
+    ``released_at`` backdates it (default now)."""
     ver = get_version(conn, version_id)
     rel = get_release(conn, ver["release_id"])
     ci = get_ci(conn, ver["ci_id"])
     if rel["status"] in ("released", "cancelled"):
         raise CMError(f"release {rel['name']} is already {rel['status']}")
 
-    problems = policy_for(conn, ci, base_dir).release_gate(dict(ver))
+    allowed = ("tested",) if ci["require_tested"] else ("built", "tested")
+    problems = [] if ver["status"] in allowed else \
+        [f"version {ver['name']} is {ver['status']}; must be {' or '.join(allowed)}"]
+    when = _when(released_at, "released_at") if released_at else now()
+    if ver["built_at"] and when < ver["built_at"]:
+        problems.append(f"released_at {when} is before it was built ({ver['built_at']})")
     if ci["kind"] == "composite":
         children = conn.execute(
             "SELECT v.name, v.status, c.name AS ci FROM manifest_entry m "
@@ -386,8 +548,8 @@ def release_version(conn, version_id, base_dir=None):
 
     conn.execute("UPDATE version SET status = 'released' WHERE id = ?", (ver["id"],))
     conn.execute("UPDATE release SET status = 'released', released_version_id = ?, released_at = ? WHERE id = ?",
-                 (ver["id"], now(), rel["id"]))
-    log(conn, "release", rel["id"], "released", version=ver["name"])
+                 (ver["id"], when, rel["id"]))
+    log(conn, "release", rel["id"], "released", version=ver["name"], **({"at": when} if released_at else {}))
     rebuild_lineage(conn, ci["id"])
     return release_detail(conn, rel["id"])
 
@@ -424,81 +586,6 @@ def behind_effective(conn, release_id):
         "JOIN version v ON v.id = e.version_id JOIN release r ON r.id = v.release_id "
         "WHERE b.status = 'approved' AND (r.id = ? OR r.parent_id = ?) AND v.id != ? "
         "ORDER BY i.name", (root["id"], root["id"], eff["id"])))
-
-
-def spawn_release(conn, release_id, kind, reason=None, base_version=None, target_date=None, base_dir=None):
-    """Spawn a patch/emergency release on an already-promoted release.
-
-    Children always attach to the root release, so names count up per release line
-    (2026.Q4.ER1, 2026.Q4.ER2) even when spawned from a child. base_version defaults to
-    the family's effective version, so ER2 builds on ER1. Creates one version slot
-    named after the new release.
-    """
-    # Take the write lock before reading, so two concurrent spawns can't both pass the checks below.
-    if not conn.in_transaction:
-        conn.execute("BEGIN IMMEDIATE")
-    root = root_release(conn, release_id)
-    ci = get_ci(conn, root["ci_id"])
-    pol = policy_for(conn, ci, base_dir)
-    reason = (reason or "").strip() or None
-    if kind not in pol["spawn_kinds"]:
-        raise CMError(f"{kind!r} releases not allowed by policy (allowed: {pol['spawn_kinds']})")
-    if kind == "emergency" and not reason:
-        raise CMError("emergency releases require a reason / change request")
-    if root["status"] != "released":
-        raise CMError(f"release {root['name']} has not been promoted yet; "
-                      f"spawn the {kind} from the latest released release instead")
-
-    # Guard 1: same change request on the same release line -> return the existing one (idempotent).
-    if reason:
-        existing = conn.execute(
-            "SELECT id FROM release WHERE parent_id = ? AND kind = ? AND reason = ? AND status != 'cancelled'",
-            (root["id"], kind, reason)).fetchone()
-        if existing:
-            out = release_detail(conn, existing["id"])
-            out["spawned"] = False
-            return out
-
-    if base_version is not None:
-        base = find_version(conn, ci, base_version)
-        family = root_release(conn, base["release_id"])["id"]
-        if family != root["id"]:
-            raise CMError(f"base version {base['name']} is not part of release {root['name']}")
-        if base["status"] not in RELEASED:
-            raise CMError(f"base version {base['name']} is {base['status']}, not released")
-    else:
-        base = effective_version(conn, root["id"])
-
-    # Guard 2: limit concurrently open children of this kind (default 1); cancel an abandoned one first.
-    limit = (pol["max_open"] or {}).get(kind)
-    if limit is not None:
-        open_ = conn.execute(
-            "SELECT name, reason FROM release WHERE parent_id = ? AND kind = ? AND status IN ('planned', 'active')",
-            (root["id"], kind)).fetchall()
-        if len(open_) >= limit:
-            raise Conflict(f"{root['name']} already has {len(open_)} open {kind} release(s); "
-                           f"finish or cancel before spawning another",
-                           [f"{r['name']} ({r['reason'] or 'no reason'})" for r in open_])
-
-    parent = root
-    n = conn.execute("SELECT COUNT(*) FROM release WHERE parent_id = ? AND kind = ?",
-                     (root["id"], kind)).fetchone()[0] + 1
-    name = pol.child_release_name(kind, root["name"], base["name"], n)
-    target = _date(target_date, "target_date")
-    try:
-        cur = conn.execute(
-            "INSERT INTO release (ci_id, name, kind, parent_id, base_version_id, target_date, reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (ci["id"], name, kind, parent["id"], base["id"], target.isoformat() if target else None, reason))
-    except sqlite3.IntegrityError:
-        raise Conflict(f"release {name!r} or an open {kind} for {reason!r} already exists") from None
-    rel = get_release(conn, cur.lastrowid)
-    log(conn, "release", rel["id"], "spawned", kind=kind, parent=parent["name"], base=base["name"], reason=reason)
-    _insert_version(conn, rel, name, rel["target_date"])
-    rebuild_lineage(conn, ci["id"])
-    out = release_detail(conn, rel["id"])
-    out["spawned"] = True
-    return out
 
 
 def cancel_release(conn, release_id, note=None):
@@ -581,7 +668,8 @@ def rebuild_lineage(conn, ci_id):
     - a build's parent is the previous build of its release;
     - the first build of a patch/emergency builds on its base version;
     - the first build of a planned release builds on the previous planned release's head
-      (cancelled releases are skipped). External (scraped) versions have no lineage.
+      (cancelled releases are skipped, and so are ones gone from the release source that never got a real
+      build). External (scraped) versions have no lineage.
     """
     auto = {r[0] for r in conn.execute("SELECT id FROM version WHERE ci_id = ? AND lineage = 'auto'", (ci_id,))}
     by_release = {}
@@ -600,7 +688,9 @@ def rebuild_lineage(conn, ci_id):
     for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND kind = 'planned' "
                             "ORDER BY target_date IS NULL, target_date, id", (ci_id,)).fetchall():
         chain(rel, prev_head)
-        if rel["status"] != "cancelled":
+        phantom = rel["source_state"] == "missing" and not conn.execute(
+            "SELECT 1 FROM version WHERE release_id = ? AND status NOT IN ('planned', 'rejected')", (rel["id"],)).fetchone()
+        if rel["status"] != "cancelled" and not phantom:
             head = release_head(conn, rel)
             prev_head = head["id"] if head else prev_head
     for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND parent_id IS NOT NULL", (ci_id,)).fetchall():
@@ -752,6 +842,406 @@ def unabsorbed_fixes(conn, release_id):
         "WHERE r.ci_id = ? AND r.status = 'released' AND root.target_date < ? ORDER BY r.released_at",
         (rel["ci_id"], rel["target_date"]))
     return [dict(r) for r in rows if r["id"] not in have]
+
+
+# ----------------------------------------------------------------------------- release sources (sync)
+#
+# A sync asks the CI's release source for everything and reconciles by the source's key: new items are
+# created, known ones updated (except pinned fields), a same-named row entered by hand is adopted (or re-keyed
+# when its old key is gone from the source entirely), and rows the source no longer lists become 'missing'. Nothing is deleted or guessed; people fix what doesn't line up
+# (remap, detach, cancel, pin) from the CI's "Needs attention" list.
+
+class SourceError(CMError):
+    """The ticket or release source failed (it's outside our control): HTTP 502 / an alert in the page."""
+    status = 502
+
+
+def _issue(key, name, why):
+    return {"key": None if key is None else str(key), "name": name, "why": why}
+
+
+def _source_records(source, ci, params):
+    """(release records, issues) from the source, with bad records turned into issues."""
+    try:
+        items = list(source.releases(ci, params) or [])
+    except rsrc.SourceConfigError as e:
+        raise CMError(f"release source {source.name!r}: {e}") from None
+    except CMError:
+        raise
+    except NotImplementedError:
+        raise CMError(f"release source {source.name!r} doesn't implement releases()") from None
+    except Exception as e:
+        raise SourceError(f"release source {source.name!r} failed: {e}") from e
+
+    records, issues = [], []
+    for it in items:
+        if isinstance(it, rsrc.Unplaced):
+            issues.append(_issue(it.key, it.name, it.why))
+            continue
+        try:
+            rec = it if isinstance(it, rsrc.ReleaseRecord) else rsrc.ReleaseRecord.from_dict(it)
+            rec.key, rec.name = str(rec.key or "").strip(), str(rec.name or "").strip()
+            rec.target_date = _date(rec.target_date, f"date of {rec.name}")
+            for b in rec.builds:
+                b.key, b.name = str(b.key or "").strip(), str(b.name or "").strip()
+                b.planned_date = _date(b.planned_date, f"date of {b.name}")
+        except (TypeError, ValueError, CMError) as e:
+            issues.append(_issue(None, str(getattr(it, "name", it))[:80], f"unreadable record: {e}"))
+            continue
+        records.append(rec)
+
+    planned_keys = {r.key for r in records if r.kind == "planned"}
+    good, keys, names, bkeys, bnames = [], set(), set(), set(), set()
+    for rec in records:
+        why = ("missing key or name" if not (rec.key and rec.name) else
+               f"unknown kind {rec.kind!r}" if rec.kind not in rsrc.KINDS else
+               f"duplicate key {rec.key}" if rec.key in keys else
+               "duplicate name" if rec.name in names else
+               f"{rec.kind} whose planned release ({rec.parent_key}) the source didn't list"
+               if rec.kind != "planned" and rec.parent_key not in planned_keys else None)
+        if why:
+            issues.append(_issue(rec.key, rec.name, why))
+            continue
+        keys.add(rec.key)
+        names.add(rec.name)
+        builds = []
+        for b in rec.builds:
+            if not (b.key and b.name) or b.key in bkeys or b.name in bnames:
+                issues.append(_issue(b.key, b.name, f"build of {rec.name} with a missing or duplicate key or name"))
+                continue
+            bkeys.add(b.key)
+            bnames.add(b.name)
+            builds.append(b)
+        rec.builds = builds
+        good.append(rec)
+    return good, issues
+
+
+def _adopt_or_find(conn, table, ci_id, key, name, listed, summary):
+    """The row with this source key. Failing that, the row with the same name if it was entered by hand
+    (adopted) or its own key is no longer listed at all (re-keyed: deleted and re-created in the source)."""
+    row = conn.execute(f"SELECT * FROM {table} WHERE ci_id = ? AND source_key = ?", (ci_id, key)).fetchone()
+    if row is not None:
+        return row
+    not_external = ("r.kind != 'external'" if table == "release" else
+                    "release_id NOT IN (SELECT id FROM release WHERE kind = 'external')")
+    row = conn.execute(f"SELECT * FROM {table} r WHERE ci_id = ? AND name = ? AND {not_external}",
+                       (ci_id, name)).fetchone()
+    if row is None or (row["source_key"] is not None and row["source_key"] in listed):
+        return None
+    extra = ", source = 'sync'" if table == "release" else ", planned = 1"
+    conn.execute(f"UPDATE {table} SET source_key = ?, source_state = 'synced'{extra} WHERE id = ?", (key, row["id"]))
+    if row["source_key"] is None:
+        log(conn, table, row["id"], "adopted", source_key=key)
+        summary["adopted"].append(name)
+    else:
+        log(conn, table, row["id"], "rekeyed", was=row["source_key"], source_key=key)
+        summary["rekeyed"].append(name)
+    return conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row["id"],)).fetchone()
+
+
+def _apply(conn, table, row, values, summary):
+    """Write the source's values to an existing row, except pinned fields (reported instead)."""
+    pins = set(json.loads(row["pinned"] or "[]"))
+    changes = {}
+    for f, new in values.items():
+        if row[f] == new:
+            continue
+        if f in pins:
+            summary["pinned"].append({"name": row["name"], "field": f, "source": _label(conn, f, new),
+                                      "kept": _label(conn, f, row[f])})
+            continue
+        changes[f] = new
+    readable = {f: [_label(conn, f, row[f]), _label(conn, f, v)] for f, v in changes.items()}
+    if "release_id" in changes:
+        changes["seq"] = _next_seq(conn, changes["release_id"])
+    restored = row["source_state"] != "synced"
+    if restored:
+        changes["source_state"] = "synced"
+    if changes:
+        conn.execute(f"UPDATE {table} SET {', '.join(k + ' = ?' for k in changes)} WHERE id = ?",
+                     (*changes.values(), row["id"]))
+    name = changes.get("name", row["name"])
+    if readable:
+        log(conn, table, row["id"], "synced", **readable)
+        summary["updated"].append({"name": name, "changes": readable})
+    if restored:
+        log(conn, table, row["id"], "restored")
+        summary["restored"].append(name)
+    return conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row["id"],)).fetchone()
+
+
+def sync_ci(conn, source, ci_ref, dry_run=False):
+    """Reconcile the CI's releases and builds with its release source. Idempotent; returns what happened.
+    ``dry_run`` works it all out and rolls it back."""
+    ci = get_ci(conn, ci_ref)
+    if not ci["release_source"]:
+        raise CMError(f"{ci['name']} has no release source; its releases are managed by hand")
+    if source is None:
+        raise CMError(f"release source {ci['release_source']!r} is not configured (set CMTRACK_RELEASE_SOURCES)")
+    records, issues = _source_records(source, to_dict(ci), json.loads(ci["source_params"] or "{}"))
+    summary = {"ci": ci["name"], "source": ci["release_source"], "at": now(), "dry_run": bool(dry_run),
+               "created": [], "updated": [], "adopted": [], "rekeyed": [], "restored": [], "missing": [], "pinned": [],
+               "bases": [], "issues": issues}
+    conn.execute("SAVEPOINT sync")
+    try:
+        _sync(conn, ci, records, summary)
+        rebuild_lineage(conn, ci["id"])
+        counts = {k: len(summary[k]) for k in ("created", "updated", "adopted", "rekeyed", "restored", "missing",
+                                               "issues")}
+        summary["counts"] = counts
+        conn.execute("UPDATE ci SET last_sync = ? WHERE id = ?",
+                     (json.dumps({k: v for k, v in summary.items() if k not in ("ci", "dry_run")}), ci["id"]))
+        log(conn, "ci", ci["id"], "synced", source=ci["release_source"], **counts)
+    except BaseException:
+        conn.execute("ROLLBACK TO sync")
+        conn.execute("RELEASE sync")
+        raise
+    if dry_run:
+        conn.execute("ROLLBACK TO sync")
+    conn.execute("RELEASE sync")
+    return summary
+
+
+def _sync(conn, ci, records, summary):
+    seen = {"release": set(), "version": set()}
+    rel_ids = {}
+    listed = {"release": {r.key for r in records}, "version": {b.key for r in records for b in r.builds}}
+    for rec in sorted(records, key=lambda r: r.kind != "planned"):          # planned first: children need them
+        parent_id = None
+        if rec.kind != "planned":
+            parent_id = rel_ids.get(rec.parent_key)
+            if parent_id is None:
+                summary["issues"].append(_issue(rec.key, rec.name, "its planned release couldn't be synced"))
+                continue
+        values = {"name": rec.name, "kind": rec.kind, "target_date": rec.target_date,
+                  "reason": (rec.reason or "").strip() or None, "parent_id": parent_id}
+        try:
+            rel = _adopt_or_find(conn, "release", ci["id"], rec.key, rec.name, listed["release"], summary)
+            if rel is None:
+                cur = conn.execute(
+                    "INSERT INTO release (ci_id, name, kind, target_date, reason, parent_id, source, source_key, "
+                    "source_state) VALUES (?, ?, ?, ?, ?, ?, 'sync', ?, 'synced')",
+                    (ci["id"], *values.values(), rec.key))
+                rel = get_release(conn, cur.lastrowid)
+                log(conn, "release", rel["id"], "created", name=rec.name, kind=rec.kind, source_key=rec.key)
+                summary["created"].append(rec.name)
+            else:
+                rel = _apply(conn, "release", rel, values, summary)
+        except sqlite3.IntegrityError:
+            summary["issues"].append(_issue(rec.key, rec.name, f"another release of {ci['name']} already has this name"))
+            continue
+        rel_ids[rec.key] = rel["id"]
+        seen["release"].add(rel["id"])
+        if rec.released and rel["status"] != "released":
+            summary["issues"].append(_issue(rec.key, rec.name, "the source says it's released; cmtrack hasn't released it"))
+
+        for b in rec.builds:
+            try:
+                ver = _adopt_or_find(conn, "version", ci["id"], b.key, b.name, listed["version"], summary)
+                if ver is None:
+                    ver = _insert_version(conn, rel, b.name, b.planned_date, planned=True, source_key=b.key)
+                    summary["created"].append(b.name)
+                else:
+                    values = {"name": b.name, "planned_date": b.planned_date, "release_id": rel["id"]}
+                    if ver["release_id"] != rel["id"] and ver["status"] != "planned":
+                        summary["issues"].append(_issue(b.key, b.name, f"the source moved it to {rel['name']}, but it's "
+                                                        f"already {ver['status']} in {_label(conn, 'release_id', ver['release_id'])}"))
+                        del values["release_id"]
+                    ver = _apply(conn, "version", ver, values, summary)
+            except (sqlite3.IntegrityError, Conflict):
+                summary["issues"].append(_issue(b.key, b.name, f"another version of {ci['name']} already has this name"))
+                continue
+            seen["version"].add(ver["id"])
+
+    for table in ("release", "version"):
+        for row in conn.execute(f"SELECT id, name FROM {table} WHERE ci_id = ? AND source_state = 'synced'",
+                                (ci["id"],)).fetchall():
+            if row["id"] not in seen[table]:
+                conn.execute(f"UPDATE {table} SET source_state = 'missing' WHERE id = ?", (row["id"],))
+                log(conn, table, row["id"], "missing_from_source")
+                summary["missing"].append(row["name"])
+
+    # a patch/emergency builds on its line's effective version, filled in once something there is released
+    for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND parent_id IS NOT NULL AND base_version_id IS NULL "
+                            "AND status != 'cancelled'", (ci["id"],)).fetchall():
+        if "base_version_id" in json.loads(rel["pinned"]):
+            continue
+        eff = effective_version(conn, rel["parent_id"])
+        if eff and eff["release_id"] != rel["id"]:
+            conn.execute("UPDATE release SET base_version_id = ? WHERE id = ?", (eff["id"], rel["id"]))
+            log(conn, "release", rel["id"], "based", base=eff["name"])
+            summary["bases"].append({"name": rel["name"], "base": eff["name"]})
+
+
+def _in_use(conn, table, row_id):
+    """Why a row can't be folded away by a remap (empty when it's a fresh, untouched sync result)."""
+    vids = [row_id] if table == "version" else         [r[0] for r in conn.execute("SELECT id FROM version WHERE release_id = ?", (row_id,))]
+    ids = ",".join("?" * len(vids))
+    hit = lambda sql, n=1: bool(vids) and conn.execute(sql.format(ids=ids), vids * n).fetchone() is not None
+    why = []
+    if hit("SELECT 1 FROM version WHERE id IN ({ids}) AND status != 'planned'"):
+        why.append("has builds that were already built or rejected")
+    if table == "release" and conn.execute("SELECT 1 FROM release WHERE parent_id = ?", (row_id,)).fetchone():
+        why.append("has patch or emergency releases")
+    if hit("SELECT 1 FROM baseline_entry WHERE version_id IN ({ids})"):
+        why.append("is in a baseline")
+    if hit("SELECT 1 FROM manifest_entry WHERE parent_version_id IN ({ids}) OR child_version_id IN ({ids})", 2):
+        why.append("is in a composite manifest")
+    if hit("SELECT 1 FROM release WHERE base_version_id IN ({ids})"):
+        why.append("is the base of a patch or emergency")
+    if hit("SELECT 1 FROM version WHERE id IN ({ids}) AND lineage = 'manual'") or hit(
+            "SELECT 1 FROM version_parent p JOIN version v ON v.id = p.version_id "
+            "WHERE p.parent_id IN ({ids}) AND v.lineage = 'manual'"):
+        why.append("has hand-set lineage")
+    return why
+
+
+def _drop_unused(conn, table, row):
+    vids = [row["id"]] if table == "version" else \
+        [r[0] for r in conn.execute("SELECT id FROM version WHERE release_id = ?", (row["id"],))]
+    marks = ",".join("?" * len(vids))
+    if vids:
+        conn.execute(f"DELETE FROM version_parent WHERE version_id IN ({marks}) OR parent_id IN ({marks})", vids + vids)
+        conn.execute(f"DELETE FROM version WHERE id IN ({marks})", vids)
+    if table == "release":
+        conn.execute("DELETE FROM release WHERE id = ?", (row["id"],))
+
+
+def _take_over(conn, table, old, new, fields, extra=None):
+    """``old`` takes ``new``'s source identity and (unpinned) source fields."""
+    pins = set(json.loads(old["pinned"] or "[]"))
+    sets = {f: new[f] for f in fields if f not in pins}
+    sets.update(source_key=new["source_key"], source_state="synced", **(extra or {}))
+    if table == "version" and sets.get("release_id", old["release_id"]) != old["release_id"]:
+        sets["seq"] = _next_seq(conn, sets["release_id"])
+    conn.execute(f"UPDATE {table} SET {', '.join(k + ' = ?' for k in sets)} WHERE id = ?", (*sets.values(), old["id"]))
+
+
+def remap_release(conn, release_id, to):
+    """``release_id`` is what the source now calls ``to`` (e.g. after a rename in Jira): it takes over ``to``'s
+    source key, name and dates, and its builds by position; ``to``, a fresh release the sync just created, is
+    deleted. Everything attached to ``release_id`` (builds, patches, baselines, lineage) stays attached."""
+    old = get_release(conn, release_id)
+    ci = get_ci(conn, old["ci_id"])
+    new = find_release(conn, ci, to)
+    if new["id"] == old["id"]:
+        raise CMError("a release can't be remapped to itself")
+    if not new["source_key"]:
+        raise CMError(f"{new['name']} isn't from the release source; there's nothing to remap to")
+    busy = _in_use(conn, "release", new["id"])
+    if busy:
+        raise Conflict(f"{new['name']} is already in use, so {old['name']} can't take it over", busy)
+    new_versions = conn.execute("SELECT * FROM version WHERE release_id = ? ORDER BY seq", (new["id"],)).fetchall()
+    old_versions = conn.execute("SELECT * FROM version WHERE release_id = ? ORDER BY seq", (old["id"],)).fetchall()
+    _drop_unused(conn, "release", new)
+    try:
+        parent = {"parent_id": new["parent_id"]} if new["parent_id"] != old["id"] else {}
+        _take_over(conn, "release", old, new, ("name", "kind", "target_date", "reason"), {"source": "sync", **parent})
+        for i, nv in enumerate(new_versions):
+            if i < len(old_versions):
+                _take_over(conn, "version", old_versions[i], nv, ("name", "planned_date"), {"planned": 1})
+            else:
+                _insert_version(conn, get_release(conn, old["id"]), nv["name"], nv["planned_date"], planned=True,
+                                source_key=nv["source_key"])
+        for ov in old_versions[len(new_versions):]:
+            if ov["source_key"]:
+                conn.execute("UPDATE version SET source_state = 'missing' WHERE id = ?", (ov["id"],))
+    except sqlite3.IntegrityError as e:
+        raise Conflict(f"can't remap {old['name']} to {new['name']}: {e}") from None
+    log(conn, "release", old["id"], "remapped", was=old["name"], to=new["name"], source_key=new["source_key"])
+    rebuild_lineage(conn, ci["id"])
+    return release_detail(conn, old["id"])
+
+
+def remap_version(conn, version_id, to):
+    """Like remap_release, for one build: ``version_id`` takes over ``to`` (a fresh synced build), which is deleted."""
+    old = get_version(conn, version_id)
+    ci = get_ci(conn, old["ci_id"])
+    new = find_version(conn, ci, to)
+    if new["id"] == old["id"]:
+        raise CMError("a version can't be remapped to itself")
+    if not new["source_key"]:
+        raise CMError(f"{new['name']} isn't from the release source; there's nothing to remap to")
+    busy = _in_use(conn, "version", new["id"])
+    if busy:
+        raise Conflict(f"{new['name']} is already in use, so {old['name']} can't take it over", busy)
+    if new["release_id"] != old["release_id"] and old["status"] != "planned":
+        raise CMError(f"{old['name']} is {old['status']} in {_label(conn, 'release_id', old['release_id'])}; "
+                      f"it can't move to {_label(conn, 'release_id', new['release_id'])}")
+    _drop_unused(conn, "version", new)
+    try:
+        _take_over(conn, "version", old, new, ("name", "planned_date", "release_id"), {"planned": 1})
+    except sqlite3.IntegrityError as e:
+        raise Conflict(f"can't remap {old['name']} to {new['name']}: {e}") from None
+    log(conn, "version", old["id"], "remapped", was=old["name"], to=new["name"], source_key=new["source_key"])
+    rebuild_lineage(conn, ci["id"])
+    return get_version(conn, old["id"])
+
+
+def detach_release(conn, release_id):
+    """Stop syncing a release (and its builds): it stays, as if entered by hand. For things gone from the source."""
+    rel = get_release(conn, release_id)
+    conn.execute("UPDATE release SET source_key = NULL, source_state = NULL, source = 'manual', pinned = '[]' "
+                 "WHERE id = ?", (rel["id"],))
+    conn.execute("UPDATE version SET source_key = NULL, source_state = NULL, pinned = '[]' WHERE release_id = ?",
+                 (rel["id"],))
+    log(conn, "release", rel["id"], "detached", source_key=rel["source_key"])
+    rebuild_lineage(conn, rel["ci_id"])
+    return release_detail(conn, rel["id"])
+
+
+def detach_version(conn, version_id):
+    ver = get_version(conn, version_id)
+    conn.execute("UPDATE version SET source_key = NULL, source_state = NULL, pinned = '[]' WHERE id = ?", (ver["id"],))
+    log(conn, "version", ver["id"], "detached", source_key=ver["source_key"])
+    return get_version(conn, ver["id"])
+
+
+def ci_attention(conn, ci_ref):
+    """What needs a person on this CI: what the last sync couldn't place, things missing from the source,
+    patches without a base version, emergencies without a reason, more than one open patch/emergency per line."""
+    ci = get_ci(conn, ci_ref)
+    out = []
+    add = lambda level, kind, name, text, **ids: out.append({"level": level, "kind": kind, "name": name,
+                                                             "text": text, **ids})
+    for i in (json.loads(ci["last_sync"]) if ci["last_sync"] else {}).get("issues", []):
+        add("warning", "unplaced", i["name"], i["why"], key=i["key"])
+    for r in conn.execute("SELECT id, name FROM release WHERE ci_id = ? AND source_state = 'missing' "
+                          "AND status != 'cancelled' ORDER BY id", (ci["id"],)):
+        add("danger", "missing_release", r["name"], "no longer in the release source", release_id=r["id"])
+    for v in conn.execute("SELECT v.id, v.name, r.name AS release FROM version v JOIN release r ON r.id = v.release_id "
+                          "WHERE v.ci_id = ? AND v.source_state = 'missing' AND v.status != 'rejected' "
+                          "AND r.status != 'cancelled' AND COALESCE(r.source_state, '') != 'missing' ORDER BY v.id",
+                          (ci["id"],)):
+        add("danger", "missing_version", v["name"], f"build of {v['release']} no longer in the release source",
+            version_id=v["id"])
+    for r in conn.execute("SELECT id, name, kind, reason, base_version_id FROM release WHERE ci_id = ? "
+                          "AND parent_id IS NOT NULL AND status IN ('planned', 'active') ORDER BY id", (ci["id"],)):
+        if r["base_version_id"] is None:
+            add("warning", "no_base", r["name"], "no base version yet: nothing on its line is released, or set one",
+                release_id=r["id"])
+        if r["kind"] == "emergency" and not r["reason"]:
+            add("warning", "no_reason", r["name"], "emergency with no reason / change request", release_id=r["id"])
+    for r in conn.execute("SELECT p.name, c.kind, COUNT(*) AS n FROM release c JOIN release p ON p.id = c.parent_id "
+                          "WHERE c.ci_id = ? AND c.status IN ('planned', 'active') GROUP BY p.id, c.kind HAVING n > 1",
+                          (ci["id"],)):
+        add("warning", "open_children", r["name"], f"{r['n']} open {r['kind']} releases on this line")
+    return out
+
+
+def remap_candidates(conn, ci_ref):
+    """Fresh synced releases and builds a missing one could be remapped to: {"releases": [...], "versions": [...]}."""
+    ci = get_ci(conn, ci_ref)
+    rels = [dict(r) for r in conn.execute("SELECT id, name, kind FROM release WHERE ci_id = ? AND source_state = 'synced' "
+                                          "AND status = 'planned' ORDER BY id DESC", (ci["id"],))
+            if not _in_use(conn, "release", r["id"])]
+    vers = [dict(v) for v in conn.execute("SELECT v.id, v.name, r.name AS release FROM version v "
+                                          "JOIN release r ON r.id = v.release_id WHERE v.ci_id = ? "
+                                          "AND v.source_state = 'synced' AND v.status = 'planned' ORDER BY v.id DESC",
+                                          (ci["id"],))
+            if not _in_use(conn, "version", v["id"])]
+    return {"releases": rels, "versions": vers}
 
 
 # ----------------------------------------------------------------------------- IFCs
@@ -983,10 +1473,6 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
 #
 # Tickets are not stored here: the TicketSource is the system of record and is asked on every request
 # (it may cache if it wants to). cmtrack contributes the version set (lineage ranges) and the CSC mapping.
-
-class SourceError(CMError):
-    status = 502
-
 
 def _ask(source, method, *args):
     """Call a TicketSource method; normalize records; turn source failures into a 502 CMError."""

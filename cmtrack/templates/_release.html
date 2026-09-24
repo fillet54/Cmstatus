@@ -10,11 +10,15 @@
                     ("Released at", ui.timestamp(r.released_at)),
                     ("Released version", ui.ident(r.released_version) if r.released_version else "—"),
                     ("Effective version", ui.ident(r.effective_version) if r.effective_version else "—")] %}
-  {% if r.parent %}{% set _ = details.append(("Spawned from", ui.ident(r.parent, href=url_for('ui.release', rid=r.parent_id)))) %}{% endif %}
+  {% if r.parent %}{% set _ = details.append(("Patches", ui.ident(r.parent, href=url_for('ui.release', rid=r.parent_id)))) %}{% endif %}
   {% if r.base_version %}{% set _ = details.append(("Built on", ui.ident(r.base_version))) %}{% endif %}
   {% if r.reason %}{% set _ = details.append(("Reason / CR", ui.ident(r.reason))) %}{% endif %}
-  {% set _ = details.append(("Source", r.source)) %}
-  {% call ui.card_section() %}{{ ui.dl(details, cols=True) }}{% endcall %}
+  {% set _ = details.append(("Source", ui.source_state(r, ci_row.release_source))) %}
+  {% set here = url_for('ui.release', rid=r.id) if standalone else url_for('ui.ci', ref=r.ci) %}
+  {% call ui.card_section() %}
+    {{ ui.dl(details, cols=True) }}
+    {% if r.pinned %}<div class="ui-row" style="--ui-gap: 6px; margin-top: 10px;"><span class="ui-muted" style="font-size: 12px;">Set by hand:</span>{{ ui.pinned(r.pinned, url_for('ui.unpin_release', rid=r.id), here) }}</div>{% endif %}
+  {% endcall %}
 
   {% if built_from or r.unabsorbed %}
   {% call ui.card_section("Built from") %}
@@ -44,7 +48,9 @@
       {% for v in r.versions %}
       <tr>
         <td>{{ ui.version_glyph(v.status) }} {{ ui.ident(v.name, href=url_for('ui.version', vid=v.id), plain=True) }}
-          {%- if not v.planned and r.kind == "planned" %} {{ ui.badge("ad hoc", "warning", outline=True) }}{% endif %}</td>
+          {%- if v.source_state == "missing" %} {{ ui.badge("missing", "danger", outline=True) }}
+          {%- elif not v.planned and r.kind == "planned" and ci_row.release_source %} {{ ui.badge("ad hoc", "warning", outline=True) }}{% endif %}
+          {%- if v.pinned %} <span class="ui-muted" title="set by hand: {{ v.pinned | join(', ') }}">{{ ui.icon("pin", 12) }}</span>{% endif %}</td>
         <td>{{ ui_version_statuses.get(v.status, v.status) }}</td>
         <td class="ui-mono">{% if v.built_at %}<span title="built {{ v.built_at | utc }}">{{ (v.built_at | utc)[:10] }}</span>
           {%- elif v.planned_date %}<span class="ui-muted" title="planned date">{{ v.planned_date }} (plan)</span>{% endif %}</td>
@@ -75,6 +81,51 @@
                    href=url_for('ui.work', ref=r.ci, to=work_range.to, **({'from': work_range['from']} if work_range['from'] else {}))) }}
       <span class="ui-mono ui-muted" style="font-size: 12px;">{{ work_range['from'] or "start" }}..{{ work_range.to }}</span>
     </div>
+  {% endcall %}
+  {% endif %}
+
+  {% if r.status not in ("released", "cancelled") %}
+  {% call ui.disclosure("Add a build", "by hand" if r.source_key else None) %}
+    <form class="ui-row" style="--ui-gap: 8px; align-items: flex-end;" method="post" hx-push-url="false" action="{{ url_for('ui.add_build', rid=r.id) }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      {% call ui.field("Name", "ab-name-" ~ r.id, hint="blank: next in sequence") %}{{ ui.input("name", id="ab-name-" ~ r.id, mono=True) }}{% endcall %}
+      {% call ui.field("Planned date", "ab-date-" ~ r.id) %}{{ ui.input("planned_date", type="date", id="ab-date-" ~ r.id) }}{% endcall %}
+      {{ ui.button("Add build", type="submit", icon="plus") }}
+    </form>
+  {% endcall %}
+  {% endif %}
+
+  {% call ui.disclosure("Edit", "changes are pinned against syncs" if r.source_key else None) %}
+    <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.edit_release', rid=r.id) }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      <div class="ui-form-grid">
+        {% call ui.field("Name", "er-name-" ~ r.id) %}{{ ui.input("name", r.name, id="er-name-" ~ r.id, mono=True, required=True) }}{% endcall %}
+        {% call ui.field("Target date", "er-date-" ~ r.id) %}{{ ui.input("target_date", r.target_date, type="date", id="er-date-" ~ r.id) }}{% endcall %}
+        {% call ui.field("Reason / CR", "er-reason-" ~ r.id) %}{{ ui.input("reason", r.reason, id="er-reason-" ~ r.id, mono=True) }}{% endcall %}
+        {% if r.kind != "planned" %}
+          {% call ui.field("Patches", "er-parent-" ~ r.id) %}{{ ui.select("parent", options.parents, r.parent, id="er-parent-" ~ r.id, mono=True) }}{% endcall %}
+          {% call ui.field("Builds on", "er-base-" ~ r.id) %}{{ ui.select("base_version", [("", "— not set")] + options.bases, r.base_version or "", id="er-base-" ~ r.id, mono=True) }}{% endcall %}
+        {% endif %}
+      </div>
+      <div class="ui-row">{{ ui.button("Save", type="submit") }}</div>
+    </form>
+    {% if r.status in ("planned", "active") %}
+    <form class="ui-row" style="--ui-gap: 8px; margin-top: 14px; align-items: flex-end;" method="post" hx-push-url="false" action="{{ url_for('ui.cancel_release', rid=r.id) }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      {% call ui.field("Cancel this release", "cr-note-" ~ r.id, hint="its unfinished builds are rejected") %}{{ ui.input("note", id="cr-note-" ~ r.id, placeholder="why") }}{% endcall %}
+      {{ ui.button("Cancel release", type="submit", cls="ui-btn--danger") }}
+    </form>
+    {% endif %}
+  {% endcall %}
+
+  {% if r.status == "released" %}
+  {% call ui.disclosure("Correct the release date", "recorded " ~ (r.released_at | utc)) %}
+    <form class="ui-row" style="--ui-gap: 8px; align-items: flex-end;" method="post" hx-push-url="false" action="{{ url_for('ui.correct_release', rid=r.id) }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      {% call ui.field("Released at (UTC)", "rr-at-" ~ r.id, hint="YYYY-MM-DD or YYYY-MM-DD HH:MM") %}{{ ui.input("released_at", r.released_at | utc, id="rr-at-" ~ r.id, mono=True, required=True) }}{% endcall %}
+      {% call ui.field("Why", "rr-note-" ~ r.id) %}{{ ui.input("note", id="rr-note-" ~ r.id, required=True, placeholder="recorded on the wrong day") }}{% endcall %}
+      {{ ui.button("Correct", type="submit") }}
+    </form>
   {% endcall %}
   {% endif %}
 

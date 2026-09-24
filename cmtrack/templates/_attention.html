@@ -1,0 +1,48 @@
+{#- The CI page's "Needs attention" card: service.ci_attention items, with the fixes for each kind. -#}
+{% import "ui/components.html" as ui %}
+{% call ui.card(flush=True, attrs={"aria-label": "Needs attention"}) %}
+  {% call ui.card_header("Needs attention", "things the release source and cmtrack disagree on; fix them here or in " ~ (ci.release_source or "the release")) %}{{ ui.badge(ci.attention | length, "warning") }}{% endcall %}
+  {% call ui.table(["", "Item", "Problem", {"label": "Fix", "align": "end"}], dense=True) %}
+    {% set here = url_for('ui.ci', ref=ci.name) %}
+    {% for a in ci.attention %}
+    <tr>
+      <td style="width: 1%;">{{ ui.icon("alert-circle" if a.level == "danger" else "alert-triangle", 16, cls="ui-tone-" ~ a.level, label=a.level) }}</td>
+      <td>{% if a.release_id %}{{ ui.ident(a.name, href=url_for('ui.release', rid=a.release_id), plain=True) }}
+          {%- elif a.version_id %}{{ ui.ident(a.name, href=url_for('ui.version', vid=a.version_id), plain=True) }}
+          {%- else %}{{ ui.ident(a.name, plain=True) }}{% if a.key %} <span class="ui-muted ui-mono" style="font-size: 12px;">{{ a.key }}</span>{% endif %}{% endif %}</td>
+      <td style="white-space: normal;">{{ a.text }}</td>
+      <td class="ui-end">
+        {% if a.kind == "missing_release" %}
+          <div class="ui-row" style="--ui-gap: 6px; justify-content: flex-end;">
+            {% if candidates and candidates.releases %}
+            <form method="post" hx-push-url="false" action="{{ url_for('ui.remap_release', rid=a.release_id) }}" class="ui-row" style="--ui-gap: 4px;">
+              <input type="hidden" name="next" value="{{ here }}">
+              {{ ui.select("to", candidates.releases | map(attribute="name") | list, id="remap-r" ~ a.release_id, mono=True, attrs={"aria-label": "Remap " ~ a.name ~ " to"}) }}
+              {{ ui.button("Remap", type="submit", size="sm", attrs={"title": a.name ~ " is what the source now calls the selected release: it takes over its name, dates and builds"}) }}
+            </form>
+            {% endif %}
+            <form method="post" hx-push-url="false" action="{{ url_for('ui.detach_release', rid=a.release_id) }}"><input type="hidden" name="next" value="{{ here }}">
+              {{ ui.button("Detach", type="submit", size="sm", variant="ghost", attrs={"title": "Keep it, as if entered by hand, and stop syncing it"}) }}</form>
+            <form method="post" hx-push-url="false" action="{{ url_for('ui.cancel_release', rid=a.release_id) }}"><input type="hidden" name="next" value="{{ here }}">
+              <input type="hidden" name="note" value="gone from {{ ci.release_source or 'the release source' }}">
+              {{ ui.button("Cancel", type="submit", size="sm", variant="ghost", attrs={"title": "It isn't happening: cancel it (released releases can't be cancelled)"}) }}</form>
+          </div>
+        {% elif a.kind == "missing_version" %}
+          <div class="ui-row" style="--ui-gap: 6px; justify-content: flex-end;">
+            {% if candidates and candidates.versions %}
+            <form method="post" hx-push-url="false" action="{{ url_for('ui.remap_version', vid=a.version_id) }}" class="ui-row" style="--ui-gap: 4px;">
+              <input type="hidden" name="next" value="{{ here }}">
+              {{ ui.select("to", candidates.versions | map(attribute="name") | list, id="remap-v" ~ a.version_id, mono=True, attrs={"aria-label": "Remap " ~ a.name ~ " to"}) }}
+              {{ ui.button("Remap", type="submit", size="sm") }}
+            </form>
+            {% endif %}
+            <form method="post" hx-push-url="false" action="{{ url_for('ui.detach_version', vid=a.version_id) }}"><input type="hidden" name="next" value="{{ here }}">
+              {{ ui.button("Detach", type="submit", size="sm", variant="ghost") }}</form>
+          </div>
+        {% elif a.release_id %}{{ ui.button("Open", size="sm", variant="ghost", href=url_for('ui.release', rid=a.release_id)) }}
+        {% elif a.kind == "unplaced" %}<span class="ui-muted" style="font-size: 12px;">fix the name in {{ ci.release_source }}, or add its release</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  {% endcall %}
+{% endcall %}

@@ -17,9 +17,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 class WorkTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        shutil.copy(os.path.join(HERE, "..", "policies", "display-sw.txt"), self.tmp)
         self.source = StaticSource(DEMO_TICKETS, name="jira")
-        self.app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"), "POLICY_DIR": self.tmp,
+        self.app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"),
                                "TICKET_SOURCES": {"jira": self.source}})
         self.c = self.app.test_client()
         seed(self.c)
@@ -44,7 +43,7 @@ class WorkTests(unittest.TestCase):
     def test_auto_lineage(self):
         # chain inside a release, rejected b3 included (b4 was built on it), then the next quarter
         self.assertEqual(self.names("2026.Q4-b4"), ["2026.Q4-b1", "2026.Q4-b2", "2026.Q4-b3", "2026.Q4-b4"])
-        # a patch builds on its base version (the family's effective version when it was spawned)
+        # a patch builds on its base version (the line's effective version when the sync first could tell)
         p1 = self.call("get", f"/versions/{self.vid('2026.Q4.P1')}/lineage")
         self.assertEqual([p["name"] for p in p1["parents"]], ["2026.Q4-b4"])
         # Q2 builds on Q1's head (its last build, since Q1 hasn't shipped)
@@ -77,15 +76,18 @@ class WorkTests(unittest.TestCase):
         self.call("put", f"/versions/{b1}/parents", {}, 400)
         self.call("get", "/cis/NAV-SW/versions", status=400)                                   # 'to' required
 
-    def test_lineage_survives_replanning(self):
+    def test_lineage_survives_resync(self):
         # adding an ad hoc build to Q1 moves Q2's first parent to it; the manual merge on Q1-b1 is kept
         q1 = next(r for r in self.call("get", "/cis/NAV-SW/releases") if r["name"] == "2027.Q1")
         self.call("post", f"/releases/{q1['id']}/versions", {}, 201)
         q2 = self.call("get", f"/versions/{self.vid('2027.Q2-b1')}/lineage")
         self.assertEqual([p["name"] for p in q2["parents"]], ["2027.Q1-b4"])
         self.assertEqual(len(self.call("get", f"/versions/{self.vid('2027.Q1-b1')}/lineage")["parents"]), 2)
-        self.call("post", "/cis/NAV-SW/plan", {"start": "2026-10-01", "end": "2027-07-01"})
+        s = self.call("post", "/cis/NAV-SW/sync")
+        self.assertEqual((s["created"], s["updated"], s["missing"]), ([], [], []))
         self.assertEqual(len(self.call("get", f"/versions/{self.vid('2027.Q1-b1')}/lineage")["parents"]), 2)
+        self.assertEqual(self.call("get", f"/versions/{self.vid('2027.Q2-b1')}/lineage")["parents"][0]["name"],
+                         "2027.Q1-b4")
 
     # ------------------------------------------------------------------ tickets
 
@@ -179,7 +181,7 @@ class WorkTests(unittest.TestCase):
         self.call("get", "/tickets/PRG-10?source=nope", status=400)
 
     def test_no_source_configured(self):
-        app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"), "POLICY_DIR": self.tmp, "TICKET_SOURCES": {}})
+        app = create_app({"DATABASE": os.path.join(self.tmp, "t.db"), "TICKET_SOURCES": {}})
         c = app.test_client()
         r = c.get("/api/cis/NAV-SW/work?to=2027.Q1-b1")
         self.assertEqual((r.status_code, r.get_json()["error"]),
