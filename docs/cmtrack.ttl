@@ -1,0 +1,188 @@
+@prefix cmt:     <https://example.org/cmtrack#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix oslc_config: <http://open-services.net/ns/config#> .
+
+# cmtrack ontology. Readable companion: ontology.md. Change the namespace IRI when this gets a real home.
+
+<https://example.org/cmtrack> a owl:Ontology ;
+    rdfs:label "cmtrack ontology" ;
+    owl:versionInfo "0.1.0" ;
+    rdfs:comment "Terms of cmtrack (CIs, CSCs, releases, versions, lineage, capabilities, HSCM baselines, tickets) aligned with EIA-649, MIL-STD-498, OSLC Configuration Management, CMPO and PROV-O." ;
+    rdfs:seeAlso <https://docs.oasis-open-projects.org/oslc-op/config/v1.0/oslc-config-mgt.html> ,
+                 <https://dev.nemo.inf.ufes.br/seon/CMPO.html> , <https://www.w3.org/TR/prov-o/> .
+
+########## Product space
+
+cmt:ConfigurationItem a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    skos:altLabel "CI" ;
+    skos:definition "A thing whose configuration is managed and released as a unit (EIA-649 configuration item; OSLC component; CMPO Configuration Item)." .
+
+cmt:CSCI a owl:Class ; rdfs:subClassOf cmt:ConfigurationItem ;
+    skos:prefLabel "Computer Software Configuration Item" .
+cmt:HWCI a owl:Class ; rdfs:subClassOf cmt:ConfigurationItem ;
+    skos:prefLabel "Hardware Configuration Item" .
+[] a owl:AllDisjointClasses ; owl:members ( cmt:CSCI cmt:HWCI ) .
+
+cmt:CompositeCI a owl:Class ; rdfs:subClassOf cmt:ConfigurationItem ;
+    skos:definition "A CI whose versions are made of pinned versions of other CIs." .
+cmt:PlaceholderCI a owl:Class ; rdfs:subClassOf cmt:ConfigurationItem ;
+    skos:definition "A CI known only because a scraped HSCM names it (managed = 0)." .
+
+cmt:CSC a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    skos:prefLabel "Computer Software Component" ;
+    skos:definition "A part of exactly one CSCI (MIL-STD-498), identified by a (Jira project, affected product) pair." ;
+    owl:hasKey ( cmt:jiraProject cmt:affectedProduct ) .
+
+cmt:Capability a owl:Class ;
+    skos:altLabel "IFC" ;
+    skos:definition "A fielded capability, arranged in a hierarchy; what a baseline describes. Not itself versioned." .
+[] a owl:AllDisjointClasses ; owl:members ( cmt:ConfigurationItem cmt:CSC cmt:Capability ) .
+
+cmt:partOf a owl:ObjectProperty ;
+    rdfs:comment "Product-space decomposition: CSC partOf CSCI, Capability partOf Capability." .
+
+cmt:jiraProject a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain cmt:CSC ; rdfs:range xsd:string .
+cmt:affectedProduct a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain cmt:CSC ; rdfs:range xsd:string .
+
+########## Version space
+
+cmt:Release a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    skos:definition "A planned delivery of one CI: a named target that builds are made towards, one of which is promoted. Not the EIA-649 sense of 'release' (the approval act), which corresponds to cmt:releasedAs." .
+
+cmt:PlannedRelease a owl:Class ; rdfs:subClassOf cmt:Release .
+cmt:PatchRelease a owl:Class ; rdfs:subClassOf cmt:Release .
+cmt:EmergencyRelease a owl:Class ; rdfs:subClassOf cmt:Release ;
+    skos:scopeNote "Requires a reason (change request)." .
+cmt:ExternalRelease a owl:Class ; rdfs:subClassOf cmt:Release ;
+    skos:definition "Holds versions known only from a scraped HSCM." .
+[] a owl:AllDisjointClasses ;
+    owl:members ( cmt:PlannedRelease cmt:PatchRelease cmt:EmergencyRelease cmt:ExternalRelease ) .
+
+cmt:Version a owl:Class ;
+    rdfs:subClassOf prov:Entity , oslc_config:VersionResource ;
+    skos:altLabel "build" ;
+    skos:definition "One identified build of a CI, made within a release (CMPO Version; OSLC version resource). The only thing that can be fielded, tested or pinned." ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty cmt:buildOf ; owl:cardinality "1"^^xsd:nonNegativeInteger ] .
+
+cmt:releaseOf a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Release ; rdfs:range cmt:ConfigurationItem .
+
+cmt:buildOf a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Version ; rdfs:range cmt:Release .
+
+cmt:versionOf a owl:ObjectProperty ;
+    rdfs:comment "Not declared functional: OWL 2 DL forbids that on a property defined by a chain. Functional in effect, since buildOf and releaseOf are." ;
+    rdfs:subPropertyOf dcterms:isVersionOf ;
+    rdfs:domain cmt:Version ; rdfs:range cmt:ConfigurationItem ;
+    owl:propertyChainAxiom ( cmt:buildOf cmt:releaseOf ) .
+
+cmt:builtFrom a owl:ObjectProperty ;
+    rdfs:subPropertyOf prov:wasRevisionOf ;
+    rdfs:domain cmt:Version ; rdfs:range cmt:Version ;
+    skos:definition "Lineage: a version was built from these versions of the same CI. Two or more parents = a merge." .
+
+cmt:ancestor a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:subPropertyOf prov:wasDerivedFrom ;
+    skos:definition "Transitive closure of builtFrom (SPDX descendantOf). Range a..b = ancestor-or-self(b) minus ancestor-or-self(a)." .
+cmt:builtFrom rdfs:subPropertyOf cmt:ancestor .
+
+cmt:contains a owl:ObjectProperty ;
+    rdfs:domain cmt:Version ; rdfs:range cmt:Version ;
+    skos:definition "Manifest: a composite CI's version contains pinned versions of child CIs (SPDX contains)." .
+
+cmt:patches a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain [ owl:unionOf ( cmt:PatchRelease cmt:EmergencyRelease ) ] ;
+    rdfs:range cmt:PlannedRelease ;
+    skos:definition "The root planned release of the line a patch/emergency belongs to." .
+
+cmt:basedOn a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:subPropertyOf prov:wasDerivedFrom ;
+    rdfs:domain [ owl:unionOf ( cmt:PatchRelease cmt:EmergencyRelease ) ] ;
+    rdfs:range cmt:Version .
+
+cmt:releasedAs a owl:ObjectProperty, owl:FunctionalProperty, owl:InverseFunctionalProperty ;
+    rdfs:domain cmt:Release ; rdfs:range cmt:Version ;
+    skos:definition "The version promoted to be this release. Set once, never changed." .
+
+cmt:effectiveVersion a owl:ObjectProperty ;
+    rdfs:domain cmt:Release ; rdfs:range cmt:Version ;
+    skos:definition "Derived: the latest version released anywhere in the release's line." .
+
+cmt:VersionStatus a owl:Class ;
+    owl:oneOf ( cmt:planned cmt:built cmt:tested cmt:released cmt:rejected cmt:external ) .
+cmt:versionStatus a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Version ; rdfs:range cmt:VersionStatus .
+
+cmt:unplanned a owl:DatatypeProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Version ; rdfs:range xsd:boolean ;
+    skos:definition "Added by hand on a CI whose releases are synced (README: 'variance'; not an EIA-649 variance)." .
+
+########## Baselines
+
+cmt:Baseline a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    skos:altLabel "HSCM" ;
+    skos:definition "For one capability, a selection of exactly one version per CI (CMPO: Baseline packages Versions). Draft ~ OSLC stream; approved ~ OSLC/EIA-649 baseline (frozen)." .
+
+cmt:BaselineStatus a owl:Class ; owl:oneOf ( cmt:draft cmt:approved cmt:superseded ) .
+cmt:baselineStatus a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Baseline ; rdfs:range cmt:BaselineStatus .
+
+cmt:baselineOf a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Baseline ; rdfs:range cmt:Capability .
+
+cmt:selects a owl:ObjectProperty ;
+    rdfs:subPropertyOf oslc_config:selects ;
+    rdfs:domain cmt:Baseline ; rdfs:range cmt:Version ;
+    skos:scopeNote "At most one selected version per CI (enforced in service.py; not expressible in OWL 2 DL)." .
+
+cmt:supersedes a owl:ObjectProperty, owl:FunctionalProperty, owl:InverseFunctionalProperty ;
+    rdfs:subPropertyOf prov:wasRevisionOf ;
+    rdfs:domain cmt:Baseline ; rdfs:range cmt:Baseline .
+
+########## Work (external, read live from the ticket source)
+
+cmt:Ticket a owl:Class ;
+    skos:definition "A work item in the ticket source (system of record); cmtrack stores only keys." .
+cmt:ParentTicket a owl:Class ; rdfs:subClassOf cmt:Ticket .
+cmt:CSCTicket a owl:Class ; rdfs:subClassOf cmt:Ticket ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty cmt:affects ; owl:cardinality "1"^^xsd:nonNegativeInteger ] .
+[] a owl:AllDisjointClasses ; owl:members ( cmt:ParentTicket cmt:CSCTicket ) .
+
+cmt:childOf a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:CSCTicket ; rdfs:range cmt:ParentTicket .
+cmt:affects a owl:ObjectProperty ; rdfs:domain cmt:CSCTicket ; rdfs:range cmt:CSC .
+cmt:fixedIn a owl:ObjectProperty ; rdfs:domain cmt:Ticket ; rdfs:range cmt:Version ;
+    skos:scopeNote "Jira fix version." .
+
+cmt:Team a owl:Class ; rdfs:subClassOf prov:Agent .
+
+cmt:Backlog a owl:Class ;
+    skos:definition "A ranked list of parent tickets shared by a set of teams, about a set of CIs. Stores key + lexorank only." .
+cmt:ranks a owl:ObjectProperty ; rdfs:domain cmt:Backlog ; rdfs:range cmt:ParentTicket .
+cmt:sharedBy a owl:ObjectProperty ; rdfs:domain cmt:Backlog ; rdfs:range cmt:Team .
+cmt:about a owl:ObjectProperty ; rdfs:domain cmt:Backlog ; rdfs:range cmt:ConfigurationItem .
+
+########## Provenance and status accounting
+
+cmt:Event a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    skos:definition "An append-only record of one change; together, EIA-649 configuration status accounting." .
+cmt:Correction a owl:Class ; rdfs:subClassOf cmt:Event ;
+    skos:definition "An event that changes a recorded fact (built_at, released_at), with a note." .
+
+cmt:ReleaseSource a owl:Class ; rdfs:subClassOf prov:SoftwareAgent ;
+    skos:definition "External system of record for a CI's releases and builds (typically Jira)." .
+cmt:TicketSource a owl:Class ; rdfs:subClassOf prov:SoftwareAgent ;
+    skos:definition "External system of record for tickets (typically Jira)." .
+cmt:releaseSource a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:ConfigurationItem ; rdfs:range cmt:ReleaseSource .

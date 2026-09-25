@@ -1,0 +1,73 @@
+// cmtrack ontology diagram. Render: dot -Tsvg docs/ontology.dot -o docs/ontology.svg (and -Tpng -Gdpi=150)
+digraph cmtrack {
+  graph [rankdir=LR, fontname="Helvetica", fontsize=12, nodesep=0.45, ranksep=0.9, pad=0.3,
+         label=<<b>cmtrack ontology</b><br/><font point-size="10">solid = stored in cmtrack · dashed = external, read live · grey text = standard alignment</font>>,
+         labelloc=t, fontsize=16];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, penwidth=1.2];
+  edge  [fontname="Helvetica", fontsize=9, color="#555555", arrowsize=0.7];
+
+  subgraph cluster_product {
+    label=<<b>Product space</b> — what things are made of>; style="rounded,filled"; fillcolor="#eef4fb"; color="#9bb8d8";
+    CI  [label=<<b>Configuration Item</b><br/><font point-size="9">CSCI | HWCI · simple | composite<br/>placeholder (managed=0)</font><br/><font point-size="8" color="#777777">EIA-649 CI · OSLC component</font>>, fillcolor="#cfe2f7"];
+    CSC [label=<<b>CSC</b><br/><font point-size="9">key: (Jira project, affected product)</font><br/><font point-size="8" color="#777777">MIL-STD-498</font>>, fillcolor="#cfe2f7"];
+    Cap [label=<<b>Capability (IFC)</b><br/><font point-size="9">hierarchy, not versioned</font>>, fillcolor="#cfe2f7"];
+  }
+
+  subgraph cluster_version {
+    label=<<b>Version space</b> — how things evolve>; style="rounded,filled"; fillcolor="#f1f8ee"; color="#a6cc98";
+    Rel [label=<<b>Release</b><br/><font point-size="9">planned | patch | emergency | external<br/>planned → active → released | cancelled</font>>, fillcolor="#d6ecce"];
+    Ver [label=<<b>Version</b> (build)<br/><font point-size="9">planned → built → tested → released<br/>rejected · external · unplanned</font><br/><font point-size="8" color="#777777">CMPO Version · OSLC VersionResource<br/>builtFrom ⊑ prov:wasRevisionOf</font>>, fillcolor="#d6ecce", penwidth=2];
+  }
+
+  subgraph cluster_baseline {
+    label=<<b>Baselines</b>>; style="rounded,filled"; fillcolor="#fdf5e8"; color="#e0c38f";
+    Base [label=<<b>Baseline (HSCM)</b><br/><font point-size="9">draft → approved → superseded<br/>one version per CI</font><br/><font point-size="8" color="#777777">draft ≈ OSLC stream · approved = frozen</font>>, fillcolor="#f7e2bd"];
+  }
+
+  subgraph cluster_work {
+    label=<<b>Work</b> — ticket source is the system of record>; style="rounded,dashed"; color="#b9a3d1"; fillcolor="#f7f3fb";
+    PT  [label=<<b>Parent ticket</b>>, style="rounded,filled,dashed", fillcolor="#e6dcf2"];
+    CT  [label=<<b>CSC ticket</b><br/><font point-size="9">state: analysis … done | error</font>>, style="rounded,filled,dashed", fillcolor="#e6dcf2"];
+    Back [label=<<b>Backlog</b><br/><font point-size="9">key + lexorank only</font>>, fillcolor="#e6dcf2"];
+    Team [label=<<b>Team</b>>, fillcolor="#e6dcf2"];
+  }
+
+  subgraph cluster_prov {
+    label=<<b>Provenance</b>>; style="rounded,filled"; fillcolor="#f3f3f3"; color="#bbbbbb";
+    Ev  [label=<<b>Event</b><br/><font point-size="9">append-only log of changes<br/>to every entity · corrections</font><br/><font point-size="8" color="#777777">status accounting · prov:Activity</font>>, fillcolor="#e4e4e4"];
+    RS  [label=<<b>Release source</b>>, style="rounded,filled,dashed", fillcolor="#e4e4e4"];
+    TS  [label=<<b>Ticket source</b>>, style="rounded,filled,dashed", fillcolor="#e4e4e4"];
+  }
+
+  // product space
+  CSC -> CI  [label="partOf (CSCI)"];
+  Cap -> Cap [label="partOf"];
+
+  // version space
+  Rel -> CI  [label="releaseOf"];
+  Ver -> Rel [label="buildOf"];
+  Ver -> CI  [label=<versionOf<br/><font color="#999999">= buildOf ∘ releaseOf</font>>, style=dashed, constraint=false];
+  Ver -> Ver [label="builtFrom (lineage)", color="#3f7f2f", fontcolor="#3f7f2f", penwidth=1.6];
+  Ver -> Ver [label="contains (manifest)", color="#1f5fa0", fontcolor="#1f5fa0"];
+  Rel -> Rel [label="patches (→ root planned)"];
+  Rel -> Ver [label="basedOn"];
+  Rel -> Ver [label=<releasedAs<br/><font color="#999999">set once</font>>, penwidth=1.6];
+
+  // baselines
+  Base -> Cap  [label="baselineOf"];
+  Base -> Ver  [label=<selects<br/><font color="#999999">oslc_config:selects</font>>, penwidth=1.6];
+  Base -> Base [label="supersedes"];
+
+  // work
+  CT -> PT   [label="childOf", style=dashed];
+  CT -> CSC  [label="affects", style=dashed];
+  CT -> Ver  [label="fixedIn", style=dashed];
+  Back -> PT [label="ranks (ordered)"];
+  Back -> Team [label="sharedBy"];
+  Back -> CI [label="about", constraint=false];
+
+  // provenance
+  CI -> RS [label="releaseSource", style=dashed];
+  RS -> Rel [label="syncs", style=dotted, arrowhead=vee];
+  TS -> CT  [label="serves", style=dotted, arrowhead=vee];
+}
