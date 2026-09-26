@@ -587,13 +587,31 @@
   <svg class="ui-graph__svg" width="{{ g.width }}" height="{{ g.height }}" viewBox="0 0 {{ g.width }} {{ g.height }}" aria-hidden="true">
     {%- for e in g.edges %}<path class="ui-graph__l{{ e.color }}{% if e.merge %} ui-graph__merge{% endif %}" d="{{ e.d }}"/>{% endfor %}
     {%- for n in g.nodes %}
-    {%- set cx, cy = (g.lane // 2 + n.lane * g.lane), (g.row // 2 + n.row * g.row) %}
-    {%- if n.current %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ cx }}" cy="{{ cy }}" r="7.5"/>{% endif %}
-    <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ cx }}" cy="{{ cy }}" r="4.5"/>
+    {%- if n.current %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="7.5"/>{% endif %}
+    <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="4.5"/>
     {%- endfor %}
   </svg>
   <ol class="ui-graph__rows">
     {%- for n in g.nodes %}<li class="ui-graph__row{% if n.current %} is-current{% endif %}">{{ caller(n) }}</li>{% endfor %}
   </ol>
+</div>
+{%- endmacro %}
+
+{#- Horizontal lineage strip (graph.layout(..., horizontal=True)): oldest left, newest right, each node a link
+    labelled with its name. Nodes carry `name`, `href`, `title`, and `dot` / `current` as for ui.graph. #}
+{% macro graph_strip(g, label) -%}
+<div class="ui-strip" role="group" aria-label="{{ label }}">
+  <svg class="ui-strip__svg" width="{{ g.width }}" height="{{ g.height + 18 }}" viewBox="0 0 {{ g.width }} {{ g.height + 18 }}">
+    {%- for e in g.edges %}<path class="ui-graph__l{{ e.color }}{% if e.merge %} ui-graph__merge{% endif %}" d="{{ e.d }}" aria-hidden="true"/>{% endfor %}
+    {%- for n in g.nodes %}
+    <a href="{{ n.href }}" class="ui-strip__node{% if n.current %} is-current{% endif %}"{% if n.current %} aria-current="true"{% endif %}>
+      <title>{{ n.title or n.name }}</title>
+      {%- if n.current %}<rect class="ui-strip__hl" x="{{ n.x - g.row // 2 + 4 }}" y="{{ n.y - 13 }}" width="{{ g.row - 8 }}" height="44" rx="6"/>{% endif %}
+      {%- if n.current %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="8"/>{% endif %}
+      <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="5"/>
+      <text class="ui-strip__label" x="{{ n.x }}" y="{{ n.y + 22 }}" text-anchor="middle">{{ n.name | truncate(14, True, "…", 0) }}</text>
+    </a>
+    {%- endfor %}
+  </svg>
 </div>
 {%- endmacro %}

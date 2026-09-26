@@ -134,6 +134,11 @@ def styleguide_samples():
                v("2026.Q4-b3", "2026.Q4", "rejected", dot="danger")]
     return {
         "graph_sample": graph.layout(lineage),
+        "strip_sample": graph.layout([
+            {"id": 4, "name": "HSCM-C", "href": "#", "parents": [2], "dot": "hollow"},
+            {"id": 3, "name": "HSCM-A.1", "href": "#", "parents": [1], "current": True},
+            {"id": 2, "name": "HSCM-B", "href": "#", "parents": [1], "dot": "muted"},
+            {"id": 1, "name": "HSCM-A", "href": "#", "parents": [], "dot": "muted"}], horizontal=True),
         "progress": progress,
         "tickets": [
             ticket("NAVL-105", "Blend terrain-referenced fixes into the filter", "peer_review", ["2027.Q1-b1"],

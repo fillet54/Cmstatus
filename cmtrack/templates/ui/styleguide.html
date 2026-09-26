@@ -167,6 +167,13 @@
     {% endcall %}
     </div>
   {% endcall %}
+
+{% set code %}{% raw %}{# g = graph.layout(nodes, horizontal=True): nodes carry name, href, title?, dot?, current? #}
+{{ ui.graph_strip(g, label="Baseline lineage of IFC-2.1") }}
+{% endraw %}{% endset %}
+  {% call example("graph_strip (horizontal lineage)", code) %}
+    {% call ui.card() %}{% call ui.card_body() %}{{ ui.graph_strip(strip_sample, label="Sample baseline lineage") }}{% endcall %}{% endcall %}
+  {% endcall %}
 </section>
 
 {# ------------------------------------------------------------------------------------------ identifiers #}

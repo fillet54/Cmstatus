@@ -2,35 +2,31 @@
 
 ``layout(nodes)`` takes nodes in display order, children before parents, each a dict with ``id`` and
 ``parents`` (ids; parents not in ``nodes`` are ignored), and returns what ``ui.graph`` draws: every node with
-its ``row`` and ``lane``, the SVG path of every edge, and the size. A node's first parent continues its lane
+its ``row``, ``lane`` and ``x``/``y``, the SVG path of every edge, and the size. ``horizontal=True`` lays the
+same graph out left to right, oldest first (``ui.graph_strip``). A node's first parent continues its lane
 (so a line of releases stays in one lane and a branch rejoins it where it forked); further parents (merges)
 join the lane already heading to that parent, or open a new one.
 """
 import heapq
 
-ROW = 40     # px per row
-LANE = 16    # px per lane
+ROW = 40     # px per row (vertical)
+LANE = 16    # px per lane (vertical)
+COL = 104    # px per column (horizontal: room for a label under each node)
+HLANE = 34   # px per lane (horizontal)
 LANES = 6    # lane colours before they repeat (ui.css .ui-graph__l0 … l5)
 
 
-def _x(lane):
-    return LANE // 2 + lane * LANE
-
-
-def _y(row):
-    return ROW // 2 + row * ROW
-
-
-def _path(row, col, lane, prow, pcol):
-    """Child (row, col) down lane ``lane`` to parent (prow, pcol)."""
-    x0, y0, xl, x1, y1 = _x(col), _y(row), _x(lane), _x(pcol), _y(prow)
-    h = ROW // 2
-    if prow == row + 1:
-        return f"M{x0} {y0} L{x1} {y1}" if x0 == x1 else f"M{x0} {y0} C{x0} {y0 + h} {x1} {y1 - h} {x1} {y1}"
-    d = f"M{x0} {y0} "
-    d += f"L{xl} {y0 + ROW} " if xl == x0 else f"C{x0} {y0 + h} {xl} {y0 + h} {xl} {y0 + ROW} "
-    d += f"L{xl} {y1 - ROW} "
-    d += f"L{x1} {y1}" if xl == x1 else f"C{xl} {y1 - h} {x1} {y1 - h} {x1} {y1}"
+def _path(a0, c0, cl, a1, c1, step, pt):
+    """Edge from a child at (along a0, across c0) to its parent at (a1, c1), running in lane ``cl``.
+    ``pt(along, across)`` maps to SVG "x y" for the orientation."""
+    s = step if a1 > a0 else -step
+    h = s // 2
+    if abs(a1 - a0) == step:
+        return f"M{pt(a0, c0)} L{pt(a1, c1)}" if c0 == c1 else f"M{pt(a0, c0)} C{pt(a0 + h, c0)} {pt(a1 - h, c1)} {pt(a1, c1)}"
+    d = f"M{pt(a0, c0)} "
+    d += f"L{pt(a0 + s, cl)} " if cl == c0 else f"C{pt(a0 + h, c0)} {pt(a0 + h, cl)} {pt(a0 + s, cl)} "
+    d += f"L{pt(a1 - s, cl)} "
+    d += f"L{pt(a1, c1)}" if cl == c1 else f"C{pt(a1 - h, cl)} {pt(a1 - h, c1)} {pt(a1, c1)}"
     return d
 
 
@@ -41,7 +37,7 @@ def _free(lanes):
     return len(lanes) - 1
 
 
-def layout(nodes):
+def layout(nodes, horizontal=False):
     row_of = {n["id"]: i for i, n in enumerate(nodes)}
     lanes = []                       # lane -> id of the node the lane is heading to (None = free)
     placed, pending, width = [], [], 1
@@ -64,10 +60,25 @@ def layout(nodes):
         while lanes and lanes[-1] is None:
             lanes.pop()
         placed.append({**n, "row": row, "lane": col, "color": col % LANES})
-    edges = [{"d": _path(row, col, lane, row_of[p], placed[row_of[p]]["lane"]), "color": lane % LANES, "merge": merge}
+    n = len(nodes)
+    if horizontal:   # oldest on the left: columns run the other way from rows
+        step, across = COL, HLANE
+        along = lambda row: step // 2 + (n - 1 - row) * step
+        pt = lambda a, c: f"{a} {c}"
+    else:
+        step, across = ROW, LANE
+        along = lambda row: step // 2 + row * step
+        pt = lambda a, c: f"{c} {a}"
+    off = lambda lane: across // 2 + lane * across
+    for p in placed:
+        a, c = along(p["row"]), off(p["lane"])
+        p["x"], p["y"] = (a, c) if horizontal else (c, a)
+    edges = [{"d": _path(along(row), off(col), off(lane), along(row_of[p]), off(placed[row_of[p]]["lane"]), step, pt),
+              "color": lane % LANES, "merge": merge}
              for row, col, lane, p, merge in pending]
-    return {"nodes": placed, "edges": edges, "width": width * LANE, "height": len(nodes) * ROW, "row": ROW,
-            "lane": LANE}
+    size = (n * step, width * across)
+    return {"nodes": placed, "edges": edges, "width": size[0] if horizontal else size[1],
+            "height": size[1] if horizontal else size[0], "row": step, "lane": across}
 
 
 def newest_first(nodes, key):

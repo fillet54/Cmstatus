@@ -16,6 +16,26 @@
   {% endif %}
 {% endcall %}
 
+{% if lineages %}
+{% call ui.card(flush=True) %}
+  {% call ui.card_header("Baseline lineage", "each capability's HSCMs, oldest to newest · the current approved one is highlighted") %}
+    {{ ui.button("Capabilities", href=url_for('ui.ifcs'), size="sm", variant="ghost") }}
+  {% endcall %}
+  <div class="ui-strips">
+    {% for l in lineages %}
+    <div class="ui-strips__row">
+      <div class="ui-strips__head">
+        <a href="{{ url_for('ui.ifc', ref=l.ifc.name) }}"><b>{{ l.ifc.name }}</b></a>
+        {% if l.current %}<span class="ui-muted" style="font-size: 12px;">current {{ ui.ident(l.current.name, href=url_for('ui.baseline', bid=l.current.id), plain=True) }}</span>
+        {% else %}<span class="ui-muted" style="font-size: 12px;">nothing approved</span>{% endif %}
+      </div>
+      {{ ui.graph_strip(l.graph, label="Baseline lineage of " ~ l.ifc.name) }}
+    </div>
+    {% endfor %}
+  </div>
+{% endcall %}
+{% endif %}
+
 <div class="ui-grid">
   {% call ui.card(flush=True) %}
     {% call ui.card_header("Open patch / emergency releases") %}{% endcall %}

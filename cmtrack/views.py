@@ -128,8 +128,11 @@ def dashboard():
                           "WHERE b.status = 'approved' ORDER BY i.name"):
         stale += [{**e, "baseline": b["name"], "baseline_id": b["id"], "ifc": b["ifc"]}
                   for e in with_staleness(conn, svc.baseline_entries(conn, b["id"])) if e["effective"]]
+    lineages = [{"ifc": i, "current": svc.to_dict(svc.current_baseline(conn, i["id"])),
+                 "graph": baseline_graph(conn, i["id"], horizontal=True)} for i in svc.list_ifcs(conn)]
     return render_template("dashboard.html", counts=counts, open_children=open_children, upcoming=upcoming,
-                           stale=stale, events=svc.to_dicts(svc.list_events(conn, limit=10)))
+                           stale=stale, events=svc.to_dicts(svc.list_events(conn, limit=10)),
+                           lineages=[x for x in lineages if x["graph"]["nodes"]])
 
 
 @bp.get("/fragments/recent-events")
@@ -258,12 +261,14 @@ BASELINE_DOTS = {"draft": "hollow", "superseded": "muted"}
 VERSION_DOTS = {"planned": "hollow", "rejected": "danger"}
 
 
-def baseline_graph(conn, ifc_id):
-    """The IFC's baselines as a lineage graph (newest first), each hanging off the one it was derived from."""
+def baseline_graph(conn, ifc_id, horizontal=False):
+    """The IFC's baselines as a lineage graph, each hanging off the one it was derived from; the current
+    (approved) baseline is marked."""
     rows = svc.baseline_lineage(conn, ifc_id)
     return graph.layout([{**b, "parents": [b["derived_from_id"]] if b["derived_from_id"] else [],
-                          "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved"}
-                         for b in reversed(rows)])
+                          "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved",
+                          "href": url_for("ui.baseline", bid=b["id"]), "title": f"{b['name']} ({b['status']})"}
+                         for b in reversed(rows)], horizontal=horizontal)
 
 
 def version_graph(conn, ci_id):

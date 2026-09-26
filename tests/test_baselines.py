@@ -107,6 +107,13 @@ class BaselineTests(unittest.TestCase):
         rows = page.split('class="ui-graph__rows"')[1]
         self.assertLess(rows.index("2027.Q2-b3"), rows.index("2026.Q4-b1"))           # newest first
 
+    def test_dashboard_lineage_strips(self):
+        page = self.c.get("/").get_data(as_text=True)
+        self.assertEqual(page.count('class="ui-strip"'), 2)                          # IFC-2.1 and IFC-2.2
+        current = self.baseline("IFC-2.1", "HSCM-B")["id"]
+        self.assertIn(f'<a href="/baselines/{current}" class="ui-strip__node is-current" aria-current="true">', page)
+        self.assertIn("nothing approved", page)                                     # IFC-2.2 has only a draft
+
     def test_migration_backfills_lineage(self):
         path = os.path.join(self.tmp, "old.db")
         old = db.SCHEMA.read_text().replace(
@@ -137,6 +144,16 @@ class GraphLayoutTests(unittest.TestCase):
         self.assertEqual(len(g["edges"]), 5)                                          # 'gone' is not drawn
         self.assertEqual(sum(e["merge"] for e in g["edges"]), 1)
         self.assertEqual(g["width"], 3 * graph.LANE)
+
+    def test_horizontal_runs_oldest_to_newest(self):
+        nodes = [{"id": "c", "parents": ["a"]}, {"id": "b", "parents": ["a"]}, {"id": "a", "parents": []}]
+        g = graph.layout(nodes, horizontal=True)
+        xy = {n["id"]: (n["x"], n["y"]) for n in g["nodes"]}
+        self.assertLess(xy["a"][0], xy["b"][0])
+        self.assertLess(xy["b"][0], xy["c"][0])                                      # newest on the right
+        self.assertEqual(xy["a"][1], xy["c"][1])                                     # c continues a's lane
+        self.assertGreater(xy["b"][1], xy["a"][1])                                   # b branches below
+        self.assertEqual((g["width"], g["height"]), (3 * graph.COL, 2 * graph.HLANE))
 
     def test_newest_first_keeps_children_above_parents(self):
         nodes = [{"id": 1, "parents": [], "t": 3}, {"id": 2, "parents": [1], "t": 1}, {"id": 3, "parents": [], "t": 2}]

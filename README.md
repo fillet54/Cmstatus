@@ -236,7 +236,8 @@ requests and the full page otherwise (boosted navigation and history restores al
 every URL works as a plain link.
 
 ```
-/                     dashboard: counts, open patch/emergency releases, upcoming releases,
+/                     dashboard: counts, each IFC's baseline lineage as a strip (current one highlighted),
+                      open patch/emergency releases, upcoming releases,
                       HSCM entries behind their effective version, recent activity (polls every 30s)
 /cis                  CI list; search + type/managed filters re-render the rows via htmx
 /cis/<ci>             releases grouped by family (click one to load its panel), "Needs attention" (remap, detach,
@@ -284,7 +285,7 @@ Macros: shell (`marking_banner`, `app_header`), structure (`page_header`, `bread
 `state_counts`), feedback (`alert`, `empty`), actions (`button`, `icon_button`, `button_group`, `icon`), forms
 (`field`, `input`, `select`, `checkbox`, `search_box`, `segmented`, `tabs`), data (`table`, `empty_row`, `dl`,
 `audit_list`, `stamp`, `disclosure`), release sources (`source_state`, `pinned`), tickets and backlogs (`ticket_ref`, `ticket_line`, `group_label`, `rank_item`, `drop_line`,
-`lineage`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
+`lineage`, `graph`, `graph_strip`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
 
 Every status is a glyph and a word as well as a colour. Identifiers are monospace, times always UTC (`utc` filter:
 `2026-09-23 14:24Z`), focus is always visible. Config in `cmtrack/ui.py`: `CMTRACK_MARKING` (+

@@ -439,3 +439,20 @@ body.ui {
 .ui-graph__row > .ui-graph__main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; }
 .ui-graph__row > .ui-graph__meta { display: flex; align-items: center; gap: 8px; flex: none; color: var(--ui-muted); font-size: 12px; }
 @media (max-width: 640px) { .ui-graph__row > .ui-graph__meta { display: none; } }
+
+/* Horizontal lineage strip (ui.graph_strip): scrolls sideways inside its container, never the page */
+.ui-strip { overflow-x: auto; overflow-y: hidden; padding: 4px 0; direction: rtl; }   /* rtl: starts scrolled to the newest end */
+.ui-strip__svg { display: block; overflow: visible; direction: ltr; margin-right: auto; }   /* short strips stay left */
+.ui-strip__svg path { fill: none; stroke: currentColor; stroke-width: 2; }
+.ui-strip__svg .ui-graph__merge { stroke-dasharray: 4 3; }
+.ui-strip__label { font: 500 11px var(--ui-font-mono); fill: var(--ui-muted); paint-order: stroke; stroke: var(--ui-surface); stroke-width: 3px; }
+.ui-strip__node:hover .ui-strip__label, .ui-strip__node:focus-visible .ui-strip__label { fill: var(--ui-ink); text-decoration: underline; }
+.ui-strip__node:focus-visible { outline: none; }
+.ui-strip__node:focus-visible .ui-graph__dot { stroke: var(--ui-focus); stroke-width: 3; }
+.ui-strip__hl { fill: var(--ui-accent-soft); stroke: var(--ui-accent); stroke-width: 1; }
+.ui-strip__node.is-current .ui-strip__label { fill: var(--ui-accent-strong); font-weight: 700; stroke: var(--ui-accent-soft); }
+.ui-strips__row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; align-items: center;
+                  padding: 8px 16px; border-bottom: 1px solid var(--ui-line-soft); }
+.ui-strips__row:last-child { border-bottom: 0; }
+.ui-strips__head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+@media (max-width: 640px) { .ui-strips__row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
