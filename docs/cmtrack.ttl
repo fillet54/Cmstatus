@@ -43,11 +43,24 @@ cmt:CSC a owl:Class ;
 
 cmt:Capability a owl:Class ;
     skos:altLabel "IFC" ;
-    skos:definition "A fielded capability, arranged in a hierarchy; what a baseline describes. Not itself versioned." .
+    skos:definition "An increment of fielded capability. IFCs spawn from an approved HSCM of an earlier IFC; each has a straight sequence of HSCM builds, one of which may be marked final." .
 [] a owl:AllDisjointClasses ; owl:members ( cmt:ConfigurationItem cmt:CSC cmt:Capability ) .
 
 cmt:partOf a owl:ObjectProperty ;
-    rdfs:comment "Product-space decomposition: CSC partOf CSCI, Capability partOf Capability." .
+    rdfs:comment "Product-space decomposition: CSC partOf CSCI." .
+
+cmt:spawnedFrom a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:subPropertyOf prov:wasDerivedFrom ;
+    rdfs:domain cmt:Capability ; rdfs:range cmt:Baseline ;
+    skos:definition "The approved HSCM of an earlier IFC that this IFC started from (IFC lineage)." .
+
+cmt:final a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Capability ; rdfs:range cmt:Baseline ;
+    skos:definition "The HSCM build marked final; the IFC takes no new builds." .
+
+cmt:build a owl:DatatypeProperty, owl:FunctionalProperty ;
+    rdfs:domain cmt:Baseline ; rdfs:range xsd:positiveInteger ;
+    skos:definition "Build number within the IFC (Build 1, 2, …)." .
 
 cmt:jiraProject a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain cmt:CSC ; rdfs:range xsd:string .
 cmt:affectedProduct a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain cmt:CSC ; rdfs:range xsd:string .
@@ -148,7 +161,7 @@ cmt:selects a owl:ObjectProperty ;
 cmt:derivedFrom a owl:ObjectProperty, owl:FunctionalProperty ;
     rdfs:subPropertyOf prov:wasDerivedFrom ;
     rdfs:domain cmt:Baseline ; rdfs:range cmt:Baseline ;
-    skos:definition "Baseline lineage: the baseline this one was built from (branches make a tree per capability)." .
+    skos:definition "Baseline lineage: the previous build of the same IFC, or for Build 1 the HSCM the IFC was spawned from." .
 
 cmt:supersedes a owl:ObjectProperty, owl:FunctionalProperty, owl:InverseFunctionalProperty ;
     rdfs:subPropertyOf prov:wasRevisionOf ;

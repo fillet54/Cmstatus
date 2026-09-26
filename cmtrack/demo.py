@@ -2,9 +2,9 @@
 
 NAV-SW syncs its releases from a (stand-in) Jira project; DISPLAY-SW and the composite SUITE are managed by
 hand. A failed build and an ad hoc respin, patch and emergency releases that come from the source, a
-build the source can't place, an IFC hierarchy, a scraped HSCM with placeholder CIs and a hand-made
-successor baseline, and an emergency fix merged into the next quarter (a two-parent version in the lineage
-DAG). Tickets aren't stored; ``demo_source`` serves Jira-style parent and CSC tickets for the demo.
+build the source can't place, IFC-1's HSCM builds (a scraped Build 1 with placeholder CIs, a hand-made
+Build 2 marked final) and IFC-2 spawned from it with a draft Build 1, and an emergency fix merged into the
+next quarter (a two-parent version in the lineage DAG). Tickets aren't stored; ``demo_source`` serves Jira-style parent and CSC tickets for the demo.
 """
 import argparse
 import os
@@ -73,18 +73,18 @@ def seed(client):
                                                           {"ci": "DISPLAY-SW", "version": "3.2.0"}]})
     call("post", f"/versions/{sv}/release")
 
-    # IFCs: scraped HSCM-A with placeholders, then HSCM-B adds the suite
-    call("post", "/ifcs", {"name": "IFC-2", "description": "Mission capability"})
-    call("post", "/ifcs", {"name": "IFC-2.1", "parent": "IFC-2", "description": "Navigation increment"})
-    call("post", "/ifcs", {"name": "IFC-2.2", "parent": "IFC-2", "description": "Display increment"})
+    # IFC-1: Build 1 is a scraped HSCM with placeholders, Build 2 adds the suite and is final.
+    # IFC-2 spawns from IFC-1 Build 2; its Build 1 (a draft) adds the display.
+    call("post", "/ifcs", {"name": "IFC-1", "description": "Initial navigation capability"})
     csv_text = "ci,version,type\nNAV-SW,2026.Q4-b4,CSCI\nRADAR-SW,7.4,\nANTENNA,Rev C,HWCI\n"
-    a = call("post", "/ifcs/IFC-2.1/hscm?name=HSCM-A&source_ref=DOC-001", data=csv_text,
-             content_type="text/csv")["baseline"]
-    b = call("post", f"/baselines/{a['id']}/clone", {"name": "HSCM-B"})
-    entries = [{"ci": e["ci"], "version": e["version"]} for e in b["entries"]] + [{"ci": "SUITE", "version": str(sv)}]
-    call("put", f"/baselines/{b['id']}/entries", {"entries": entries})
-    call("post", f"/baselines/{b['id']}/approve")
-    call("post", "/ifcs/IFC-2.2/baselines", {"name": "HSCM-D1", "entries": [{"ci": "DISPLAY-SW", "version": "3.2.0"}]})
+    call("post", "/ifcs/IFC-1/hscm?source_ref=DOC-001", data=csv_text, content_type="text/csv")
+    b2 = call("post", "/ifcs/IFC-1/baselines", {})
+    call("put", f"/baselines/{b2['id']}/entries/SUITE", {"version": str(sv)})
+    call("post", f"/baselines/{b2['id']}/approve")
+    call("post", "/ifcs/IFC-1/final")
+    call("post", "/ifcs", {"name": "IFC-2", "spawned_from": b2["id"], "description": "Display increment"})
+    d1 = call("post", "/ifcs/IFC-2/baselines", {})
+    call("put", f"/baselines/{d1['id']}/entries/DISPLAY-SW", {"version": "3.2.0"})
 
     # ship the emergency after the baselines were approved, so both now field an older NAV version
     ship(version(er1, "2026.Q4.ER1"))

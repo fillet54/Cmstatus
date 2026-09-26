@@ -31,9 +31,10 @@ right home for "Version of an HWCI" when hardware revisions get built (see Gaps)
 
 Following Conradi & Westfechtel, every term sits on one of two axes:
 
-- **Product space (what something is made of):** CI, CSC, composite CI → child CIs, capability (IFC)
-  hierarchy.
-- **Version space (how it evolves over time):** Release, Version, lineage, Baseline.
+- **Product space (what something is made of):** CI, CSC, composite CI → child CIs.
+- **Version space (how it evolves over time):** Release, Version, lineage; and at program level, IFC, Baseline
+  (HSCM build), IFC lineage. An IFC is to the program what a release line is to a CI: builds lead up to a final one,
+  and a new IFC spawns from an HSCM the way a patch branches from a version.
 
 A **Version** is where the two axes meet: it is one CI at one point in its evolution. Everything that
 pins a configuration (manifests, baselines) points at Versions, never at CIs alone.
@@ -70,7 +71,8 @@ classDiagram
     Release --> Release : patches
     Release --> Version : basedOn
     Release --> Version : releasedAs
-    Capability --> Capability : partOf
+    Capability --> Baseline : spawnedFrom
+    Capability --> Baseline : final
     Baseline "*" --> "1" Capability : baselineOf
     Baseline --> Version : selects (one per CI)
     Baseline --> Baseline : supersedes
@@ -102,8 +104,10 @@ classDiagram
   and CSCIs. CSCs are not versioned separately (per-CSC versions are listed under Gaps).
 
 **Capability (IFC)** — `cmt:Capability`, table `ifc`
-: A fielded capability, arranged in a hierarchy (`partOf`). It is the thing a baseline describes. It is not
-  a CI: it is never versioned itself. Its configuration is the set of CI versions in its approved baseline.
+: An increment of fielded capability. IFCs don't nest: each one is `spawnedFrom` a specific approved HSCM of
+  an earlier IFC, so they form a lineage. An IFC's configuration evolves through a straight sequence of HSCM
+  builds (Build 1, 2, …); the latest approved is its current one, and the build marked `final` closes it. It
+  is not a CI.
 
 ### Version space
 
@@ -146,11 +150,11 @@ classDiagram
 : For one capability, a selection of exactly **one version per CI**. This is CMPO's "Baseline packages
   Versions" and OSLC's `oslc_config:selects`.
   - **Draft** ≈ an OSLC *stream*: editable.
-  - **Approved** ≈ an OSLC/EIA-649 *baseline*: frozen, and changed only by cloning a new draft that
-    `supersedes` it. Only released or external versions may be selected.
-  - **Lineage** (`derivedFrom`): the baseline a new one was built from. Branches (several drafts from one
-    baseline) make it a tree, the baseline counterpart of version lineage. `supersedes` is the approval
-    order, `derivedFrom` is the content history, and the two differ when a branch is approved out of order.
+  - **Approved** ≈ an OSLC/EIA-649 *baseline*: frozen, and changed only by starting the next build, which
+    `supersedes` it once approved. Only released or external versions may be selected.
+  - **Build** (`seq`): an HSCM's number within its IFC. Builds are a straight sequence: each is
+    `derivedFrom` the one before, and Build 1 is `derivedFrom` the HSCM its IFC was spawned from, so the
+    whole program's HSCMs form a tree whose branches are IFCs.
   - In EIA-649 terms it is closest to a **product baseline** as fielded for that capability. It is not a
     functional or allocated baseline: those baseline *requirements documents*, which cmtrack doesn't hold.
   - **Baselines behind**: approved baselines that select an older version than the release line's
@@ -188,7 +192,8 @@ what cmtrack contributes that the source can't compute.
 | Relation | Domain → Range | Card. | Standard alignment |
 |---|---|---|---|
 | `partOf` | CSC → CSCI | * → 1 | MIL-STD-498 decomposition |
-| `partOf` | Capability → Capability | * → 0..1 | |
+| `spawnedFrom` | Capability → Baseline | * → 0..1 | ⊑ `prov:wasDerivedFrom` (IFC lineage) |
+| `final` | Capability → Baseline | 0..1 → 0..1 | the build that closed the IFC |
 | `releaseOf` | Release → CI | * → 1 | |
 | `buildOf` | Version → Release | * → 1 | |
 | `versionOf` | Version → CI | * → 1 | `dcterms:isVersionOf` (OSLC), CMPO *CI has Version* |
@@ -199,7 +204,7 @@ what cmtrack contributes that the source can't compute.
 | `releasedAs` | Release → Version | 1 → 0..1, immutable | EIA-649 *release* (the act) |
 | `baselineOf` | Baseline → Capability | * → 1 | |
 | `selects` | Baseline → Version | 1 → *, one per CI | `oslc_config:selects`, CMPO *packages* |
-| `derivedFrom` | Baseline → Baseline | * → 0..1 | ⊑ `prov:wasDerivedFrom` (baseline lineage: a tree per capability) |
+| `derivedFrom` | Baseline → Baseline | * → 0..1 | ⊑ `prov:wasDerivedFrom` (the build before; Build 1: the spawn point) |
 | `supersedes` | Baseline → Baseline | 0..1 → 0..1 | `prov:wasRevisionOf` (set on approval) |
 | `affects` | CSC ticket → CSC | * → 1 | |
 | `fixedIn` | Ticket → Version | * → * | |

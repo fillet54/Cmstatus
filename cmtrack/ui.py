@@ -134,11 +134,12 @@ def styleguide_samples():
                v("2026.Q4-b3", "2026.Q4", "rejected", dot="danger")]
     return {
         "graph_sample": graph.layout(lineage),
-        "strip_sample": graph.layout([
-            {"id": 4, "name": "HSCM-C", "href": "#", "parents": [2], "dot": "hollow"},
-            {"id": 3, "name": "HSCM-A.1", "href": "#", "parents": [1], "current": True},
-            {"id": 2, "name": "HSCM-B", "href": "#", "parents": [1], "dot": "muted"},
-            {"id": 1, "name": "HSCM-A", "href": "#", "parents": [], "dot": "muted"}], horizontal=True),
+        "strip_sample": graph.swimlanes([
+            {"id": 1, "name": "Build 1", "href": "#", "parents": [], "dot": "muted", "caption": "IFC-1", "lane": 0},
+            {"id": 2, "name": "Build 2", "href": "#", "parents": [1], "current": True, "tag": "final", "lane": 0},
+            {"id": 3, "name": "Build 1", "href": "#", "parents": [2], "current": True, "caption": "IFC-2", "lane": 1},
+            {"id": 4, "name": "Build 2", "href": "#", "parents": [3], "dot": "hollow", "lane": 1}],
+            lambda n: n["lane"], horizontal=True),
         "progress": progress,
         "tickets": [
             ticket("NAVL-105", "Blend terrain-referenced fixes into the filter", "peer_review", ["2027.Q1-b1"],

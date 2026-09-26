@@ -269,8 +269,9 @@ def list_ifcs(conn):
 @bp.post("/ifcs")
 @tx
 def create_ifc(conn):
+    """{name, spawned_from?: baseline id (an approved HSCM of an earlier IFC), description?}"""
     d = body()
-    return created(svc.create_ifc(conn, d.get("name"), d.get("parent"), d.get("description")))
+    return created(svc.create_ifc(conn, d.get("name"), d.get("spawned_from"), d.get("description")))
 
 
 @bp.get("/ifcs/<ref>")
@@ -283,18 +284,29 @@ def get_ifc(conn, ref):
 @tx
 def update_ifc(conn, ref):
     d = body()
-    if not {"parent", "description"} & d.keys():
-        raise svc.CMError("only 'parent' and 'description' can be changed")
-    return jsonify(svc.to_dict(svc.update_ifc(conn, ref, **{k: d[k] for k in ("parent", "description") if k in d})))
+    if not {"spawned_from", "description"} & d.keys():
+        raise svc.CMError("only 'spawned_from' and 'description' can be changed")
+    return jsonify(svc.to_dict(svc.update_ifc(conn, ref, **{k: d[k] for k in ("spawned_from", "description") if k in d})))
+
+
+@bp.post("/ifcs/<ref>/final")
+@tx
+def finalize_ifc(conn, ref):
+    return jsonify(svc.finalize_ifc(conn, ref))
+
+
+@bp.delete("/ifcs/<ref>/final")
+@tx
+def reopen_ifc(conn, ref):
+    return jsonify(svc.reopen_ifc(conn, ref))
 
 
 @bp.post("/ifcs/<ref>/baselines")
 @tx
 def create_baseline(conn, ref):
-    """{name, from?: baseline id to derive from (copies its entries unless entries are given), entries?}"""
+    """The IFC's next build: {name?: default "Build N", entries?: default the previous build's, source_ref?}"""
     d = body()
-    return created(svc.create_baseline(conn, ref, d.get("name"), d.get("entries"),
-                                       source_ref=d.get("source_ref"), derived_from=d.get("from")))
+    return created(svc.create_baseline(conn, ref, d.get("name"), d.get("entries"), source_ref=d.get("source_ref")))
 
 
 @bp.post("/ifcs/<ref>/hscm")
@@ -347,12 +359,6 @@ def refresh_baseline(conn, bid):
 @tx
 def delete_baseline(conn, bid):
     return jsonify(svc.delete_baseline(conn, bid))
-
-
-@bp.post("/baselines/<int:bid>/clone")
-@tx
-def clone_baseline(conn, bid):
-    return created(svc.clone_baseline(conn, bid, body().get("name")))
 
 
 @bp.post("/baselines/<int:bid>/approve")

@@ -1247,87 +1247,116 @@ def remap_candidates(conn, ci_ref):
 
 
 # ----------------------------------------------------------------------------- IFCs
+#
+# An IFC is an increment of capability. IFCs spawn from one another: a new IFC starts from a specific
+# approved HSCM of an earlier one (``spawned_from_id``). Within an IFC the HSCMs are a straight sequence of
+# builds (Build 1, 2, …): each starts from the one before, is approved in turn, and the latest approved is
+# the current one. Marking a build final closes the IFC.
 
 def get_ifc(conn, ref):
     return _by_ref(conn, "ifc", ref, "IFC")
 
 
-def create_ifc(conn, name, parent=None, description=None):
-    if not name:
-        raise CMError("name is required")
-    parent_id = get_ifc(conn, parent)["id"] if parent else None
-    try:
-        cur = conn.execute("INSERT INTO ifc (name, parent_id, description) VALUES (?, ?, ?)",
-                           (name, parent_id, description))
-    except sqlite3.IntegrityError:
-        raise Conflict(f"IFC {name!r} already exists") from None
-    log(conn, "ifc", cur.lastrowid, "created", name=name, parent=parent)
-    return get_ifc(conn, cur.lastrowid)
+def _spawn_point(conn, baseline_ref, ifc_id=None):
+    b = get_baseline(conn, baseline_ref)
+    if b["status"] == "draft":
+        raise CMError(f"can't spawn from {_hscm_label(conn, b)}: it is still a draft")
+    if ifc_id is not None and ifc_id in {i["id"] for i in _spawn_ancestors(conn, b["ifc_id"])} | {b["ifc_id"]}:
+        raise CMError("that spawn point would make the IFC its own ancestor")
+    return b
 
 
-def set_ifc_parent(conn, ref, parent):
-    ifc = get_ifc(conn, ref)
-    parent_id = get_ifc(conn, parent)["id"] if parent else None
-    if parent_id is not None and (parent_id == ifc["id"] or
-                                  ifc["id"] in [a["id"] for a in _ancestors(conn, parent_id)]):
-        raise CMError("that parent would create a cycle")
-    conn.execute("UPDATE ifc SET parent_id = ? WHERE id = ?", (parent_id, ifc["id"]))
-    log(conn, "ifc", ifc["id"], "reparented", parent=parent)
-    return get_ifc(conn, ifc["id"])
-
-
-def update_ifc(conn, ref, **fields):
-    """Change an IFC's parent and/or description (only the fields given)."""
-    ifc = get_ifc(conn, ref)
-    if "parent" in fields and (fields["parent"] or None) != _ifc_name(conn, ifc["parent_id"]):
-        set_ifc_parent(conn, ifc["id"], fields["parent"] or None)
-    if "description" in fields and (fields["description"] or None) != ifc["description"]:
-        conn.execute("UPDATE ifc SET description = ? WHERE id = ?", (fields["description"] or None, ifc["id"]))
-        log(conn, "ifc", ifc["id"], "updated", description=fields["description"] or None)
-    return get_ifc(conn, ifc["id"])
+def _hscm_label(conn, b):
+    return f"{_ifc_name(conn, b['ifc_id'])} {b['name']}"
 
 
 def _ifc_name(conn, ifc_id):
     return get_ifc(conn, ifc_id)["name"] if ifc_id else None
 
 
-def _ancestors(conn, ifc_id):
+def create_ifc(conn, name, spawned_from=None, description=None):
+    """A new IFC, optionally spawned from an approved HSCM (baseline id) of another IFC."""
+    if not name:
+        raise CMError("name is required")
+    point = _spawn_point(conn, spawned_from) if spawned_from else None
+    try:
+        cur = conn.execute("INSERT INTO ifc (name, spawned_from_id, description) VALUES (?, ?, ?)",
+                           (name, point["id"] if point else None, description))
+    except sqlite3.IntegrityError:
+        raise Conflict(f"IFC {name!r} already exists") from None
+    log(conn, "ifc", cur.lastrowid, "created", name=name,
+        spawned_from=_hscm_label(conn, point) if point else None)
+    return get_ifc(conn, cur.lastrowid)
+
+
+def update_ifc(conn, ref, **fields):
+    """Change an IFC's spawn point (a baseline id, or empty for none) and/or description."""
+    ifc = get_ifc(conn, ref)
+    if "spawned_from" in fields:
+        point = _spawn_point(conn, fields["spawned_from"], ifc["id"]) if fields["spawned_from"] else None
+        if (point["id"] if point else None) != ifc["spawned_from_id"]:
+            conn.execute("UPDATE ifc SET spawned_from_id = ? WHERE id = ?", (point["id"] if point else None, ifc["id"]))
+            conn.execute("UPDATE baseline SET derived_from_id = ? WHERE ifc_id = ? AND seq = 1",   # Build 1's lineage
+                         (point["id"] if point else None, ifc["id"]))
+            log(conn, "ifc", ifc["id"], "respawned", spawned_from=_hscm_label(conn, point) if point else None)
+    if "description" in fields and (fields["description"] or None) != ifc["description"]:
+        conn.execute("UPDATE ifc SET description = ? WHERE id = ?", (fields["description"] or None, ifc["id"]))
+        log(conn, "ifc", ifc["id"], "updated", description=fields["description"] or None)
+    return get_ifc(conn, ifc["id"])
+
+
+def _spawn_ancestors(conn, ifc_id):
+    """IFCs this one descends from, nearest first."""
     return conn.execute(
-        """WITH RECURSIVE a(id, parent_id, name, depth) AS (
-               SELECT id, parent_id, name, 0 FROM ifc WHERE id = (SELECT parent_id FROM ifc WHERE id = ?)
-               UNION ALL SELECT i.id, i.parent_id, i.name, a.depth + 1 FROM ifc i JOIN a ON i.id = a.parent_id
-               WHERE a.depth < 50)
+        """WITH RECURSIVE a(id, name, depth) AS (
+               SELECT b.ifc_id, i.name, 1 FROM ifc x JOIN baseline b ON b.id = x.spawned_from_id
+                 JOIN ifc i ON i.id = b.ifc_id WHERE x.id = ?
+               UNION ALL SELECT b.ifc_id, i.name, a.depth + 1 FROM a JOIN ifc x ON x.id = a.id
+                 JOIN baseline b ON b.id = x.spawned_from_id JOIN ifc i ON i.id = b.ifc_id WHERE a.depth < 50)
            SELECT id, name FROM a ORDER BY depth""", (ifc_id,)).fetchall()
 
 
 def list_ifcs(conn):
     return conn.execute(
-        "SELECT i.*, p.name AS parent FROM ifc i LEFT JOIN ifc p ON p.id = i.parent_id ORDER BY i.name").fetchall()
+        "SELECT i.*, s.name AS spawned_from, si.name AS spawned_from_ifc, "
+        "(SELECT COUNT(*) FROM baseline b WHERE b.ifc_id = i.id) AS builds "
+        "FROM ifc i LEFT JOIN baseline s ON s.id = i.spawned_from_id LEFT JOIN ifc si ON si.id = s.ifc_id "
+        "ORDER BY i.id").fetchall()
 
 
 def ifc_detail(conn, ref):
     ifc = get_ifc(conn, ref)
     out = to_dict(ifc)
-    out["ancestors"] = [a["name"] for a in _ancestors(conn, ifc["id"])]
-    out["children"] = [r["name"] for r in conn.execute(
-        "SELECT name FROM ifc WHERE parent_id = ? ORDER BY name", (ifc["id"],))]
+    point = get_baseline(conn, ifc["spawned_from_id"]) if ifc["spawned_from_id"] else None
+    out["spawned_from"] = {"id": point["id"], "name": point["name"], "ifc": _ifc_name(conn, point["ifc_id"])} if point else None
+    out["ancestors"] = [a["name"] for a in _spawn_ancestors(conn, ifc["id"])]
+    out["spawned"] = to_dicts(conn.execute(
+        "SELECT i.id, i.name, b.id AS from_id, b.name AS from_build FROM ifc i JOIN baseline b ON b.id = i.spawned_from_id "
+        "WHERE b.ifc_id = ? ORDER BY i.id", (ifc["id"],)))
     out["baselines"] = to_dicts(conn.execute(
-        "SELECT id, name, status, source, source_ref, created_at, approved_at, derived_from_id, supersedes_id "
-        "FROM baseline WHERE ifc_id = ? ORDER BY id", (ifc["id"],)))
+        "SELECT id, seq, name, status, source, source_ref, created_at, approved_at, derived_from_id, supersedes_id "
+        "FROM baseline WHERE ifc_id = ? ORDER BY seq", (ifc["id"],)))
+    out["final"] = next((b["name"] for b in out["baselines"] if b["id"] == ifc["final_id"]), None)
+    out["draft"] = next((b for b in out["baselines"] if b["status"] == "draft"), None)
     current = current_baseline(conn, ifc["id"])
     out["current_hscm"] = baseline_detail(conn, current["id"]) if current else None
     return out
 
 
-# ----------------------------------------------------------------------------- baselines (HSCM)
+# ----------------------------------------------------------------------------- baselines (HSCM builds)
 
 def get_baseline(conn, baseline_id):
     return _one(conn, "SELECT * FROM baseline WHERE id = ?", (baseline_id,), f"baseline {baseline_id}")
 
 
 def current_baseline(conn, ifc_id):
+    """The IFC's latest approved build."""
     return conn.execute("SELECT * FROM baseline WHERE ifc_id = ? AND status = 'approved' "
                         "ORDER BY approved_at DESC, id DESC LIMIT 1", (ifc_id,)).fetchone()
+
+
+def _latest_build(conn, ifc_id):
+    return conn.execute("SELECT * FROM baseline WHERE ifc_id = ? ORDER BY seq DESC LIMIT 1", (ifc_id,)).fetchone()
 
 
 def baseline_entries(conn, baseline_id):
@@ -1339,22 +1368,31 @@ def baseline_entries(conn, baseline_id):
 
 def baseline_detail(conn, baseline_id):
     b = get_baseline(conn, baseline_id)
+    ifc = get_ifc(conn, b["ifc_id"])
     out = to_dict(b)
-    out["ifc"] = get_ifc(conn, b["ifc_id"])["name"]
+    out["ifc"] = ifc["name"]
+    out["final"] = ifc["final_id"] == b["id"]
+    out["latest"] = _latest_build(conn, ifc["id"])["id"] == b["id"]
     out["supersedes"] = get_baseline(conn, b["supersedes_id"])["name"] if b["supersedes_id"] else None
-    out["derived_from"] = get_baseline(conn, b["derived_from_id"])["name"] if b["derived_from_id"] else None
+    base = get_baseline(conn, b["derived_from_id"]) if b["derived_from_id"] else None
+    out["derived_from"] = {"id": base["id"], "name": base["name"], "ifc": _ifc_name(conn, base["ifc_id"])} if base else None
     out["derivations"] = to_dicts(conn.execute(
-        "SELECT id, name, status FROM baseline WHERE derived_from_id = ? ORDER BY id", (b["id"],)))
+        "SELECT b.id, b.name, b.status, i.name AS ifc FROM baseline b JOIN ifc i ON i.id = b.ifc_id "
+        "WHERE b.derived_from_id = ? ORDER BY b.id", (b["id"],)))
     out["entries"] = baseline_entries(conn, b["id"])
     return out
 
 
-def baseline_lineage(conn, ifc_id):
-    """An IFC's baselines, oldest first, each with the baseline it was derived from (its lineage parent)."""
-    return to_dicts(conn.execute(
-        "SELECT b.id, b.name, b.status, b.source, b.source_ref, b.created_at, b.approved_at, b.derived_from_id, "
-        "b.supersedes_id, (SELECT COUNT(*) FROM baseline_entry e WHERE e.baseline_id = b.id) AS entries "
-        "FROM baseline b WHERE b.ifc_id = ? ORDER BY b.id", (ifc_id,)))
+def baseline_lineage(conn, ifc_id=None):
+    """Baselines (all IFCs, or one), oldest first, each with the baseline it was built from: the build before it,
+    or for an IFC's first build, the HSCM the IFC was spawned from."""
+    rows = to_dicts(conn.execute(
+        "SELECT b.id, b.ifc_id, i.name AS ifc, b.seq, b.name, b.status, b.source, b.source_ref, b.created_at, "
+        "b.approved_at, b.derived_from_id, b.supersedes_id, i.final_id = b.id AS final, "
+        "(SELECT COUNT(*) FROM baseline_entry e WHERE e.baseline_id = b.id) AS entries "
+        "FROM baseline b JOIN ifc i ON i.id = b.ifc_id " + ("WHERE b.ifc_id = ? " if ifc_id else "") +
+        "ORDER BY b.id", (ifc_id,) if ifc_id else ()))
+    return rows
 
 
 def _resolve_entries(conn, entries):
@@ -1371,36 +1409,42 @@ def _write_entries(conn, baseline_id, resolved):
                      [(baseline_id, ci_id, v["id"]) for ci_id, v in resolved.items()])
 
 
-def create_baseline(conn, ifc_ref, name, entries=None, source="manual", source_ref=None, derived_from=None):
-    """A new draft baseline. ``derived_from`` (a baseline id of the same IFC) records its lineage; with no
-    ``entries`` given, it starts with that baseline's entries."""
+def _next_build(conn, ifc):
+    """(seq, the baseline the next build starts from) for an IFC, or an error if it can't take a new one."""
+    if ifc["final_id"]:
+        raise CMError(f"{ifc['name']} is closed: {get_baseline(conn, ifc['final_id'])['name']} is final (reopen it first)")
+    latest = _latest_build(conn, ifc["id"])
+    if latest and latest["status"] == "draft":
+        raise CMError(f"{ifc['name']} {latest['name']} is still a draft: approve or discard it first")
+    base = latest or (get_baseline(conn, ifc["spawned_from_id"]) if ifc["spawned_from_id"] else None)
+    return (latest["seq"] + 1 if latest else 1), base
+
+
+def create_baseline(conn, ifc_ref, name=None, entries=None, source="manual", source_ref=None):
+    """The IFC's next build, as a draft. It starts from the previous build's entries (Build 1: the HSCM the IFC
+    was spawned from), unless ``entries`` are given. ``name`` defaults to "Build N"."""
     ifc = get_ifc(conn, ifc_ref)
-    if not name:
-        raise CMError("name is required")
-    base = None
-    if derived_from:
-        base = get_baseline(conn, derived_from)
-        if base["ifc_id"] != ifc["id"]:
-            raise CMError(f"baseline {base['name']} belongs to another IFC")
-        if entries is None:
-            entries = [{"ci": e["ci"], "version": e["version_id"]} for e in baseline_entries(conn, base["id"])]
-    resolved = _resolve_entries(conn, entries or ())
+    seq, base = _next_build(conn, ifc)
+    name = name or f"Build {seq}"
+    if entries is None:
+        entries = [{"ci": e["ci"], "version": e["version_id"]} for e in baseline_entries(conn, base["id"])] if base else []
+    resolved = _resolve_entries(conn, entries)
     try:
         cur = conn.execute(
-            "INSERT INTO baseline (ifc_id, name, derived_from_id, source, source_ref) VALUES (?, ?, ?, ?, ?)",
-            (ifc["id"], name, base["id"] if base else None, source, source_ref))
+            "INSERT INTO baseline (ifc_id, seq, name, derived_from_id, source, source_ref) VALUES (?, ?, ?, ?, ?, ?)",
+            (ifc["id"], seq, name, base["id"] if base else None, source, source_ref))
     except sqlite3.IntegrityError:
         raise Conflict(f"baseline {name!r} already exists for {ifc['name']}") from None
     _write_entries(conn, cur.lastrowid, resolved)
-    log(conn, "baseline", cur.lastrowid, "created", ifc=ifc["name"], name=name, source=source,
-        derived_from=base["name"] if base else None)
+    log(conn, "baseline", cur.lastrowid, "created", ifc=ifc["name"], name=name, build=seq, source=source,
+        derived_from=_hscm_label(conn, base) if base else None)
     return baseline_detail(conn, cur.lastrowid)
 
 
 def _draft(conn, baseline_id):
     b = get_baseline(conn, baseline_id)
     if b["status"] != "draft":
-        raise CMError(f"baseline {b['name']} is {b['status']}; branch from it to change it")
+        raise CMError(f"baseline {b['name']} is {b['status']}; start the next build to change it")
     return b
 
 
@@ -1450,21 +1494,12 @@ def refresh_baseline(conn, baseline_id):
 
 
 def delete_baseline(conn, baseline_id):
-    """Discard a draft. Drafts others were derived from are kept, so the lineage never loses a node."""
+    """Discard an IFC's draft build (always its latest), so the next build can start again."""
     b = _draft(conn, baseline_id)
-    kids = [r["name"] for r in conn.execute("SELECT name FROM baseline WHERE derived_from_id = ?", (b["id"],))]
-    if kids:
-        raise CMError(f"baseline {b['name']} can't be discarded: {', '.join(kids)} derived from it")
     conn.execute("DELETE FROM baseline_entry WHERE baseline_id = ?", (b["id"],))
     conn.execute("DELETE FROM baseline WHERE id = ?", (b["id"],))
     log(conn, "ifc", b["ifc_id"], "baseline_discarded", name=b["name"])
     return {"ifc": _ifc_name(conn, b["ifc_id"]), "name": b["name"]}
-
-
-def clone_baseline(conn, baseline_id, name):
-    """Branch: a new draft derived from this baseline, starting with its entries."""
-    b = get_baseline(conn, baseline_id)
-    return create_baseline(conn, b["ifc_id"], name, derived_from=b["id"])
 
 
 def _approve(conn, b):
@@ -1488,6 +1523,27 @@ def approve_baseline(conn, baseline_id):
         raise CMError(f"cannot approve {b['name']}", problems)
     _approve(conn, b)
     return baseline_detail(conn, b["id"])
+
+
+def finalize_ifc(conn, ifc_ref):
+    """Mark the IFC's latest build final (it must be approved), closing the IFC to new builds."""
+    ifc = get_ifc(conn, ifc_ref)
+    latest = _latest_build(conn, ifc["id"])
+    if latest is None or latest["status"] != "approved":
+        raise CMError(f"{ifc['name']}'s latest build must be approved to be final"
+                      + (f" ({latest['name']} is {latest['status']})" if latest else " (it has none)"))
+    conn.execute("UPDATE ifc SET final_id = ? WHERE id = ?", (latest["id"], ifc["id"]))
+    log(conn, "ifc", ifc["id"], "finalized", final=latest["name"])
+    return ifc_detail(conn, ifc["id"])
+
+
+def reopen_ifc(conn, ifc_ref):
+    ifc = get_ifc(conn, ifc_ref)
+    if not ifc["final_id"]:
+        raise CMError(f"{ifc['name']} is not closed")
+    conn.execute("UPDATE ifc SET final_id = NULL WHERE id = ?", (ifc["id"],))
+    log(conn, "ifc", ifc["id"], "reopened")
+    return ifc_detail(conn, ifc["id"])
 
 
 def diff_baselines(conn, a_id, b_id):
@@ -1522,13 +1578,15 @@ def hscm_rows(text):
 
 
 def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
-    """Record a scraped HSCM as a baseline.
+    """Record a scraped HSCM as the IFC's next build (``name`` defaults to "Build N").
 
     rows: [{ci, version, type?}]. Unknown CIs become placeholder CIs (managed=0);
     unknown versions become 'external' versions. The HSCM document is the authority,
     so it is approved as-is by default; anything odd comes back as warnings.
     """
     ifc = get_ifc(conn, ifc_ref)
+    seq, base = _next_build(conn, ifc)
+    name = name or f"Build {seq}"
     warnings, resolved, created_cis = [], {}, []
     for i, row in enumerate(rows, 1):
         ci_name = str(row.get("ci") or "").strip()
@@ -1552,15 +1610,14 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
             warnings.append(f"row {i}: {ci_name} listed more than once; last row wins")
         resolved[ci["id"]] = ver
 
-    prev = current_baseline(conn, ifc["id"])   # a new HSCM revision builds on the one in force
     try:
         cur = conn.execute(
-            "INSERT INTO baseline (ifc_id, name, derived_from_id, source, source_ref) VALUES (?, ?, ?, 'scraped', ?)",
-            (ifc["id"], name, prev["id"] if prev else None, source_ref))
+            "INSERT INTO baseline (ifc_id, seq, name, derived_from_id, source, source_ref) "
+            "VALUES (?, ?, ?, ?, 'scraped', ?)", (ifc["id"], seq, name, base["id"] if base else None, source_ref))
     except sqlite3.IntegrityError:
         raise Conflict(f"baseline {name!r} already exists for {ifc['name']}") from None
     _write_entries(conn, cur.lastrowid, resolved)
-    log(conn, "baseline", cur.lastrowid, "imported", ifc=ifc["name"], name=name,
+    log(conn, "baseline", cur.lastrowid, "imported", ifc=ifc["name"], name=name, build=seq,
         source_ref=source_ref, placeholders=created_cis, warnings=warnings)
     if approve:
         _approve(conn, get_baseline(conn, cur.lastrowid))

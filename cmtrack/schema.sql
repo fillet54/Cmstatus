@@ -16,10 +16,11 @@
 --   backlog ──< backlog_item                     (a shared, ranked list of top-level ticket keys; ticket data is live)
 --      └──< backlog_ci >── ci                     (CIs the backlog is about, for navigation and pulling candidates)
 --
---   ifc ──< ifc (parent/child)
---    └──< baseline ──< baseline_entry >── ci, version     (the HSCM list: one version per CI)
---           │   ▲
---           └───┘ derived_from                   (baseline lineage: the baseline each one was built from)
+--   ifc ──< baseline ──< baseline_entry >── ci, version  (an IFC's HSCMs: builds 1..N, one version per CI each)
+--    │  ▲       │   ▲
+--    │  │       └───┘ derived_from               (lineage: the build before, or for Build 1 the spawn point)
+--    └──┘ spawned_from (→ baseline)              (IFCs spawn from an approved HSCM of an earlier IFC)
+--         final (→ baseline)                     (the build that closed the IFC)
 --
 --   event                                        (append-only status accounting log)
 
@@ -110,7 +111,8 @@ CREATE TABLE IF NOT EXISTS version_parent (
 CREATE TABLE IF NOT EXISTS ifc (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
-    parent_id   INTEGER REFERENCES ifc(id),
+    spawned_from_id INTEGER REFERENCES baseline(id),  -- the approved HSCM (of an earlier IFC) this IFC started from
+    final_id    INTEGER REFERENCES baseline(id),      -- the build marked final; set = the IFC is closed
     description TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -118,10 +120,11 @@ CREATE TABLE IF NOT EXISTS ifc (
 CREATE TABLE IF NOT EXISTS baseline (
     id            INTEGER PRIMARY KEY,
     ifc_id        INTEGER NOT NULL REFERENCES ifc(id),
+    seq           INTEGER NOT NULL DEFAULT 0,         -- build number within the IFC (Build 1, 2, …)
     name          TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'superseded')),
     supersedes_id INTEGER REFERENCES baseline(id),    -- the approved baseline this one replaced (set on approval)
-    derived_from_id INTEGER REFERENCES baseline(id),  -- lineage: the baseline this one started from (NULL = from scratch)
+    derived_from_id INTEGER REFERENCES baseline(id),  -- lineage: the previous build, or the IFC's spawn point
     source        TEXT NOT NULL DEFAULT 'manual',     -- manual | scraped
     source_ref    TEXT,                               -- e.g. HSCM document number / URL
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),

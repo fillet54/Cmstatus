@@ -16,23 +16,12 @@
   {% endif %}
 {% endcall %}
 
-{% if lineages %}
+{% if ifc_lineage.nodes %}
 {% call ui.card(flush=True) %}
-  {% call ui.card_header("Baseline lineage", "each capability's HSCMs, oldest to newest · the current approved one is highlighted") %}
+  {% call ui.card_header("IFC lineage", "each IFC's HSCM builds, oldest to newest · each IFC's current build is highlighted") %}
     {{ ui.button("Capabilities", href=url_for('ui.ifcs'), size="sm", variant="ghost") }}
   {% endcall %}
-  <div class="ui-strips">
-    {% for l in lineages %}
-    <div class="ui-strips__row">
-      <div class="ui-strips__head">
-        <a href="{{ url_for('ui.ifc', ref=l.ifc.name) }}"><b>{{ l.ifc.name }}</b></a>
-        {% if l.current %}<span class="ui-muted" style="font-size: 12px;">current {{ ui.ident(l.current.name, href=url_for('ui.baseline', bid=l.current.id), plain=True) }}</span>
-        {% else %}<span class="ui-muted" style="font-size: 12px;">nothing approved</span>{% endif %}
-      </div>
-      {{ ui.graph_strip(l.graph, label="Baseline lineage of " ~ l.ifc.name) }}
-    </div>
-    {% endfor %}
-  </div>
+  {% call ui.card_body() %}{{ ui.graph_strip(ifc_lineage, label="IFC and HSCM lineage") }}{% endcall %}
 {% endcall %}
 {% endif %}
 

@@ -128,11 +128,9 @@ def dashboard():
                           "WHERE b.status = 'approved' ORDER BY i.name"):
         stale += [{**e, "baseline": b["name"], "baseline_id": b["id"], "ifc": b["ifc"]}
                   for e in with_staleness(conn, svc.baseline_entries(conn, b["id"])) if e["effective"]]
-    lineages = [{"ifc": i, "current": svc.to_dict(svc.current_baseline(conn, i["id"])),
-                 "graph": baseline_graph(conn, i["id"], horizontal=True)} for i in svc.list_ifcs(conn)]
     return render_template("dashboard.html", counts=counts, open_children=open_children, upcoming=upcoming,
                            stale=stale, events=svc.to_dicts(svc.list_events(conn, limit=10)),
-                           lineages=[x for x in lineages if x["graph"]["nodes"]])
+                           ifc_lineage=ifc_graph(conn, horizontal=True))
 
 
 @bp.get("/fragments/recent-events")
@@ -261,14 +259,32 @@ BASELINE_DOTS = {"draft": "hollow", "superseded": "muted"}
 VERSION_DOTS = {"planned": "hollow", "rejected": "danger"}
 
 
-def baseline_graph(conn, ifc_id, horizontal=False):
-    """The IFC's baselines as a lineage graph, each hanging off the one it was derived from; the current
-    (approved) baseline is marked."""
-    rows = svc.baseline_lineage(conn, ifc_id)
-    return graph.layout([{**b, "parents": [b["derived_from_id"]] if b["derived_from_id"] else [],
-                          "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved",
-                          "href": url_for("ui.baseline", bid=b["id"]), "title": f"{b['name']} ({b['status']})"}
-                         for b in reversed(rows)], horizontal=horizontal)
+def _hscm_node(b, **extra):
+    status = "final" if b["final"] else b["status"]
+    return {**b, "parents": [b["derived_from_id"]] if b["derived_from_id"] else [],
+            "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved",
+            "tag": "final" if b["final"] else None, "href": url_for("ui.baseline", bid=b["id"]),
+            "title": f"{b['ifc']} {b['name']} ({status})", **extra}
+
+
+def ifc_graph(conn, horizontal=False):
+    """Every IFC's HSCM builds, one lane per IFC (in creation order), with each IFC's Build 1 branching off the
+    HSCM it was spawned from. Each IFC's current (latest approved) build is marked."""
+    rows = svc.baseline_lineage(conn)
+    lanes = {i["id"]: n for n, i in enumerate(svc.list_ifcs(conn))}
+    nodes = [_hscm_node(b, caption=b["ifc"] if b["seq"] == 1 else None) for b in rows]
+    return graph.swimlanes(nodes, lambda n: lanes[n["ifc_id"]], horizontal=horizontal)
+
+
+def ifc_builds_graph(conn, ifc):
+    """One IFC's builds (newest first), with the HSCM it was spawned from at the bottom."""
+    rows = svc.baseline_lineage(conn, ifc["id"])
+    point = ifc["spawned_from"]
+    nodes = [_hscm_node(b) for b in rows]
+    if point:
+        p = next(b for b in svc.baseline_lineage(conn) if b["id"] == point["id"])
+        nodes.insert(0, _hscm_node(p, dot="muted", current=False, parents=[], spawn=True))
+    return graph.swimlanes(nodes, lambda n: 1 if n.get("spawn") else 0)
 
 
 def version_graph(conn, ci_id):
@@ -298,8 +314,15 @@ def version_graph(conn, ci_id):
     return graph.layout(graph.newest_first(nodes, key=lambda n: (n["when"] or "", n["seq"], n["id"])))
 
 
-def ifc_options(conn, exclude=None):
-    return [(r["name"], r["name"]) for r in svc.list_ifcs(conn) if r["id"] != exclude]
+def spawn_options(conn, exclude=None):
+    """Approved (or superseded) HSCMs an IFC can spawn from, newest first; not the IFC's own or its descendants'."""
+    rows = svc.baseline_lineage(conn)
+    if exclude is not None:
+        barred = {exclude} | {i["id"] for i in svc.list_ifcs(conn) if exclude in
+                              {a["id"] for a in svc._spawn_ancestors(conn, i["id"])}}
+        rows = [b for b in rows if b["ifc_id"] not in barred]
+    return [(b["id"], f"{b['ifc']} {b['name']}" + (" (final)" if b["final"] else "")) for b in reversed(rows)
+            if b["status"] != "draft"]
 
 
 @bp.get("/ifcs")
@@ -307,12 +330,9 @@ def ifcs():
     conn = get_db()
     rows = svc.to_dicts(svc.list_ifcs(conn))
     for r in rows:
-        cur = svc.current_baseline(conn, r["id"])
-        r["current"] = svc.to_dict(cur)
-    children = {}
-    for r in rows:
-        children.setdefault(r["parent_id"], []).append(r)
-    return render_template("ifcs.html", children=children, total=len(rows), parents=ifc_options(conn))
+        r["current"] = svc.to_dict(svc.current_baseline(conn, r["id"]))
+        r["final"] = svc.to_dict(svc.get_baseline(conn, r["final_id"])) if r["final_id"] else None
+    return render_template("ifcs.html", ifcs=rows, g=ifc_graph(conn), spawn_points=spawn_options(conn))
 
 
 @bp.get("/ifcs/<ref>")
@@ -322,7 +342,7 @@ def ifc(ref):
     current = detail["current_hscm"]
     entries = with_staleness(conn, current["entries"]) if current else []
     return render_template("ifc.html", ifc=detail, current=current, entries=entries,
-                           lineage=baseline_graph(conn, detail["id"]), parents=ifc_options(conn, detail["id"]))
+                           builds=ifc_builds_graph(conn, detail), spawn_points=spawn_options(conn, detail["id"]))
 
 
 @bp.get("/baselines/<int:bid>")
@@ -330,7 +350,8 @@ def baseline(bid):
     conn = get_db()
     b = svc.baseline_detail(conn, bid)
     others = svc.to_dicts(conn.execute(
-        "SELECT id, name, status FROM baseline WHERE ifc_id = ? AND id != ? ORDER BY id DESC", (b["ifc_id"], bid)))
+        "SELECT b.id, i.name || ' ' || b.name AS name, b.status FROM baseline b JOIN ifc i ON i.id = b.ifc_id "
+        "WHERE b.id != ? ORDER BY b.ifc_id = ? DESC, b.id DESC", (bid, b["ifc_id"])))
     imported = conn.execute("SELECT detail FROM event WHERE entity = 'baseline' AND entity_id = ? "
                             "AND action = 'imported' ORDER BY id DESC LIMIT 1", (bid,)).fetchone()
     draft = b["status"] == "draft"
@@ -614,20 +635,20 @@ def detach_version(vid):
 @bp.post("/ifcs")
 def create_ifc():
     f = request.form
-    ifc = _run(svc.create_ifc, f.get("name", "").strip(), f.get("parent") or None, f.get("description") or None)
+    ifc = _run(svc.create_ifc, f.get("name", "").strip(), f.get("spawned_from", type=int), f.get("description") or None)
     return _back(url_for("ui.ifc", ref=ifc["name"]))
 
 
 @bp.post("/ifcs/<ref>/edit")
 def edit_ifc(ref):
-    ifc = _run(svc.update_ifc, ref, **_form("parent", "description"))
+    ifc = _run(svc.update_ifc, ref, **_form("spawned_from", "description"))
     return _back(url_for("ui.ifc", ref=ifc["name"]))
 
 
 @bp.post("/ifcs/<ref>/baselines")
 def create_baseline(ref):
     f = request.form
-    b = _run(svc.create_baseline, ref, f.get("name", "").strip(), derived_from=f.get("from", type=int))
+    b = _run(svc.create_baseline, ref, f.get("name", "").strip() or None)
     return redirect(url_for("ui.baseline", bid=b["id"]), 303)
 
 
@@ -638,7 +659,7 @@ def import_hscm(ref):
     upload = request.files.get("file")
     if upload and upload.filename:
         text = upload.read().decode("utf-8-sig")
-    out = _run(svc.import_hscm, ref, f.get("name", "").strip(), svc.hscm_rows(text),
+    out = _run(svc.import_hscm, ref, f.get("name", "").strip() or None, svc.hscm_rows(text),
                f.get("source_ref") or None, approve=bool(f.get("approve")))
     return redirect(url_for("ui.baseline", bid=out["baseline"]["id"]), 303)
 
@@ -667,10 +688,16 @@ def approve_baseline(bid):
     return _back(url_for("ui.baseline", bid=bid))
 
 
-@bp.post("/baselines/<int:bid>/branch")
-def branch_baseline(bid):
-    b = _run(svc.clone_baseline, bid, request.form.get("name", "").strip())
-    return redirect(url_for("ui.baseline", bid=b["id"]), 303)
+@bp.post("/ifcs/<ref>/final")
+def finalize_ifc(ref):
+    _run(svc.finalize_ifc, ref)
+    return _back(url_for("ui.ifc", ref=ref))
+
+
+@bp.post("/ifcs/<ref>/reopen")
+def reopen_ifc(ref):
+    _run(svc.reopen_ifc, ref)
+    return _back(url_for("ui.ifc", ref=ref))
 
 
 @bp.post("/baselines/<int:bid>/discard")

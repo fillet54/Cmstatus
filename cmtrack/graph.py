@@ -12,7 +12,7 @@ import heapq
 ROW = 40     # px per row (vertical)
 LANE = 16    # px per lane (vertical)
 COL = 104    # px per column (horizontal: room for a label under each node)
-HLANE = 34   # px per lane (horizontal)
+HLANE = 64   # px per lane (horizontal: room for the label, tag and highlight)
 LANES = 6    # lane colours before they repeat (ui.css .ui-graph__l0 … l5)
 
 
@@ -60,7 +60,24 @@ def layout(nodes, horizontal=False):
         while lanes and lanes[-1] is None:
             lanes.pop()
         placed.append({**n, "row": row, "lane": col, "color": col % LANES})
-    n = len(nodes)
+    return _geometry(placed, pending, width, horizontal)
+
+
+def swimlanes(nodes, lane, horizontal=False):
+    """Lay out nodes (oldest first) in fixed lanes, ``lane(node)`` -> 0, 1, …: one lane per line of work (e.g.
+    per IFC), so a line keeps its lane however the lines interleave in time. An edge to a parent in another lane
+    runs along the child's lane and turns into the parent at the end: fine as long as a lane's nodes are a
+    straight sequence and its first node is the only one with a parent elsewhere."""
+    placed = [{**n, "row": row, "lane": lane(n), "color": lane(n) % LANES} for row, n in enumerate(reversed(nodes))]
+    row_of = {n["id"]: n["row"] for n in placed}
+    pending = [(n["row"], n["lane"], n["lane"], p, k > 0) for n in placed
+               for k, p in enumerate(q for q in n["parents"] if row_of.get(q, -1) > n["row"])]
+    return _geometry(placed, pending, max([n["lane"] + 1 for n in placed] or [1]), horizontal)
+
+
+def _geometry(placed, pending, width, horizontal):
+    row_of = {p["id"]: p["row"] for p in placed}
+    n = len(placed)
     if horizontal:   # oldest on the left: columns run the other way from rows
         step, across = COL, HLANE
         along = lambda row: step // 2 + (n - 1 - row) * step

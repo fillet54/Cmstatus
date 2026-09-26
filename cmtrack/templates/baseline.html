@@ -4,9 +4,9 @@
 {% set draft = b.status == "draft" %}
 {% block title %}{{ b.ifc }} {{ b.name }}{% endblock %}
 {% block content %}
-{% call ui.page_header(b.name, b.ifc ~ " baseline (HSCM)",
+{% call ui.page_header(b.name, b.ifc ~ " HSCM, build " ~ b.seq,
                        crumbs=[("Capabilities", url_for('ui.ifcs')), (b.ifc, url_for('ui.ifc', ref=b.ifc)), (b.name, None)]) %}
-  {{ ui.badge(b.source) }}{{ ui.baseline_status(b.status) }}
+  {{ ui.badge(b.source) }}{{ ui.baseline_status(b.status) }}{% if b.final %}{{ ui.badge("final", "success") }}{% endif %}
   {% if draft %}
   <form method="post" hx-push-url="false" action="{{ url_for('ui.approve_baseline', bid=b.id) }}">
     {{ ui.button("Approve", variant="primary", type="submit", icon="check") }}
@@ -24,10 +24,10 @@
 {% call ui.stats(b.name) %}
   {{ ui.stat("Entries", entries | length, behind ~ " behind the effective version" if behind else "all current",
              tone="warning" if behind else None, icon="alert-triangle" if behind else None) }}
-  {% if b.derived_from %}{% call ui.stat("Built from", "") %}<a href="{{ url_for('ui.baseline', bid=b.derived_from_id) }}">{{ b.derived_from }}</a>{% endcall %}
+  {% if b.derived_from %}{% call ui.stat("Built from", "") %}<a href="{{ url_for('ui.baseline', bid=b.derived_from.id) }}">{% if b.derived_from.ifc != b.ifc %}{{ b.derived_from.ifc }} {% endif %}{{ b.derived_from.name }}</a>{% endcall %}
   {% else %}{{ ui.stat("Built from", "—", "started from scratch") }}{% endif %}
   {% if b.supersedes %}{% call ui.stat("Supersedes", "") %}<a href="{{ url_for('ui.baseline', bid=b.supersedes_id) }}">{{ b.supersedes }}</a>{% endcall %}
-  {% else %}{{ ui.stat("Supersedes", "—", "set when approved" if draft else "first approved for " ~ b.ifc) }}{% endif %}
+  {% else %}{{ ui.stat("Supersedes", "—", "set when approved" if draft else "first approved in " ~ b.ifc) }}{% endif %}
   {{ ui.stat("Source reference", b.source_ref or "—", mono=True) }}
   {{ ui.stat("Approved", b.approved_at | utc if b.approved_at else "—", "created " ~ (b.created_at | utc), mono=True) }}
 {% endcall %}
@@ -71,33 +71,29 @@
 
   <aside class="ui-aside ui-stack" aria-label="Lineage and actions">
     {% call ui.card() %}
-      {% call ui.card_header("Lineage") %}{{ ui.button("Tree", href=url_for('ui.ifc', ref=b.ifc), size="sm", icon="branch") }}{% endcall %}
+      {% call ui.card_header("Lineage") %}{{ ui.button(b.ifc, href=url_for('ui.ifc', ref=b.ifc), size="sm", icon="branch") }}{% endcall %}
       {% call ui.card_body() %}
         <div class="ui-stack" style="--ui-gap: 8px;">
           <div><span class="ui-muted">Built from</span>
-            {% if b.derived_from %}{{ ui.ident(b.derived_from, href=url_for('ui.baseline', bid=b.derived_from_id)) }}{% else %}<span class="ui-muted">— (root)</span>{% endif %}</div>
+            {% if b.derived_from %}{{ ui.ident((b.derived_from.ifc ~ " " if b.derived_from.ifc != b.ifc else "") ~ b.derived_from.name, href=url_for('ui.baseline', bid=b.derived_from.id)) }}
+            {%- if b.derived_from.ifc != b.ifc %} <span class="ui-muted">(the IFC's spawn point)</span>{% endif %}
+            {% else %}<span class="ui-muted">— (started from scratch)</span>{% endif %}</div>
           <div class="ui-row" style="--ui-gap: 6px;"><span class="ui-muted">Built on by</span>
-            {% for d in b.derivations %}{{ ui.ident(d.name, href=url_for('ui.baseline', bid=d.id)) }}{% else %}<span class="ui-muted">nothing yet</span>{% endfor %}</div>
+            {% for d in b.derivations %}{{ ui.ident((d.ifc ~ " " if d.ifc != b.ifc else "") ~ d.name, href=url_for('ui.baseline', bid=d.id)) }}{% else %}<span class="ui-muted">nothing yet</span>{% endfor %}</div>
         </div>
       {% endcall %}
     {% endcall %}
 
+    {% if draft %}
     {% call ui.card() %}
-      {% call ui.disclosure("Branch from " ~ b.name, "a new draft with these entries") %}
-        <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="true" action="{{ url_for('ui.branch_baseline', bid=b.id) }}">
-          {% call ui.field("Name", "br-name") %}{{ ui.input("name", id="br-name", mono=True, required=True, placeholder=b.name ~ "-rev") }}{% endcall %}
-          <div>{{ ui.button("Create draft", variant="primary", type="submit", icon="branch") }}</div>
-        </form>
-      {% endcall %}
-      {% if draft %}
       {% call ui.disclosure("Discard draft") %}
         <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="true" action="{{ url_for('ui.discard_baseline', bid=b.id) }}">
-          <span class="ui-muted">Deletes {{ b.name }} and its entries. Only drafts nothing was built from can be discarded.</span>
+          <span class="ui-muted">Deletes {{ b.name }} and its entries, so {{ b.ifc }} can start this build again.</span>
           <div>{{ ui.button("Discard " ~ b.name, variant="danger", type="submit", icon="x") }}</div>
         </form>
       {% endcall %}
-      {% endif %}
     {% endcall %}
+    {% endif %}
   </aside>
 </div>
 {% endblock %}

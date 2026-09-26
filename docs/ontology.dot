@@ -10,7 +10,6 @@ digraph cmtrack {
     label=<<b>Product space</b> — what things are made of>; style="rounded,filled"; fillcolor="#eef4fb"; color="#9bb8d8";
     CI  [label=<<b>Configuration Item</b><br/><font point-size="9">CSCI | HWCI · simple | composite<br/>placeholder (managed=0)</font><br/><font point-size="8" color="#777777">EIA-649 CI · OSLC component</font>>, fillcolor="#cfe2f7"];
     CSC [label=<<b>CSC</b><br/><font point-size="9">key: (Jira project, affected product)</font><br/><font point-size="8" color="#777777">MIL-STD-498</font>>, fillcolor="#cfe2f7"];
-    Cap [label=<<b>Capability (IFC)</b><br/><font point-size="9">hierarchy, not versioned</font>>, fillcolor="#cfe2f7"];
   }
 
   subgraph cluster_version {
@@ -20,8 +19,9 @@ digraph cmtrack {
   }
 
   subgraph cluster_baseline {
-    label=<<b>Baselines</b>>; style="rounded,filled"; fillcolor="#fdf5e8"; color="#e0c38f";
-    Base [label=<<b>Baseline (HSCM)</b><br/><font point-size="9">draft → approved → superseded<br/>one version per CI</font><br/><font point-size="8" color="#777777">draft ≈ OSLC stream · approved = frozen</font>>, fillcolor="#f7e2bd"];
+    label=<<b>IFCs &amp; HSCM baselines</b>>; style="rounded,filled"; fillcolor="#fdf5e8"; color="#e0c38f";
+    Cap [label=<<b>Capability (IFC)</b><br/><font point-size="9">spawns from an HSCM · builds 1..N · final</font>>, fillcolor="#f7e2bd"];
+    Base [label=<<b>Baseline (HSCM)</b><br/><font point-size="9">draft → approved → superseded<br/>one version per CI · Build N</font><br/><font point-size="8" color="#777777">draft ≈ OSLC stream · approved = frozen</font>>, fillcolor="#f7e2bd"];
   }
 
   subgraph cluster_work {
@@ -41,7 +41,6 @@ digraph cmtrack {
 
   // product space
   CSC -> CI  [label="partOf (CSCI)"];
-  Cap -> Cap [label="partOf"];
 
   // version space
   Rel -> CI  [label="releaseOf"];
@@ -54,7 +53,8 @@ digraph cmtrack {
   Rel -> Ver [label=<releasedAs<br/><font color="#999999">set once</font>>, penwidth=1.6];
 
   // baselines
-  Base -> Cap  [label="baselineOf"];
+  Base -> Cap  [label="baselineOf (build N)"];
+  Cap -> Base  [label="spawnedFrom · final", style=bold];
   Base -> Ver  [label=<selects<br/><font color="#999999">oslc_config:selects</font>>, penwidth=1.6];
   Base -> Base [label="supersedes"];
   Base -> Base [label=<derivedFrom<br/><font color="#999999">lineage</font>>];

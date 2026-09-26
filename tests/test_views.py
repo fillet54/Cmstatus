@@ -34,9 +34,9 @@ class ViewTests(unittest.TestCase):
 
     def test_pages_render(self):
         q4 = self.api("/cis/NAV-SW/releases")[0]["id"]
-        b = self.api("/ifcs/IFC-2.1")["current_hscm"]
+        b = self.api("/ifcs/IFC-1")["current_hscm"]
         for path in ("/", "/cis", "/cis/NAV-SW", "/cis/SUITE", "/cis/RADAR-SW", f"/releases/{q4}",
-                     f"/versions/{b['entries'][0]['version_id']}", "/ifcs", "/ifcs/IFC-2", "/ifcs/IFC-2.1",
+                     f"/versions/{b['entries'][0]['version_id']}", "/ifcs", "/ifcs/IFC-1", "/ifcs/IFC-2",
                      f"/baselines/{b['id']}", "/events"):
             self.assertIn("<html", self.get(path), path)
 
@@ -54,10 +54,10 @@ class ViewTests(unittest.TestCase):
         panel = self.get(f"/releases/{q4}", HX)
         self.assertNotIn("<html", panel)
         self.assertIn("2026.Q4.ER1", panel)                   # effective version
-        self.assertIn("still field an older version", panel)  # HSCM-B fields b4
+        self.assertIn("still field an older version", panel)  # IFC-1 Build 2 fields b4
 
     def test_baseline_staleness_and_diff(self):
-        ifc = self.api("/ifcs/IFC-2.1")
+        ifc = self.api("/ifcs/IFC-1")
         a, b = ifc["baselines"][0]["id"], ifc["current_hscm"]["id"]
         page = self.get(f"/baselines/{b}")
         self.assertIn("behind:", page)
@@ -76,9 +76,9 @@ class ViewTests(unittest.TestCase):
     def test_every_page_uses_the_ui_layout(self):
         rid = self.api("/cis/NAV-SW/releases")[0]["id"]
         vid = self.api(f"/releases/{rid}")["versions"][0]["id"]
-        bid = self.api("/ifcs/IFC-2.1")["current_hscm"]["id"]
+        bid = self.api("/ifcs/IFC-1")["current_hscm"]["id"]
         for path in ("/", "/cis", "/cis/NAV-SW", f"/releases/{rid}", f"/versions/{vid}", "/cis/NAV-SW/work",
-                     "/backlogs", "/backlogs/Nav & Display", "/ifcs", "/ifcs/IFC-2.1", f"/baselines/{bid}", "/events",
+                     "/backlogs", "/backlogs/Nav & Display", "/ifcs", "/ifcs/IFC-1", "/ifcs/IFC-2", f"/baselines/{bid}", "/events",
                      "/ui"):
             page = self.get(path)
             self.assertIn("/static/ui.css", page, path)

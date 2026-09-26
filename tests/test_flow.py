@@ -159,35 +159,44 @@ class ManualFlowTests(Api):
                   {"children": [{"ci": "NAV-SW", "version": "2026.Q4.ER1"}, {"ci": "DISPLAY-SW", "version": "3.2.0"}]})
         self.call("post", f"/versions/{sv}/release")
 
-        # --- IFCs: parent/child, scraped HSCM with placeholders, a manual successor, diff
-        self.call("post", "/ifcs", {"name": "IFC-2"}, 201)
-        self.call("post", "/ifcs", {"name": "IFC-2.1", "parent": "IFC-2"}, 201)
-        self.call("patch", "/ifcs/IFC-2", {"parent": "IFC-2.1"}, status=400)        # cycle
+        # --- IFCs: a scraped Build 1 with placeholders, a hand-made Build 2, diff; IFC-2 spawns from it
+        self.call("post", "/ifcs", {"name": "IFC-1"}, 201)
         csv_text = "ci,version,type\nNAV-SW,2026.Q4-b4,CSCI\nRADAR-SW,7.4,\nANTENNA,Rev C,HWCI\nNAV-SW,,\n"
-        imp = self.call("post", "/ifcs/IFC-2.1/hscm?name=HSCM-A&source_ref=DOC-001", status=201,
-                        data=csv_text, content_type="text/csv")
+        imp = self.call("post", "/ifcs/IFC-1/hscm?source_ref=DOC-001", status=201, data=csv_text, content_type="text/csv")
+        self.assertEqual((imp["baseline"]["name"], imp["baseline"]["status"]), ("Build 1", "approved"))
         self.assertEqual(sorted(imp["placeholders_created"]), ["ANTENNA", "RADAR-SW"])
         self.assertIn("row 4: missing ci or version; skipped", imp["warnings"])
         self.assertFalse(self.call("get", "/cis/RADAR-SW")["managed"])
         a_id = imp["baseline"]["id"]
-        b = self.call("post", f"/baselines/{a_id}/clone", {"name": "HSCM-B"}, 201)
-        entries = [{"ci": e["ci"], "version": e["version"]} for e in b["entries"] if e["ci"] != "NAV-SW"]
-        entries += [{"ci": "NAV-SW", "version": "2026.Q4.ER1"}, {"ci": "SUITE", "version": str(sv)}]
-        self.call("put", f"/baselines/{b['id']}/entries", {"entries": entries})
+        b = self.call("post", "/ifcs/IFC-1/baselines", {}, 201)                      # starts from Build 1
+        self.assertEqual((b["name"], b["derived_from"]["name"], len(b["entries"])), ("Build 2", "Build 1", 3))
+        self.call("post", "/ifcs/IFC-1/baselines", {}, 400)                          # Build 2 is still a draft
+        self.call("put", f"/baselines/{b['id']}/entries/NAV-SW", {"version": "2026.Q4.ER1"})
+        self.call("put", f"/baselines/{b['id']}/entries/SUITE", {"version": str(sv)})
         self.call("post", f"/baselines/{b['id']}/approve")
         diff = self.call("get", f"/baselines/{a_id}/diff/{b['id']}")
         self.assertEqual(diff["changed"]["NAV-SW"], {"from": "2026.Q4-b4", "to": "2026.Q4.ER1"})
-        c = self.call("post", "/ifcs/IFC-2.1/baselines",
-                      {"name": "HSCM-C", "entries": [{"ci": "NAV-SW", "version": "2026.Q4-b2"}]}, 201)
+        c = self.call("post", "/ifcs/IFC-1/baselines", {"entries": [{"ci": "NAV-SW", "version": "2026.Q4-b2"}]}, 201)
         self.call("post", f"/baselines/{c['id']}/approve", status=400)       # b2 was never released
+        self.call("post", "/ifcs/IFC-1/final", status=400)                   # latest build (Build 3) isn't approved
+        self.call("delete", f"/baselines/{c['id']}")
+        self.call("post", "/ifcs/IFC-1/final")
+        self.call("post", "/ifcs/IFC-1/baselines", {}, 400)                          # closed
+        self.call("post", "/ifcs", {"name": "IFC-2", "spawned_from": c["id"]}, 404)  # discarded
+        self.call("post", "/ifcs", {"name": "IFC-2", "spawned_from": b["id"]}, 201)
+        self.call("patch", "/ifcs/IFC-1", {"spawned_from": b["id"]}, status=400)    # its own HSCM
+        d1 = self.call("post", "/ifcs/IFC-2/baselines", {}, 201)
+        self.assertEqual((d1["name"], d1["derived_from"]), ("Build 1", {"id": b["id"], "name": "Build 2", "ifc": "IFC-1"}))
+        self.call("post", "/ifcs", {"name": "IFC-3", "spawned_from": d1["id"]}, 400)  # a draft can't be spawned from
+        self.assertEqual(self.call("get", "/ifcs/IFC-2")["ancestors"], ["IFC-1"])
         wu = self.call("get", f"/versions/{emer['versions'][0]['id']}/where-used")
         self.assertEqual([x["ci"] for x in wu["composites"]], ["SUITE"])
 
-        # --- ER2 ships: HSCM-B now fields an older version of the line
+        # --- ER2 ships: IFC-1 Build 2 now fields an older version of the line
         self.ship(er2["versions"][0]["id"])
         q4 = self.call("get", f"/releases/{q4['id']}")
         self.assertEqual(q4["effective_version"], "2026.Q4.ER2")
-        self.assertEqual([(x["name"], x["fielded_version"]) for x in q4["baselines_behind"]], [("HSCM-B", "2026.Q4.ER1")])
+        self.assertEqual([(x["name"], x["fielded_version"]) for x in q4["baselines_behind"]], [("Build 2", "2026.Q4.ER1")])
 
         # --- cancel an abandoned patch; released releases can't be cancelled; numbers aren't reused
         cancelled = self.call("post", f"/releases/{patch['id']}/cancel", {"note": "folded into 2027.Q1"})

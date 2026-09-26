@@ -451,8 +451,5 @@ body.ui {
 .ui-strip__node:focus-visible .ui-graph__dot { stroke: var(--ui-focus); stroke-width: 3; }
 .ui-strip__hl { fill: var(--ui-accent-soft); stroke: var(--ui-accent); stroke-width: 1; }
 .ui-strip__node.is-current .ui-strip__label { fill: var(--ui-accent-strong); font-weight: 700; stroke: var(--ui-accent-soft); }
-.ui-strips__row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; align-items: center;
-                  padding: 8px 16px; border-bottom: 1px solid var(--ui-line-soft); }
-.ui-strips__row:last-child { border-bottom: 0; }
-.ui-strips__head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-@media (max-width: 640px) { .ui-strips__row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
+.ui-strip__caption { font: 700 11px var(--ui-font-sans); fill: currentColor; paint-order: stroke; stroke: var(--ui-surface); stroke-width: 3px; }
+.ui-strip__tag { font: 600 10px var(--ui-font-sans); fill: var(--ui-success-ink); text-transform: uppercase; letter-spacing: .04em; }

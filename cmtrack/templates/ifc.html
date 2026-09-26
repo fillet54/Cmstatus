@@ -3,34 +3,35 @@
 {% set nav_current = "ifcs" %}
 {% block title %}{{ ifc.name }}{% endblock %}
 {% block content %}
-{% set crumbs = [("Capabilities", url_for('ui.ifcs'))] %}
-{% for a in ifc.ancestors | reverse %}{% set _ = crumbs.append((a, url_for('ui.ifc', ref=a))) %}{% endfor %}
-{% set _ = crumbs.append((ifc.name, None)) %}
-{{ ui.page_header(ifc.name, ifc.description, crumbs=crumbs) }}
+{% call ui.page_header(ifc.name, ifc.description, crumbs=[("Capabilities", url_for('ui.ifcs')), (ifc.name, None)]) %}
+  {% if ifc.final %}{{ ui.badge("final: " ~ ifc.final, "success") }}{% else %}{{ ui.badge("in progress", "info", outline=True) }}{% endif %}
+{% endcall %}
 
-{% if ifc.children %}
-<div class="ui-row" style="--ui-gap: 6px;"><span class="ui-muted">Sub-capabilities:</span>
-  {% for c in ifc.children %}<a class="ui-chip" href="{{ url_for('ui.ifc', ref=c) }}">{{ c }}</a>{% endfor %}</div>
-{% endif %}
+<div class="ui-row" style="--ui-gap: 6px;">
+  <span class="ui-muted">Spawned from</span>
+  {% if ifc.spawned_from %}{{ ui.ident(ifc.spawned_from.ifc ~ " " ~ ifc.spawned_from.name, href=url_for('ui.baseline', bid=ifc.spawned_from.id)) }}
+  {% else %}<span>— (a first IFC)</span>{% endif %}
+  {% if ifc.spawned %}<span class="ui-muted" style="margin-left: 12px;">Spawned</span>
+    {% for c in ifc.spawned %}<a class="ui-chip" href="{{ url_for('ui.ifc', ref=c.name) }}">{{ c.name }} <span class="ui-muted">from {{ c.from_build }}</span></a>{% endfor %}{% endif %}
+</div>
 
 <div class="ui-split">
   <div class="ui-stack">
     {% call ui.card(flush=True) %}
-      {% call ui.card_header("Baseline lineage", "newest first · each baseline hangs off the one it was built from") %}
-        {{ ui.badge(ifc.baselines | length) }}
-      {% endcall %}
-      {% if lineage.nodes %}
-        {% call(n) ui.graph(lineage, label="Baseline lineage of " ~ ifc.name) %}
+      {% call ui.card_header("HSCM builds", "newest first · each starts from the one before") %}{{ ui.badge(ifc.baselines | length) }}{% endcall %}
+      {% if builds.nodes %}
+        {% call(n) ui.graph(builds, label="HSCM builds of " ~ ifc.name) %}
           <span class="ui-graph__main">
-            <a href="{{ url_for('ui.baseline', bid=n.id) }}"><b>{{ n.name }}</b></a>
-            {{ ui.baseline_status(n.status) }}
-            {% if n.source != "manual" %}{{ ui.badge(n.source) }}{% endif %}
+            {% if n.spawn %}<span class="ui-muted">spawned from</span> {{ ui.chip(n.ifc) }}{% endif %}
+            <a href="{{ n.href }}"><b>{{ n.name }}</b></a>
+            {% if not n.spawn %}{{ ui.baseline_status(n.status) }}{% if n.final %}{{ ui.badge("final", "success") }}{% endif %}{% endif %}
+            {% if n.source != "manual" and not n.spawn %}{{ ui.badge(n.source) }}{% endif %}
             {% if n.source_ref %}<span class="ui-mono ui-muted" style="font-size: 12px;">{{ n.source_ref }}</span>{% endif %}
           </span>
           <span class="ui-graph__meta">{{ n.entries }} entries · {{ ui.timestamp(n.approved_at or n.created_at) }}</span>
         {% endcall %}
       {% else %}
-        {% call ui.card_body() %}{{ ui.empty("No baselines yet. Start one or import an HSCM.") }}{% endcall %}
+        {% call ui.card_body() %}{{ ui.empty("No builds yet. Start Build 1 or import an HSCM.") }}{% endcall %}
       {% endif %}
     {% endcall %}
 
@@ -43,32 +44,49 @@
         {% include "_entries.html" %}
       {% else %}
         {% call ui.card_header("Current HSCM") %}{% endcall %}
-        {{ ui.empty("No approved baseline yet.") }}
+        {{ ui.empty("No approved build yet.") }}
       {% endif %}
     {% endcall %}
   </div>
 
   <aside class="ui-aside ui-stack" aria-label="Actions">
+    {% set next_n = (ifc.baselines | length) + 1 %}
     {% call ui.card() %}
-      {% call ui.disclosure("New baseline", "a draft", open=not ifc.baselines) %}
-        <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="true" action="{{ url_for('ui.create_baseline', ref=ifc.name) }}">
-          {% call ui.field("Name", "nb-name") %}{{ ui.input("name", id="nb-name", mono=True, required=True, placeholder="HSCM-C") }}{% endcall %}
-          {% set starts = [("", "Nothing (empty baseline)")] %}
-          {% for b in ifc.baselines | reverse %}{% set _ = starts.append((b.id, b.name ~ " (" ~ b.status ~ ")")) %}{% endfor %}
-          {% call ui.field("Built from", "nb-from", hint="copies its entries and records the lineage") %}
-            {{ ui.select("from", starts, selected=current.id if current else "", id="nb-from", mono=True) }}
-          {% endcall %}
-          <div>{{ ui.button("Create draft", variant="primary", type="submit", icon="branch") }}</div>
-        </form>
+      {% call ui.card_header("Next build", "Build " ~ next_n) %}{% endcall %}
+      {% call ui.card_body() %}
+        {% if ifc.final %}
+          <div class="ui-stack" style="--ui-gap: 10px;">
+            <span class="ui-muted">{{ ifc.name }} is closed: {{ ifc.final }} is final.</span>
+            <form method="post" hx-push-url="false" action="{{ url_for('ui.reopen_ifc', ref=ifc.name) }}">{{ ui.button("Reopen " ~ ifc.name, type="submit", icon="refresh") }}</form>
+          </div>
+        {% elif ifc.draft %}
+          <span class="ui-muted">{{ ui.ident(ifc.draft.name, href=url_for('ui.baseline', bid=ifc.draft.id)) }} is still a draft: approve or discard it before the next build.</span>
+        {% else %}
+          <div class="ui-stack" style="--ui-gap: 12px;">
+            <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="true" action="{{ url_for('ui.create_baseline', ref=ifc.name) }}">
+              {% set start = ifc.baselines[-1].name if ifc.baselines else (ifc.spawned_from.ifc ~ " " ~ ifc.spawned_from.name if ifc.spawned_from else None) %}
+              {% call ui.field("Name", "nb-name", hint=("starts with " ~ start ~ "'s entries") if start else "starts empty") %}
+                {{ ui.input("name", id="nb-name", mono=True, placeholder="Build " ~ next_n) }}
+              {% endcall %}
+              <div>{{ ui.button("Start Build " ~ next_n, variant="primary", type="submit", icon="plus") }}</div>
+            </form>
+            {% if current and current.id == ifc.baselines[-1].id %}
+            <form method="post" hx-push-url="false" action="{{ url_for('ui.finalize_ifc', ref=ifc.name) }}">
+              {{ ui.button("Mark " ~ current.name ~ " final", type="submit", icon="check") }}
+            </form>
+            {% endif %}
+          </div>
+        {% endif %}
       {% endcall %}
     {% endcall %}
 
+    {% if not ifc.final and not ifc.draft %}
     {% call ui.card() %}
-      {% call ui.disclosure("Import an HSCM", "CSV: ci,version[,type]") %}
+      {% call ui.disclosure("Import an HSCM as Build " ~ next_n, "CSV: ci,version[,type]") %}
         <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="true" enctype="multipart/form-data"
               action="{{ url_for('ui.import_hscm', ref=ifc.name) }}">
           <div class="ui-form-grid">
-            {% call ui.field("Name", "ih-name") %}{{ ui.input("name", id="ih-name", mono=True, required=True, placeholder="HSCM-C") }}{% endcall %}
+            {% call ui.field("Name", "ih-name") %}{{ ui.input("name", id="ih-name", mono=True, placeholder="Build " ~ next_n) }}{% endcall %}
             {% call ui.field("Document", "ih-ref") %}{{ ui.input("source_ref", id="ih-ref", mono=True, placeholder="DOC-002") }}{% endcall %}
           </div>
           {% call ui.field("CSV file", "ih-file") %}<input class="ui-input" type="file" name="file" id="ih-file" accept=".csv,text/csv">{% endcall %}
@@ -80,11 +98,14 @@
         </form>
       {% endcall %}
     {% endcall %}
+    {% endif %}
 
     {% call ui.card() %}
-      {% call ui.disclosure("Edit capability") %}
+      {% call ui.disclosure("Edit IFC") %}
         <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.edit_ifc', ref=ifc.name) }}">
-          {% call ui.field("Part of", "ei-parent") %}{{ ui.select("parent", [("", "— (top level)")] + parents, selected=ifc.ancestors[0] if ifc.ancestors else "", id="ei-parent", mono=True) }}{% endcall %}
+          {% call ui.field("Spawned from", "ei-from", hint="changing it re-points Build 1's lineage") %}
+            {{ ui.select("spawned_from", [("", "— (a first IFC)")] + spawn_points, selected=ifc.spawned_from.id if ifc.spawned_from else "", id="ei-from", mono=True) }}
+          {% endcall %}
           {% call ui.field("Description", "ei-desc") %}{{ ui.input("description", value=ifc.description, id="ei-desc") }}{% endcall %}
           <div>{{ ui.button("Save", type="submit", icon="check") }}</div>
         </form>
