@@ -574,7 +574,7 @@
     (highlighted), `ring` (ringed). With `refit` (a URL that takes ?width=) and `target`, a timeline narrower
     than its box is fetched again at that width and swapped into `target`, so it always fills the box. #}
 {% macro timeline(t, label, refit=None, target=None) -%}
-<div class="ui-timeline{% if t.dense %} is-dense{% endif %}" data-center="{{ t.today_x }}" role="group" aria-label="{{ label }}" tabindex="0"
+<div class="ui-timeline{% if t.dense %} is-dense{% endif %}" data-center="{{ t.center_x }}" role="group" aria-label="{{ label }}" tabindex="0"
      {%- if refit %} data-refit="{{ refit }}" data-refit-target="{{ target }}"{% endif %}>
   <svg class="ui-timeline__svg" width="{{ t.width }}" height="{{ t.height }}" viewBox="0 0 {{ t.width }} {{ t.height }}">
     <g class="ui-tl__axis" aria-hidden="true">
@@ -583,8 +583,10 @@
       {%- else %}<line class="ui-tl__tick" x1="{{ k.x }}" x2="{{ k.x }}" y1="18" y2="28"/>{% if not t.dense %}<text class="ui-tl__minor" x="{{ k.x + 3 }}" y="27">{{ k.label }}</text>{% endif %}{% endif %}
       {%- endfor %}
       <line class="ui-tl__base" x1="0" x2="{{ t.width }}" y1="30" y2="30"/>
+      {%- if t.today_x is not none %}
       <line class="ui-tl__today" x1="{{ t.today_x }}" x2="{{ t.today_x }}" y1="30" y2="{{ t.height }}"/>
       <text class="ui-tl__today-label" x="{{ t.today_x + 4 }}" y="{{ t.height - 5 }}">Today</text>
+      {%- endif %}
     </g>
     {%- for e in t.edges %}<path class="ui-graph__l{{ e.color }}{% if e.merge %} ui-graph__merge{% endif %}" d="{{ e.d }}" aria-hidden="true"/>{% endfor %}
     {%- for c in t.captions %}
@@ -597,6 +599,7 @@
       {%- if n.ring %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="7"/>{% endif %}
       <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="4"/>
       <text class="ui-tl__label" x="{{ n.x + 7 }}" y="{{ n.y + 3.5 }}">{{ n.label }}</text>
+      {%- if n.note %}<text class="ui-tl__note" x="{{ n.x }}" y="{{ n.y + 19 }}" text-anchor="middle">{{ n.note }}</text>{% endif %}
     </a>
     {%- endfor %}
   </svg>

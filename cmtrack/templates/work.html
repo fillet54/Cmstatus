@@ -7,4 +7,5 @@
                   crumbs=[("Configuration items", url_for('ui.cis')), (ci.name, url_for('ui.ci', ref=ci.name)), ("Work items", None)]) }}
 <div id="work" class="ui-stack">{% include "_work.html" %}</div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='picker.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='picker.js') }}"></script>
+<script src="{{ url_for('static', filename='timeline.js') }}"></script>{% endblock %}

@@ -250,8 +250,11 @@ every URL works as a plain link.
 /cis                  CI list; search + type/managed filters re-render the rows via htmx
 /cis/<ci>             releases grouped by family (click one to load its panel), "Needs attention" (remap, detach,
                       cancel), sync / preview sync, last sync summary, add a release by hand, where fielded, CSCs
-/cis/<ci>/work        work items for a from..to range (fuzzy pickers: a version, or an HSCM = the version it lists;
-                      default: what's new in the latest shipped release); parent tickets
+/cis/<ci>/work        work items for a from..to range. Each end is a version, a release (release:2026.Q3 = its released
+                      version, else latest build) or an HSCM (hscm:IFC A 3.0/HSC1.1 = the version it lists), by name in
+                      the URL so links can be shared; shown as IFC › release › version, the edit button opens a fuzzy
+                      picker. Default: what's new in the latest shipped release. The versions in range as a timeline
+                      (from its start, faded; merged fixes; notes for the IFC HSCMs that list them). Parent tickets
                       expand to each CSC's tickets
 /releases/<id>        versions, released vs effective version, baselines behind, unabsorbed fixes, work link;
                       edit (pins synced fields), unpin, add a build, cancel, correct the release date

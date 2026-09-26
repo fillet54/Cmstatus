@@ -462,3 +462,17 @@ body.ui {
 .ui-picker__list [aria-selected=true] { background: var(--ui-accent-soft); color: var(--ui-accent-strong); }
 .ui-picker__group { padding: 8px 8px 2px; font-size: 11px; font-weight: 600; color: var(--ui-muted); text-transform: uppercase; letter-spacing: .04em; }
 .ui-picker__none { padding: 6px 8px; color: var(--ui-muted); font-size: 13px; }
+
+/* A picked value shown as what it is (work page From/To): parts with small labels, and an edit button that opens
+   the picker (static/picker.js swaps .ui-pick__show for the search box) */
+.ui-pick__show { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 6px 4px 12px;
+                 border: 1px solid var(--ui-line); border-radius: var(--ui-radius); background: var(--ui-surface); }
+.ui-pick__part { display: flex; flex-direction: column; line-height: 1.25; white-space: nowrap; }
+.ui-pick__part small { font-size: 10px; font-weight: 600; color: var(--ui-muted); text-transform: uppercase; letter-spacing: .04em; }
+.ui-pick__sep { color: var(--ui-faint); }
+.ui-pick__show [data-pick-edit] { margin-left: auto; }
+.ui-pick__show .ui-spinner { margin-left: auto; }
+.ui-pick__show .ui-spinner:not(.htmx-request) { display: none; }      /* takes no room until it's spinning */
+.ui-pick__show .ui-spinner + [data-pick-edit] { margin-left: 0; }
+.ui-tl__note { font: 600 9.5px var(--ui-font-sans); fill: var(--ui-accent-strong); paint-order: stroke; stroke: var(--ui-sunken); stroke-width: 3px; }
+.ui-timeline.is-dense .ui-tl__note { display: none; }

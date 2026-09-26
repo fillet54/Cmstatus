@@ -255,29 +255,65 @@ def version(vid):
 
 # ----------------------------------------------------------------------------- work items
 
+def work_end(conn, ci, ref):
+    """What a From/To value of the work page means, by name so links stay good: a version (``2026.Q3-b4``), a
+    release (``release:2026.Q3``: its released version, else its latest build) or an HSCM
+    (``hscm:IFC A 3.0/HSC1.1``: the version of ``ci`` it lists). {value, version, release, ifc?, hscm?}."""
+    kind, _, name = ref.partition(":") if ref.startswith(("release:", "hscm:")) else ("version", "", ref)
+    end = {"value": ref, "kind": kind}
+    if kind == "hscm":
+        ifc, _, hscm = name.rpartition("/")
+        row = conn.execute("SELECT b.id, b.name, i.name AS ifc, e.version_id FROM baseline b JOIN ifc i ON i.id = b.ifc_id "
+                           "LEFT JOIN baseline_entry e ON e.baseline_id = b.id AND e.ci_id = ? WHERE i.name = ? AND b.name = ?",
+                           (ci["id"], ifc, hscm)).fetchone()
+        if row is None:
+            raise svc.NotFound(f"no HSCM {hscm!r} in {ifc!r}")
+        if row["version_id"] is None:
+            raise svc.CMError(f"{ifc} {hscm} doesn't list {ci['name']}")
+        end.update(ifc=row["ifc"], hscm=row["name"], hscm_id=row["id"], version=svc.get_version(conn, row["version_id"]))
+    elif kind == "release":
+        rel = svc.find_release(conn, ci, name)
+        head = svc.release_head(conn, rel)
+        if head is None:
+            raise svc.CMError(f"release {rel['name']} has no builds")
+        end["version"] = head
+    else:
+        end["version"] = svc.find_version(conn, ci, name)
+    end["release"] = svc.get_release(conn, end["version"]["release_id"])
+    return end
+
+
 @bp.get("/cis/<ref>/work")
 def work(ref):
     """Parent tickets -> CSC -> CSC tickets for a version range (from..to over the lineage DAG). Either end can be
-    a version or an HSCM (``hscm:<baseline id>``: the version of this CI that HSCM lists)."""
+    a version, a release or an HSCM (see ``work_end``), all by name in the URL."""
     conn = get_db()
     ci = svc.get_ci(conn, ref)
-    versions = svc.ci_versions(conn, ci["id"])
-    hscms = conn.execute("SELECT b.id, b.name, i.name AS ifc, v.name AS version FROM baseline_entry e "
+    releases = [r for r in reversed(svc.list_releases(conn, ci["id"])) if r["kind"] != "external"]
+    hscms = conn.execute("SELECT b.name, i.name AS ifc, v.name AS version FROM baseline_entry e "
                          "JOIN baseline b ON b.id = e.baseline_id JOIN ifc i ON i.id = b.ifc_id "
                          "JOIN version v ON v.id = e.version_id WHERE e.ci_id = ? ORDER BY b.id DESC", (ci["id"],)).fetchall()
-    in_hscm = {f"hscm:{h['id']}": h["version"] for h in hscms}
-    choices = [{"group": "Versions", "options": [v["name"] for v in reversed(versions)]},
+    choices = [{"group": "Releases", "options": [(f"release:{r['name']}", r["name"]) for r in releases]},
+               {"group": "Versions", "options": [v["name"] for v in reversed(svc.ci_versions(conn, ci["id"]))]},
                {"group": "HSCMs (the version they list)",
-                "options": [(f"hscm:{h['id']}", f"{h['ifc']} {h['name']} → {h['version']}") for h in hscms]}]
+                "options": [(f"hscm:{h['ifc']}/{h['name']}", f"{h['ifc']} · {h['name']} → {h['version']}") for h in hscms]}]
     frm, to = request.args.get("from") or None, request.args.get("to") or None
     if to is None and "to" not in request.args:            # default: what's new in the latest shipped release
-        shipped = [r for r in svc.list_releases(conn, ci["id"]) if r["kind"] == "planned" and r["status"] == "released"]
-        rng = svc.release_range(conn, shipped[-1]["id"]) if shipped else None
-        frm, to = (rng["from"], rng["to"]) if rng else (None, None)
-    head, base = in_hscm.get(to, to), in_hscm.get(frm, frm)
-    report, source_error = live(svc.work_report, conn, ticket_source(), ci["id"], head, base) if head else (None, None)
-    return page("work.html", "_work.html", ci=ci, choices=choices, frm=frm, to=to, report=report,
-                source_error=source_error)
+        shipped = [r for r in releases if r["kind"] == "planned" and r["status"] == "released"]
+        rng = svc.release_range(conn, shipped[0]["id"]) if shipped else None
+        frm, to = (rng["from"], f"release:{shipped[0]['name']}") if rng else (None, None)
+    ends, problems = {}, []
+    for side, value in (("from", frm), ("to", to)):
+        try:
+            ends[side] = work_end(conn, ci, value) if value else None
+        except svc.CMError as e:
+            ends[side] = None
+            problems.append(f"{'From' if side == 'from' else 'To'}: can't use {value!r}: {e.message}")
+    head, base = ends["to"], ends["from"]
+    report, source_error = (live(svc.work_report, conn, ticket_source(), ci["id"], head["version"]["name"],
+                                 base["version"]["name"] if base else None) if head else (None, None))
+    return page("work.html", "_work.html", ci=ci, choices=choices, frm=frm, to=to, ends=ends, problems=problems,
+                report=report, source_error=source_error, lineage=range_timeline(conn, ci, ends))
 
 
 @bp.get("/tickets/<key>")
@@ -291,11 +327,12 @@ BASELINE_DOTS = {"draft": "hollow", "superseded": "muted"}
 VERSION_DOTS = {"planned": "hollow", "rejected": "danger"}
 
 
-def zoomed_timeline(nodes, group, zoom, width, **frame):
+def zoomed_timeline(nodes, group, zoom, width, around_today=True, lane_px=graph.TL_LANE, **frame):
     """graph.timeline at a named zoom, stretched to ``width`` (the box in the browser) when that zoom would leave
     it part empty. ``frame`` is what _timeline.html needs: id, endpoint + args (its fragment URL), label, legend."""
     zoom = zoom if zoom in graph.ZOOMS else "months"
-    t = graph.timeline(nodes, group, dt.date.today(), graph.ZOOMS[zoom], fit_width=width if width and width > 0 else None)
+    t = graph.timeline(nodes, group, dt.date.today(), graph.ZOOMS[zoom], fit_width=width if width and width > 0 else None,
+                       around_today=around_today, lane_px=lane_px)
     return {**t, "zoom": zoom, **frame}
 
 
@@ -324,10 +361,12 @@ def ifc_timeline_fragment():
     return render_template("_timeline.html", t=ifc_timeline(get_db(), a.get("zoom", "months"), a.get("width", type=int)))
 
 
-def ci_timeline(conn, ci, zoom="months", width=None):
+def ci_timeline(conn, ci, zoom="months", width=None, only=None, start=None, **frame):
     """A CI's versions on a time axis: its planned releases along one lane, each patch/emergency branching off
     its base version in a lane of its own, merges curving back in. Released versions are ringed; the one
-    fielded now (the latest release line's effective version) is highlighted."""
+    fielded now (the latest release line's effective version) is highlighted. ``only`` (version ids) draws just
+    those, framed on them rather than today, with ``start`` (a version id) faded as where they begin and a note
+    under each version an HSCM lists. ``frame`` overrides the fragment's id / endpoint / args / label."""
     releases = {r["id"]: r for r in svc.list_releases(conn, ci["id"])}
     versions = {v["id"]: svc.to_dict(v) for v in svc.ci_versions(conn, ci["id"])}
     parents = {}
@@ -345,8 +384,16 @@ def ci_timeline(conn, ci, zoom="months", width=None):
                     not pv or releases[pv["release_id"]]["kind"] != "planned", p)
         return sorted(parents.get(v["id"], []), key=rank)
 
+    notes = {}
+    if only:
+        for row in conn.execute("SELECT e.version_id, i.name AS ifc, b.name FROM baseline_entry e JOIN baseline b "
+                                "ON b.id = e.baseline_id JOIN ifc i ON i.id = b.ifc_id WHERE e.ci_id = ? ORDER BY b.id",
+                                (ci["id"],)):
+            notes.setdefault(row["version_id"], []).append(f"{row['ifc'].removeprefix('IFC ')} · {row['name']}")
     nodes, seen = [], set()
     for v in versions.values():
+        if only and v["id"] not in only:
+            continue
         rel = releases[v["release_id"]]
         when = v["built_at"] or v["planned_date"] or rel["target_date"] or v["created_at"]
         nodes.append({**v, "date": when, "parents": ordered(v), "rel": rel, "dot": VERSION_DOTS.get(v["status"]),
@@ -355,12 +402,22 @@ def ci_timeline(conn, ci, zoom="months", width=None):
                       "caption_href": url_for("ui.release", rid=rel["id"]),
                       "ring": v["id"] == rel["released_version_id"], "current": bool(fielded) and v["id"] == fielded["id"],
                       "href": url_for("ui.version", vid=v["id"]),
-                      "title": f"{v['name']} · {v['status']} · {str(when)[:10]}"})
-        seen.add(rel["id"])
+                      "title": f"{v['name']} · {v['status']} · {str(when)[:10]}"
+                               + "".join(f"\nin {n}" for n in notes.get(v["id"], [])),
+                      "note": (notes[v["id"]][-1] + (f" +{len(notes[v['id']]) - 1}" if len(notes[v["id"]]) > 1 else ""))
+                               if v["id"] in notes else None})
+        if v["id"] == start:
+            nodes[-1].update(dot="muted", current=False, caption=None, label=f"from {nodes[-1]['label']}")
+        else:
+            seen.add(rel["id"])
     nodes.sort(key=lambda n: (str(n["date"])[:10], n["id"]))
+    if not nodes:
+        return None
+    frame = {"id": "ci-lineage", "endpoint": "ui.ci_lineage", "args": {"ref": ci["name"]},
+             "label": f"Version lineage of {ci['name']}", "legend": "● built · ○ planned · ◉ released · - - merge",
+             **frame}
     return zoomed_timeline(nodes, lambda n: "line" if n["rel"]["kind"] == "planned" else n["rel"]["id"], zoom, width,
-                           id="ci-lineage", endpoint="ui.ci_lineage", args={"ref": ci["name"]},
-                           label=f"Version lineage of {ci['name']}", legend="● built · ○ planned · ◉ released · - - merge")
+                           around_today=not only, lane_px=44 if notes else graph.TL_LANE, **frame)
 
 
 @bp.get("/cis/<ref>/lineage")
@@ -370,6 +427,32 @@ def ci_lineage(ref):
     a = request.args
     return render_template("_timeline.html", t=ci_timeline(conn, svc.get_ci(conn, ref), a.get("zoom", "months"),
                                                            a.get("width", type=int)))
+
+
+def range_timeline(conn, ci, ends, zoom="months", width=None):
+    """The versions in a work page range (from..to), with its From version faded at the start and the HSCMs that
+    list them noted underneath."""
+    head, base = ends.get("to"), ends.get("from")
+    if not head:
+        return None
+    ids = {v["id"] for v in svc.version_range(conn, ci["id"], head["version"]["name"],
+                                                base["version"]["name"] if base else None)}
+    start = base["version"]["id"] if base else None
+    return ci_timeline(conn, ci, zoom, width, only=ids | ({start} if start else set()), start=start,
+                       id="work-lineage", endpoint="ui.work_lineage",
+                       args={"ref": ci["name"], "to": ends["to"]["value"], **({"from": base["value"]} if base else {})},
+                       label=f"Versions from {base['version']['name'] if base else 'the beginning'} to "
+                             f"{head['version']['name']}", legend="● built · ○ planned · ◉ released · - - merge · IFC · HSCM that lists it")
+
+
+@bp.get("/cis/<ref>/work/lineage")
+def work_lineage(ref):
+    """The work page's range timeline at ?zoom=, fitted to ?width= (from/to as on the work page)."""
+    conn = get_db()
+    ci = svc.get_ci(conn, ref)
+    a = request.args
+    ends = {side: work_end(conn, ci, a[side]) if a.get(side) else None for side in ("from", "to")}
+    return render_template("_timeline.html", t=range_timeline(conn, ci, ends, a.get("zoom", "months"), a.get("width", type=int)))
 
 
 def spawn_options(conn, exclude=None):

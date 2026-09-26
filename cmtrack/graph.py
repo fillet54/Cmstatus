@@ -56,7 +56,7 @@ def _day(value):
     return dt.date.fromisoformat(str(value)[:10])
 
 
-def timeline(nodes, group, today, px_per_day=ZOOMS["months"], fit_width=None):
+def timeline(nodes, group, today, px_per_day=ZOOMS["months"], fit_width=None, around_today=True, lane_px=TL_LANE):
     """Lay out nodes (oldest first; each with ``id``, ``parents``, ``date``, ``name``, and optionally ``label``
     and ``caption``) on a time axis: x is the date, one lane per ``group`` while it is active. A lane is held
     from the parent a line branches off to its last node plus room for its labels, then reused, so finished
@@ -64,11 +64,16 @@ def timeline(nodes, group, today, px_per_day=ZOOMS["months"], fit_width=None):
     its ``label`` (default ``short_label(name)``) beside it. A first parent in another lane is a branch: the
     edge turns out of the parent into the child's lane. Further parents are merges: the edge runs along the
     parent's lane and turns into the child. Returns positioned nodes, edge paths, captions, axis ticks, today's
-    x and the size; the axis runs from a quarter before the first node to a year after today, so today can
-    always be scrolled to the middle. ``fit_width`` (px) stretches the scale so the timeline is at least that
-    wide, for zooms that would otherwise leave its container part empty."""
-    origin = min([_day(n["date"]) for n in nodes] + [today]) - dt.timedelta(days=90)
-    end = max([_day(n["date"]) for n in nodes] + [today]) + dt.timedelta(days=365)
+    x and the size. The axis runs from a quarter before the first node to a year after today, so today can be
+    scrolled to the middle; with ``around_today=False`` it just frames the nodes (centred on them, today's line
+    only if it falls inside). A node's ``note`` is drawn under it (give taller lanes, ``lane_px``). ``fit_width``
+    (px) stretches the scale so the timeline is at least that wide, for zooms that would otherwise leave its
+    container part empty."""
+    days = [_day(n["date"]) for n in nodes]
+    if around_today:
+        origin, end = min(days + [today]) - dt.timedelta(days=90), max(days + [today]) + dt.timedelta(days=365)
+    else:
+        origin, end = min(days) - dt.timedelta(days=20), max(days) + dt.timedelta(days=45)
     if fit_width:
         px_per_day = max(px_per_day, (fit_width - 16) / (end - origin).days)
     x = lambda d: round((_day(d) - origin).days * px_per_day) + 8
@@ -82,8 +87,9 @@ def timeline(nodes, group, today, px_per_day=ZOOMS["months"], fit_width=None):
         first.setdefault(g, i)
         lo = min([x(n["date"])] + [x(by_id[p]["date"]) for p in n["parents"][:1] if p in by_id])
         hi = x(n["date"]) + room
-        if n.get("caption") and not dense:
-            hi = max(hi, x(n["date"]) + round(len(n["caption"]) * CHAR_PX))
+        for text, dx in ((n.get("caption"), 0), (n.get("note"), -len(n.get("note") or "") * CHAR_PX / 2)):
+            if text and not dense:
+                hi = max(hi, x(n["date"]) + round(dx + len(text) * CHAR_PX))
         a, b = spans.get(g, (lo, hi))
         spans[g] = (min(a, lo), max(b, hi))
     for n in nodes:                                        # a merge edge runs along its parent's lane: hold it
@@ -99,7 +105,7 @@ def timeline(nodes, group, today, px_per_day=ZOOMS["months"], fit_width=None):
         ends[lane] = hi
         lane_of[g] = lane
 
-    y = lambda lane: TL_AXIS + lane * TL_LANE + TL_LANE // 2
+    y = lambda lane: TL_AXIS + lane * lane_px + TL_LANE // 2
     placed = [{**n, "x": x(n["date"]), "y": y(lane_of[group(n)]), "lane": lane_of[group(n)],
                "color": lane_of[group(n)] % LANES, "label": n.get("label") or short_label(n["name"])} for n in nodes]
     at = {n["id"]: n for n in placed}
@@ -129,5 +135,7 @@ def timeline(nodes, group, today, px_per_day=ZOOMS["months"], fit_width=None):
                           "label": str(d.year) if d.month == 1 else
                           (f"Q{(d.month - 1) // 3 + 1}" if step == 3 else d.strftime("%b"))})
         d = dt.date(d.year + (d.month - 1 + step) // 12, (d.month - 1 + step) % 12 + 1, 1)
-    return {"nodes": placed, "edges": edges, "captions": captions, "ticks": ticks, "today_x": x(today),
-            "width": x(end) + 8, "height": y(len(ends) or 1) - TL_LANE // 2 + 6, "dense": dense}
+    today_x = x(today) if origin <= today <= end else None
+    return {"nodes": placed, "edges": edges, "captions": captions, "ticks": ticks, "today_x": today_x,
+            "center_x": today_x if around_today else (x(min(days)) + x(max(days))) // 2,
+            "width": x(end) + 8, "height": y(len(ends) or 1) - TL_LANE // 2 + (lane_px - TL_LANE) + 6, "dense": dense}

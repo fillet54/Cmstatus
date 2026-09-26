@@ -1,23 +1,49 @@
-{#- Range picker + report; swapped into #work when the range changes. -#}
+{#- Range picker + report; swapped into #work when the range changes. Each end shows what it is (IFC/HSCM,
+    release, version); its edit button opens the fuzzy picker (static/picker.js) over the hidden select. -#}
 {% import "ui/components.html" as ui %}
+{% macro pick_end(label, name, id, value, end, empty_text, first) -%}
+{% call ui.field(label, id) %}
+<div class="ui-pick">
+  <div class="ui-pick__show">
+    {%- if end %}
+    {%- if end.kind == "hscm" %}
+    <span class="ui-pick__part"><small>IFC · HSCM</small><a href="{{ url_for('ui.baseline', bid=end.hscm_id) }}">{{ end.ifc }} · {{ end.hscm }}</a></span>
+    <span class="ui-pick__sep" aria-hidden="true">›</span>
+    {%- endif %}
+    {%- if end.kind != "version" or end.release.name != end.version.name %}
+    <span class="ui-pick__part"><small>Release</small><a class="ui-mono" href="{{ url_for('ui.release', rid=end.release.id) }}">{{ end.release.name }}</a></span>
+    <span class="ui-pick__sep" aria-hidden="true">›</span>
+    {%- endif %}
+    <span class="ui-pick__part"><small>Version</small><span>{{ ui.version_glyph(end.version.status) }} {{ ui.ident(end.version.name, href=url_for('ui.version', vid=end.version.id), plain=True) }}</span></span>
+    {%- else %}<span class="ui-muted">{{ empty_text }}</span>{% endif %}
+    {%- if name == "to" %}<span id="work-busy" class="ui-spinner htmx-indicator" aria-hidden="true"></span>{% endif %}
+    {{ ui.icon_button("edit", "Change " ~ label | lower, size="sm", attrs={"data-pick-edit": ""}) }}
+  </div>
+  {{ ui.select(name, [("", first)] + choices, selected=value or "", id=id, mono=True, attrs={"data-picker": ""}) }}
+</div>
+{% endcall %}
+{%- endmacro %}
 {% call ui.card() %}
   {% call ui.card_body() %}
   <form class="ui-stack" style="--ui-gap: 12px;" action="{{ url_for('ui.work', ref=ci.name) }}"
         hx-get="{{ url_for('ui.work', ref=ci.name) }}" hx-target="#work" hx-push-url="true" hx-trigger="change" hx-indicator="#work-busy">
     <div class="ui-row" style="--ui-gap: 12px; align-items: flex-end;">
-      {% call ui.field("From (exclusive)", "work-from") %}
-        {{ ui.select("from", [("", "(beginning)")] + choices, selected=frm or "", id="work-from", mono=True, attrs={"data-picker": ""}) }}
-      {% endcall %}
-      <span class="ui-mono ui-muted" style="padding-bottom: 8px;">..</span>
-      {% call ui.field("To (inclusive)", "work-to") %}
-        {{ ui.select("to", [("", "choose…")] + choices, selected=to or "", id="work-to", mono=True, attrs={"data-picker": ""}) }}
-      {% endcall %}
-      <span id="work-busy" class="ui-spinner htmx-indicator" aria-hidden="true" style="margin-bottom: 10px;"></span>
+      {{ pick_end("From (exclusive)", "from", "work-from", frm, ends["from"], "The beginning", "(the beginning)") }}
+      <span class="ui-mono ui-muted" style="padding-bottom: 14px;">..</span>
+      {{ pick_end("To (inclusive)", "to", "work-to", to, ends["to"], "Choose where the range ends", "choose…") }}
     </div>
   </form>
   {% endcall %}
 {% endcall %}
 
+{% for p in problems %}{% call ui.alert("warning") %}{{ p }}{% endcall %}{% endfor %}
+
+{% if lineage %}
+{% call ui.card() %}
+  {% call ui.card_header("Versions in range", lineage.label) %}{% endcall %}
+  {% call ui.card_body() %}{% with t = lineage %}{% include "_timeline.html" %}{% endwith %}{% endcall %}
+{% endcall %}
+{% endif %}
 {% if source_error %}
 {% call ui.alert("danger") %}<b>Couldn't get tickets:</b> {{ source_error }}{% endcall %}
 {% elif report %}

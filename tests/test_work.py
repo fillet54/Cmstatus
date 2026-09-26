@@ -201,11 +201,20 @@ class WorkTests(unittest.TestCase):
         self.assertNotIn("What's new in", page)
         self.assertIn('<optgroup label="HSCMs (the version they list)">', page)
         self.assertIn("data-picker", page)
-        hscm = next(b for b in self.call("get", "/ifcs/IFC-1")["baselines"] if b["name"] == "Build 1")["id"]
-        by_hscm = self.c.get(f"/cis/NAV-SW/work?from=hscm:{hscm}&to=2027.Q1-b2").get_data(as_text=True)
+        by_hscm = self.c.get("/cis/NAV-SW/work?from=hscm:IFC-1/Build 1&to=release:2027.Q1").get_data(as_text=True)
         by_name = self.c.get("/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2").get_data(as_text=True)
-        self.assertIn(f'value="hscm:{hscm}" selected', by_hscm)                     # the HSCM stays chosen...
-        self.assertEqual(by_hscm.count("NAVL-"), by_name.count("NAVL-"))            # ...and means the version it lists
+        self.assertIn('value="hscm:IFC-1/Build 1" selected', by_hscm)                # names in the URL...
+        self.assertEqual(by_hscm.count("NAVL-"), by_name.count("NAVL-"))            # ...mean the versions they stand for
+        self.assertIn("IFC-1 · Build 1</a>", by_hscm)                               # shown as IFC · HSCM › release › version
+        self.assertIn(">2027.Q1</a>", by_hscm)
+        self.assertIn('id="work-lineage"', by_name)                                 # the range as a timeline:
+        self.assertIn(">from b4</text>", by_name)                                   # where it starts, faded...
+        self.assertIn(">ER1</text>", by_name)                                       # ...the merged fix...
+        self.assertIn('class="ui-tl__note"', by_name)                               # ...and the HSCMs that list them
+        frag = self.c.get("/cis/NAV-SW/work/lineage?from=2026.Q4-b4&to=2027.Q1-b2&zoom=weeks&width=900")
+        self.assertIn('id="work-lineage"', frag.get_data(as_text=True))
+        bad = self.c.get("/cis/NAV-SW/work?to=release:NOPE").get_data(as_text=True)
+        self.assertIn("can&#39;t use &#39;release:NOPE&#39;", bad)
         self.assertIn("How each CSC implemented it", self.c.get("/tickets/PRG-10").get_data(as_text=True))
         self.assertIn("NAVX-222 is still open", self.c.get("/tickets/NAVX-221").get_data(as_text=True))
         self.assertEqual([s["state"] for s in self.call("get", "/ticket-states")], list(STATES))

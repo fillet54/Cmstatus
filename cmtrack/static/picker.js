@@ -1,6 +1,8 @@
 // Fuzzy picker: a <select data-picker> gets a search box. Type any part of an option, in order but with gaps
 // allowed ("q4b2" finds "2026.Q4-b2"); arrows move, Enter picks, Escape gives up. The <select> stays as the form
 // field (hidden) and gets the change event, so forms and htmx work as they do without the picker.
+// Inside a .ui-pick, the search box stays hidden behind the .ui-pick__show summary until its [data-pick-edit]
+// button is pressed, and the summary comes back when the box is left without picking.
 (function () {
   if (window.cmtrackPicker) return;
   window.cmtrackPicker = true;
@@ -48,6 +50,16 @@
     select.hidden = true;
     select.after(box);
     box.append(input, list);
+    const pick_ = select.closest(".ui-pick");
+    const show = pick_ && pick_.querySelector(".ui-pick__show");
+    if (show) {
+      box.hidden = true;
+      show.querySelector("[data-pick-edit]").addEventListener("click", () => {
+        show.hidden = true;
+        box.hidden = false;
+        input.focus();
+      });
+    }
 
     const current = () => (select.options[select.selectedIndex] || {}).text || "";
     let items = [], active = -1, typed = false;
@@ -103,6 +115,10 @@
       input.setAttribute("aria-expanded", "false");
       typed = false;
       input.value = current();
+      if (show) {
+        box.hidden = true;
+        show.hidden = false;
+      }
     }
 
     function pick(i) {

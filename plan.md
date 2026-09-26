@@ -183,7 +183,7 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 | `service.py` | tickets section: `_ask`, `_progress`, `_Resolver`, `_group_by_csc`, `work_report`, `ticket_detail` |
 | `__init__.py` | `TICKET_SOURCES` config, falling back to `CMTRACK_TICKET_SOURCES` |
 | `api.py` | `ticket_source`, `versions_arg`, `GET /ticket-states`, `GET /cis/<ci>/work`, `GET /tickets/<key>` |
-| `views.py` | `ticket_source`, `live`, `work` (versions or `hscm:<id>` at either end; default: the latest shipped release), `ticket`; the version view gains `report` / `source_error` |
+| `views.py` | `ticket_source`, `live`, `work_end`, `range_timeline` + `work_lineage`, `work` (a version, `release:<name>` or `hscm:<IFC>/<HSCM>` at either end, by name; default: the latest shipped release), `ticket`; the version view gains `report` / `source_error` |
 | `ui/components.html` | `state_glyph`, `state_pill`, `state_reason`, `state_bar`, `state_counts`, `ticket_ref`, `version_chip`, `ticket_line`, `group_label`, `work_group` (+ their CSS) |
 | templates | `_work.html`, `_work_items.html`, `work.html`, `ticket.html`; the "Work items" button in `ci.html`; the work link in `_release.html`; "Fixed in this version" in `version.html` |
 | `cmtrack/demo.py` | `seed` (the parts built so far), `DEMO_TICKETS`, `demo_source` |
