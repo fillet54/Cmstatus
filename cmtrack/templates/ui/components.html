@@ -578,3 +578,22 @@
   {%- endfor %}
 </div>
 {%- endmacro %}
+
+{#- Lineage graph (cmtrack/graph.py layout): lanes drawn as SVG beside one row per node, newest first.
+    The caller renders each row: {% call(n) ui.graph(g, label="...") %}…{{ n.name }}…{% endcall %}.
+    A node's `dot` picks its marker: solid (default), hollow (not yet real), muted, danger; `current` rings it. #}
+{% macro graph(g, label) -%}
+<div class="ui-graph" role="group" aria-label="{{ label }}" style="--ui-graph-row: {{ g.row }}px; --ui-graph-w: {{ g.width }}px;">
+  <svg class="ui-graph__svg" width="{{ g.width }}" height="{{ g.height }}" viewBox="0 0 {{ g.width }} {{ g.height }}" aria-hidden="true">
+    {%- for e in g.edges %}<path class="ui-graph__l{{ e.color }}{% if e.merge %} ui-graph__merge{% endif %}" d="{{ e.d }}"/>{% endfor %}
+    {%- for n in g.nodes %}
+    {%- set cx, cy = (g.lane // 2 + n.lane * g.lane), (g.row // 2 + n.row * g.row) %}
+    {%- if n.current %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ cx }}" cy="{{ cy }}" r="7.5"/>{% endif %}
+    <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ cx }}" cy="{{ cy }}" r="4.5"/>
+    {%- endfor %}
+  </svg>
+  <ol class="ui-graph__rows">
+    {%- for n in g.nodes %}<li class="ui-graph__row{% if n.current %} is-current{% endif %}">{{ caller(n) }}</li>{% endfor %}
+  </ol>
+</div>
+{%- endmacro %}

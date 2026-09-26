@@ -18,6 +18,8 @@
 --
 --   ifc ──< ifc (parent/child)
 --    └──< baseline ──< baseline_entry >── ci, version     (the HSCM list: one version per CI)
+--           │   ▲
+--           └───┘ derived_from                   (baseline lineage: the baseline each one was built from)
 --
 --   event                                        (append-only status accounting log)
 
@@ -118,7 +120,8 @@ CREATE TABLE IF NOT EXISTS baseline (
     ifc_id        INTEGER NOT NULL REFERENCES ifc(id),
     name          TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'superseded')),
-    supersedes_id INTEGER REFERENCES baseline(id),
+    supersedes_id INTEGER REFERENCES baseline(id),    -- the approved baseline this one replaced (set on approval)
+    derived_from_id INTEGER REFERENCES baseline(id),  -- lineage: the baseline this one started from (NULL = from scratch)
     source        TEXT NOT NULL DEFAULT 'manual',     -- manual | scraped
     source_ref    TEXT,                               -- e.g. HSCM document number / URL
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),

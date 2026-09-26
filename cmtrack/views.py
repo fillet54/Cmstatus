@@ -6,9 +6,11 @@ built from the macros in ui/components.html. Forms post here: backlog forms get 
 back (drag-and-drop ranking in static/backlog.js calls the JSON API, POST /api/backlogs/<b>/items/<key>/move);
 release and version forms (sync, add, correct, remap, detach) redirect back to the page they came from.
 """
+import json
+
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
-from . import service as svc, tickets, ui
+from . import graph, service as svc, tickets, ui
 from .db import get_db
 
 bp = Blueprint("ui", __name__)
@@ -252,6 +254,49 @@ def ticket(key):
 
 # ----------------------------------------------------------------------------- IFCs & baselines
 
+BASELINE_DOTS = {"draft": "hollow", "superseded": "muted"}
+VERSION_DOTS = {"planned": "hollow", "rejected": "danger"}
+
+
+def baseline_graph(conn, ifc_id):
+    """The IFC's baselines as a lineage graph (newest first), each hanging off the one it was derived from."""
+    rows = svc.baseline_lineage(conn, ifc_id)
+    return graph.layout([{**b, "parents": [b["derived_from_id"]] if b["derived_from_id"] else [],
+                          "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved"}
+                         for b in reversed(rows)])
+
+
+def version_graph(conn, ci_id):
+    """A CI's versions as a lineage graph (newest first): release lines, patch branches and merges."""
+    parents = {}
+    for child, parent in conn.execute("SELECT p.version_id, p.parent_id FROM version_parent p "
+                                      "JOIN version v ON v.id = p.version_id WHERE v.ci_id = ?", (ci_id,)):
+        parents.setdefault(child, []).append(parent)
+    releases = {r["id"]: r for r in svc.list_releases(conn, ci_id)}
+    versions = {v["id"]: svc.to_dict(v) for v in svc.ci_versions(conn, ci_id)}
+    promoted = {r["released_version_id"] for r in releases.values()}
+
+    def first(v):
+        """Parents in drawing order: the one in its own release, else on a planned line, keeps the lane."""
+        def rank(p):
+            pv = versions.get(p)
+            return (not pv or pv["release_id"] != v["release_id"],
+                    not pv or releases[pv["release_id"]]["kind"] != "planned", p)
+        return sorted(parents.get(v["id"], []), key=rank)
+
+    nodes = []
+    for v in versions.values():
+        rel = releases[v["release_id"]]
+        when = v["built_at"] or v["planned_date"] or rel["target_date"] or v["created_at"]
+        nodes.append({**v, "parents": first(v), "rel": rel, "when": when, "dot": VERSION_DOTS.get(v["status"]),
+                      "current": v["id"] in promoted})
+    return graph.layout(graph.newest_first(nodes, key=lambda n: (n["when"] or "", n["seq"], n["id"])))
+
+
+def ifc_options(conn, exclude=None):
+    return [(r["name"], r["name"]) for r in svc.list_ifcs(conn) if r["id"] != exclude]
+
+
 @bp.get("/ifcs")
 def ifcs():
     conn = get_db()
@@ -262,7 +307,7 @@ def ifcs():
     children = {}
     for r in rows:
         children.setdefault(r["parent_id"], []).append(r)
-    return render_template("ifcs.html", children=children, total=len(rows))
+    return render_template("ifcs.html", children=children, total=len(rows), parents=ifc_options(conn))
 
 
 @bp.get("/ifcs/<ref>")
@@ -271,7 +316,8 @@ def ifc(ref):
     detail = svc.ifc_detail(conn, ref)
     current = detail["current_hscm"]
     entries = with_staleness(conn, current["entries"]) if current else []
-    return render_template("ifc.html", ifc=detail, current=current, entries=entries)
+    return render_template("ifc.html", ifc=detail, current=current, entries=entries,
+                           lineage=baseline_graph(conn, detail["id"]), parents=ifc_options(conn, detail["id"]))
 
 
 @bp.get("/baselines/<int:bid>")
@@ -280,8 +326,44 @@ def baseline(bid):
     b = svc.baseline_detail(conn, bid)
     others = svc.to_dicts(conn.execute(
         "SELECT id, name, status FROM baseline WHERE ifc_id = ? AND id != ? ORDER BY id DESC", (b["ifc_id"], bid)))
+    imported = conn.execute("SELECT detail FROM event WHERE entity = 'baseline' AND entity_id = ? "
+                            "AND action = 'imported' ORDER BY id DESC LIMIT 1", (bid,)).fetchone()
+    draft = b["status"] == "draft"
     return render_template("baseline.html", b=b, entries=with_staleness(conn, b["entries"]), others=others,
-                           compare=request.args.get("compare", type=int) or b["supersedes_id"])
+                           compare=request.args.get("compare", type=int) or b["supersedes_id"] or b["derived_from_id"],
+                           warnings=json.loads(imported["detail"]).get("warnings", []) if imported else [],
+                           choices=entry_choices(conn, b["entries"]) if draft else {},
+                           cis=[(c["name"], c["name"]) for c in svc.list_cis(conn)] if draft else [])
+
+
+def entry_choices(conn, entries):
+    """For each CI in a draft, the versions it could list: newest first, rejected ones left out."""
+    return {e["ci"]: version_options(conn, e["ci"]) for e in entries}
+
+
+def version_options(conn, ci_ref):
+    ci = svc.get_ci(conn, ci_ref)
+    return [(v["id"], f"{v['name']} ({ui_status(v['status'])})") for v in conn.execute(
+        "SELECT id, name, status FROM version WHERE ci_id = ? AND status != 'rejected' "
+        "ORDER BY status NOT IN ('released', 'external'), id DESC", (ci["id"],))]
+
+
+def ui_status(status):
+    return ui.VERSION_STATUSES.get(status, status).lower()
+
+
+@bp.get("/fragments/version-options")
+def version_options_fragment():
+    """<option>s for the version picker of the add-entry form (the CI is chosen first)."""
+    ci = request.args.get("ci")
+    return render_template("_version_options.html", options=version_options(get_db(), ci) if ci else [])
+
+
+@bp.get("/cis/<ref>/lineage")
+def ci_lineage(ref):
+    conn = get_db()
+    ci = svc.get_ci(conn, ref)
+    return render_template("lineage.html", ci=ci, g=version_graph(conn, ci["id"]))
 
 
 @bp.get("/baselines/<int:bid>/diff")
@@ -520,3 +602,73 @@ def remap_version(vid):
 def detach_version(vid):
     _run(svc.detach_version, vid)
     return _back(url_for("ui.version", vid=vid))
+
+
+# ----------------------------------------------------------------------------- IFC & baseline forms
+
+@bp.post("/ifcs")
+def create_ifc():
+    f = request.form
+    ifc = _run(svc.create_ifc, f.get("name", "").strip(), f.get("parent") or None, f.get("description") or None)
+    return _back(url_for("ui.ifc", ref=ifc["name"]))
+
+
+@bp.post("/ifcs/<ref>/edit")
+def edit_ifc(ref):
+    ifc = _run(svc.update_ifc, ref, **_form("parent", "description"))
+    return _back(url_for("ui.ifc", ref=ifc["name"]))
+
+
+@bp.post("/ifcs/<ref>/baselines")
+def create_baseline(ref):
+    f = request.form
+    b = _run(svc.create_baseline, ref, f.get("name", "").strip(), derived_from=f.get("from", type=int))
+    return redirect(url_for("ui.baseline", bid=b["id"]), 303)
+
+
+@bp.post("/ifcs/<ref>/hscm")
+def import_hscm(ref):
+    f = request.form
+    text = f.get("csv", "")
+    upload = request.files.get("file")
+    if upload and upload.filename:
+        text = upload.read().decode("utf-8-sig")
+    out = _run(svc.import_hscm, ref, f.get("name", "").strip(), svc.hscm_rows(text),
+               f.get("source_ref") or None, approve=bool(f.get("approve")))
+    return redirect(url_for("ui.baseline", bid=out["baseline"]["id"]), 303)
+
+
+@bp.post("/baselines/<int:bid>/entries")
+def set_entry(bid):
+    _run(svc.set_baseline_entry, bid, request.form.get("ci"), request.form.get("version"))
+    return _back(url_for("ui.baseline", bid=bid))
+
+
+@bp.post("/baselines/<int:bid>/entries/<ci>/remove")
+def remove_entry(bid, ci):
+    _run(svc.remove_baseline_entry, bid, ci)
+    return _back(url_for("ui.baseline", bid=bid))
+
+
+@bp.post("/baselines/<int:bid>/refresh")
+def refresh_baseline(bid):
+    _run(svc.refresh_baseline, bid)
+    return _back(url_for("ui.baseline", bid=bid))
+
+
+@bp.post("/baselines/<int:bid>/approve")
+def approve_baseline(bid):
+    _run(svc.approve_baseline, bid)
+    return _back(url_for("ui.baseline", bid=bid))
+
+
+@bp.post("/baselines/<int:bid>/branch")
+def branch_baseline(bid):
+    b = _run(svc.clone_baseline, bid, request.form.get("name", "").strip())
+    return redirect(url_for("ui.baseline", bid=b["id"]), 303)
+
+
+@bp.post("/baselines/<int:bid>/discard")
+def discard_baseline(bid):
+    out = _run(svc.delete_baseline, bid)
+    return redirect(url_for("ui.ifc", ref=out["ifc"]), 303)

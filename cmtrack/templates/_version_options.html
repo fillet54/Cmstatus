@@ -1,0 +1,3 @@
+{#- <option>s for a version picker (views.version_options). -#}
+{% for value, text in options %}<option value="{{ value }}">{{ text }}</option>
+{% else %}<option value="">Choose a CI first</option>{% endfor %}

@@ -145,6 +145,11 @@ cmt:selects a owl:ObjectProperty ;
     rdfs:domain cmt:Baseline ; rdfs:range cmt:Version ;
     skos:scopeNote "At most one selected version per CI (enforced in service.py; not expressible in OWL 2 DL)." .
 
+cmt:derivedFrom a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:subPropertyOf prov:wasDerivedFrom ;
+    rdfs:domain cmt:Baseline ; rdfs:range cmt:Baseline ;
+    skos:definition "Baseline lineage: the baseline this one was built from (branches make a tree per capability)." .
+
 cmt:supersedes a owl:ObjectProperty, owl:FunctionalProperty, owl:InverseFunctionalProperty ;
     rdfs:subPropertyOf prov:wasRevisionOf ;
     rdfs:domain cmt:Baseline ; rdfs:range cmt:Baseline .

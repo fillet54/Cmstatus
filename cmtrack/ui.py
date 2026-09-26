@@ -16,7 +16,7 @@ import os
 from flask import current_app, g, url_for
 from werkzeug.routing import BuildError
 
-from . import tickets
+from . import graph, tickets
 
 MARKING_COLORS = {"UNCLASSIFIED": ("#007A33", "#FFFFFF"), "CUI": ("#502B85", "#FFFFFF")}
 
@@ -124,7 +124,16 @@ def styleguide_samples():
     ticket = lambda key, summary, state, versions, reason=None, status=None, type=None: {
         "key": key, "summary": summary, "state": state, "state_reason": reason, "status": status, "type": type,
         "url": jira + key, "versions": [{"name": v} for v in versions]}
+    v = lambda name, release, status, *parents, **kw: {"id": name, "name": name, "release": release,
+                                                          "status": status, "parents": list(parents), **kw}
+    lineage = [v("2027.Q1-b2", "2027.Q1", "built", "2027.Q1-b1"),
+               v("2026.Q4.P1", "2026.Q4.P1", "planned", "2026.Q4-b4", dot="hollow"),
+               v("2027.Q1-b1", "2027.Q1", "built", "2026.Q4-b4", "2026.Q4.ER1"),
+               v("2026.Q4.ER1", "2026.Q4.ER1", "released", "2026.Q4-b4", current=True),
+               v("2026.Q4-b4", "2026.Q4", "released", "2026.Q4-b3", current=True),
+               v("2026.Q4-b3", "2026.Q4", "rejected", dot="danger")]
     return {
+        "graph_sample": graph.layout(lineage),
         "progress": progress,
         "tickets": [
             ticket("NAVL-105", "Blend terrain-referenced fixes into the filter", "peer_review", ["2027.Q1-b1"],

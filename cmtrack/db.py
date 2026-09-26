@@ -13,8 +13,9 @@ def connect(path):
     return conn
 
 
-# Columns added after a table first shipped: (table, column, definition).
-# CREATE TABLE IF NOT EXISTS won't add them to an existing DB, so add them here.
+# Columns added after a table first shipped: (table, column, definition[, backfill SQL]).
+# CREATE TABLE IF NOT EXISTS won't add them to an existing DB, so add them here. The backfill runs once,
+# right after the column is added.
 MIGRATIONS = [
     ("release", "released_at", "TEXT"),
     ("version", "lineage", "TEXT NOT NULL DEFAULT 'auto'"),
@@ -28,6 +29,8 @@ MIGRATIONS = [
     ("version", "source_key", "TEXT"),
     ("version", "source_state", "TEXT CHECK (source_state IN ('synced', 'missing'))"),
     ("version", "pinned", "TEXT NOT NULL DEFAULT '[]'"),
+    ("baseline", "derived_from_id", "INTEGER REFERENCES baseline(id)",
+     "UPDATE baseline SET derived_from_id = supersedes_id"),   # best guess: each built on the one it replaced
 ]
 
 INDEXES = [
@@ -46,10 +49,12 @@ def init_db(conn):
     conn.executescript(SCHEMA.read_text())
     for table in DROPPED:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
-    for table, column, definition in MIGRATIONS:
+    for table, column, definition, *backfill in MIGRATIONS:
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            for sql in backfill:
+                conn.execute(sql)
     for index in DROPPED_INDEXES:
         conn.execute(f"DROP INDEX IF EXISTS {index}")
     for sql in INDEXES:

@@ -57,6 +57,7 @@ digraph cmtrack {
   Base -> Cap  [label="baselineOf"];
   Base -> Ver  [label=<selects<br/><font color="#999999">oslc_config:selects</font>>, penwidth=1.6];
   Base -> Base [label="supersedes"];
+  Base -> Base [label=<derivedFrom<br/><font color="#999999">lineage</font>>];
 
   // work
   CT -> PT   [label="childOf", style=dashed];

@@ -413,3 +413,29 @@ body.ui {
 /* skip link: hidden until focused */
 .ui .ui-skip { position: absolute; left: 16px; top: -100px; z-index: 60; padding: 8px 12px; background: var(--ui-surface); border: 1px solid var(--ui-line); border-radius: var(--ui-radius); }
 .ui .ui-skip:focus { top: 28px; }
+
+/* Lineage graph (ui.graph): SVG lanes on the left, one fixed-height row per node */
+.ui-graph { position: relative; }
+.ui-graph__svg { position: absolute; top: 0; left: 12px; overflow: visible; }
+.ui-graph__svg path { fill: none; stroke: currentColor; stroke-width: 2; }
+.ui-graph__svg .ui-graph__merge { stroke-dasharray: 4 3; }
+.ui-graph__dot { stroke: currentColor; stroke-width: 2; fill: currentColor; }
+.ui-graph__dot--hollow { fill: var(--ui-surface); }
+.ui-graph__dot--muted { fill: var(--ui-surface); stroke: var(--ui-faint); }
+.ui-graph__dot--danger { fill: var(--ui-danger); stroke: var(--ui-danger); }
+.ui-graph__ring { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .45; }
+.ui-graph__l0 { color: var(--ui-accent); }
+.ui-graph__l1 { color: var(--ui-success); }
+.ui-graph__l2 { color: var(--ui-review); }
+.ui-graph__l3 { color: var(--ui-warning); }
+.ui-graph__l4 { color: var(--ui-verify); }
+.ui-graph__l5 { color: var(--ui-danger); }
+.ui-graph__rows { list-style: none; margin: 0; padding: 0; }
+.ui-graph__row { display: flex; align-items: center; gap: 10px; height: var(--ui-graph-row); min-width: 0;
+                 padding: 0 12px 0 calc(var(--ui-graph-w) + 24px); border-bottom: 1px solid var(--ui-line-soft); }
+.ui-graph__row:last-child { border-bottom: 0; }
+.ui-graph__row:hover { background: var(--ui-sunken); }
+.ui-graph__row.is-current { background: var(--ui-accent-soft); }
+.ui-graph__row > .ui-graph__main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; }
+.ui-graph__row > .ui-graph__meta { display: flex; align-items: center; gap: 8px; flex: none; color: var(--ui-muted); font-size: 12px; }
+@media (max-width: 640px) { .ui-graph__row > .ui-graph__meta { display: none; } }

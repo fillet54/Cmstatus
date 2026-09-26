@@ -1,0 +1,39 @@
+{#- A draft baseline's entries, editable: change a version (saves on change), remove a CI, add a CI.
+    `entries` carry `effective` (views.with_staleness); `choices` maps CI -> version options. -#}
+{% import "ui/components.html" as ui %}
+{% call ui.table(["CI", "Type", "Version", "", ""]) %}
+  {% for e in entries %}
+  <tr>
+    <td><span class="ui-row" style="--ui-gap: 6px;"><a href="{{ url_for('ui.ci', ref=e.ci) }}"><b>{{ e.ci }}</b></a>{% if not e.managed %}{{ ui.badge("placeholder") }}{% endif %}</span></td>
+    <td>{{ ui.chip(e.type) }}</td>
+    <td>
+      <form method="post" action="{{ url_for('ui.set_entry', bid=b.id) }}" hx-post="{{ url_for('ui.set_entry', bid=b.id) }}"
+            hx-trigger="change" hx-target="body" hx-push-url="false">
+        <input type="hidden" name="ci" value="{{ e.ci }}">
+        {{ ui.version_glyph(e.status) }}
+        {{ ui.select("version", choices[e.ci], selected=e.version_id, id="ev-" ~ loop.index, mono=True,
+                     attrs={"aria-label": "Version of " ~ e.ci}) }}
+      </form>
+    </td>
+    <td>{% if e.effective %}<span class="ui-badge ui-badge--warning" title="a newer version of this release family is effective">behind: <span class="ui-mono">{{ e.effective }}</span></span>
+        {%- elif e.status not in ("released", "external") %}{{ ui.badge("not released", "danger", outline=True) }}{% endif %}</td>
+    <td class="ui-end">
+      <form method="post" hx-push-url="false" action="{{ url_for('ui.remove_entry', bid=b.id, ci=e.ci) }}">
+        {{ ui.icon_button("x", "Remove " ~ e.ci, size="sm", attrs={"type": "submit"}) }}
+      </form>
+    </td>
+  </tr>
+  {% else %}{{ ui.empty_row("No entries yet. Add a CI below.", 5) }}{% endfor %}
+{% endcall %}
+{% call ui.card_footer() %}
+<form class="ui-row" style="--ui-gap: 8px; align-items: end;" method="post" hx-push-url="false" action="{{ url_for('ui.set_entry', bid=b.id) }}">
+  {% call ui.field("CI", "ae-ci") %}
+    {{ ui.select("ci", [("", "Choose a CI…")] + cis, id="ae-ci", mono=True,
+                 attrs={"hx-get": url_for('ui.version_options_fragment'), "hx-target": "#ae-version", "hx-trigger": "change", "hx-push-url": "false"}) }}
+  {% endcall %}
+  {% call ui.field("Version", "ae-version") %}
+    <select class="ui-select ui-select--mono" name="version" id="ae-version" required><option value="">Choose a CI first</option></select>
+  {% endcall %}
+  {{ ui.button("Add / replace", type="submit", icon="plus") }}
+</form>
+{% endcall %}

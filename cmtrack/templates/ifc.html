@@ -14,31 +14,82 @@
 {% endif %}
 
 <div class="ui-split">
-  {% call ui.card(flush=True) %}
-    {% if current %}
-      {% call ui.card_header("Current HSCM: " ~ current.name, "approved " ~ (current.approved_at | utc)) %}
-        {{ ui.badge(current.source) }}{% if current.source_ref %}{{ ui.ident(current.source_ref) }}{% endif %}
-        {{ ui.button("Open", href=url_for('ui.baseline', bid=current.id), size="sm") }}
+  <div class="ui-stack">
+    {% call ui.card(flush=True) %}
+      {% call ui.card_header("Baseline lineage", "newest first · each baseline hangs off the one it was built from") %}
+        {{ ui.badge(ifc.baselines | length) }}
       {% endcall %}
-      {% include "_entries.html" %}
-    {% else %}
-      {% call ui.card_header("Current HSCM") %}{% endcall %}
-      {{ ui.empty("No approved baseline yet.") }}
-    {% endif %}
-  {% endcall %}
-
-  {% call ui.card(flush=True) %}
-    {% call ui.card_header("Baseline history", "newest first") %}{% endcall %}
-    {% call ui.table(["Baseline", "Status", "Source", "Approved"], dense=True) %}
-      {% for b in ifc.baselines | reverse %}
-      <tr>
-        <td><a href="{{ url_for('ui.baseline', bid=b.id) }}">{{ b.name }}</a></td>
-        <td>{{ ui.baseline_status(b.status) }}</td>
-        <td>{{ ui.badge(b.source) }}</td>
-        <td>{{ ui.timestamp(b.approved_at) }}</td>
-      </tr>
-      {% else %}{{ ui.empty_row("No baselines", 4) }}{% endfor %}
+      {% if lineage.nodes %}
+        {% call(n) ui.graph(lineage, label="Baseline lineage of " ~ ifc.name) %}
+          <span class="ui-graph__main">
+            <a href="{{ url_for('ui.baseline', bid=n.id) }}"><b>{{ n.name }}</b></a>
+            {{ ui.baseline_status(n.status) }}
+            {% if n.source != "manual" %}{{ ui.badge(n.source) }}{% endif %}
+            {% if n.source_ref %}<span class="ui-mono ui-muted" style="font-size: 12px;">{{ n.source_ref }}</span>{% endif %}
+          </span>
+          <span class="ui-graph__meta">{{ n.entries }} entries · {{ ui.timestamp(n.approved_at or n.created_at) }}</span>
+        {% endcall %}
+      {% else %}
+        {% call ui.card_body() %}{{ ui.empty("No baselines yet. Start one or import an HSCM.") }}{% endcall %}
+      {% endif %}
     {% endcall %}
-  {% endcall %}
+
+    {% call ui.card(flush=True) %}
+      {% if current %}
+        {% call ui.card_header("Current HSCM: " ~ current.name, "approved " ~ (current.approved_at | utc)) %}
+          {{ ui.badge(current.source) }}{% if current.source_ref %}{{ ui.ident(current.source_ref) }}{% endif %}
+          {{ ui.button("Open", href=url_for('ui.baseline', bid=current.id), size="sm") }}
+        {% endcall %}
+        {% include "_entries.html" %}
+      {% else %}
+        {% call ui.card_header("Current HSCM") %}{% endcall %}
+        {{ ui.empty("No approved baseline yet.") }}
+      {% endif %}
+    {% endcall %}
+  </div>
+
+  <aside class="ui-aside ui-stack" aria-label="Actions">
+    {% call ui.card() %}
+      {% call ui.disclosure("New baseline", "a draft", open=not ifc.baselines) %}
+        <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="true" action="{{ url_for('ui.create_baseline', ref=ifc.name) }}">
+          {% call ui.field("Name", "nb-name") %}{{ ui.input("name", id="nb-name", mono=True, required=True, placeholder="HSCM-C") }}{% endcall %}
+          {% set starts = [("", "Nothing (empty baseline)")] %}
+          {% for b in ifc.baselines | reverse %}{% set _ = starts.append((b.id, b.name ~ " (" ~ b.status ~ ")")) %}{% endfor %}
+          {% call ui.field("Built from", "nb-from", hint="copies its entries and records the lineage") %}
+            {{ ui.select("from", starts, selected=current.id if current else "", id="nb-from", mono=True) }}
+          {% endcall %}
+          <div>{{ ui.button("Create draft", variant="primary", type="submit", icon="branch") }}</div>
+        </form>
+      {% endcall %}
+    {% endcall %}
+
+    {% call ui.card() %}
+      {% call ui.disclosure("Import an HSCM", "CSV: ci,version[,type]") %}
+        <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="true" enctype="multipart/form-data"
+              action="{{ url_for('ui.import_hscm', ref=ifc.name) }}">
+          <div class="ui-form-grid">
+            {% call ui.field("Name", "ih-name") %}{{ ui.input("name", id="ih-name", mono=True, required=True, placeholder="HSCM-C") }}{% endcall %}
+            {% call ui.field("Document", "ih-ref") %}{{ ui.input("source_ref", id="ih-ref", mono=True, placeholder="DOC-002") }}{% endcall %}
+          </div>
+          {% call ui.field("CSV file", "ih-file") %}<input class="ui-input" type="file" name="file" id="ih-file" accept=".csv,text/csv">{% endcall %}
+          {% call ui.field("…or paste it", "ih-csv", hint="unknown CIs become placeholders; unknown versions are recorded as external") %}
+            <textarea class="ui-input ui-input--mono" name="csv" id="ih-csv" rows="5" placeholder="ci,version,type&#10;NAV-SW,2026.Q4-b4,CSCI"></textarea>
+          {% endcall %}
+          {{ ui.checkbox("approve", "Approve as imported (the document is the authority)", checked=True) }}
+          <div>{{ ui.button("Import", variant="primary", type="submit", icon="download") }}</div>
+        </form>
+      {% endcall %}
+    {% endcall %}
+
+    {% call ui.card() %}
+      {% call ui.disclosure("Edit capability") %}
+        <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.edit_ifc', ref=ifc.name) }}">
+          {% call ui.field("Part of", "ei-parent") %}{{ ui.select("parent", [("", "— (top level)")] + parents, selected=ifc.ancestors[0] if ifc.ancestors else "", id="ei-parent", mono=True) }}{% endcall %}
+          {% call ui.field("Description", "ei-desc") %}{{ ui.input("description", value=ifc.description, id="ei-desc") }}{% endcall %}
+          <div>{{ ui.button("Save", type="submit", icon="check") }}</div>
+        </form>
+      {% endcall %}
+    {% endcall %}
+  </aside>
 </div>
 {% endblock %}

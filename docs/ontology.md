@@ -74,6 +74,7 @@ classDiagram
     Baseline "*" --> "1" Capability : baselineOf
     Baseline --> Version : selects (one per CI)
     Baseline --> Baseline : supersedes
+    Baseline --> Baseline : derivedFrom
     Ticket --> CSC : affects
     Ticket --> Version : fixedIn
     Ticket --> Ticket : childOf
@@ -147,6 +148,9 @@ classDiagram
   - **Draft** ≈ an OSLC *stream*: editable.
   - **Approved** ≈ an OSLC/EIA-649 *baseline*: frozen, and changed only by cloning a new draft that
     `supersedes` it. Only released or external versions may be selected.
+  - **Lineage** (`derivedFrom`): the baseline a new one was built from. Branches (several drafts from one
+    baseline) make it a tree, the baseline counterpart of version lineage. `supersedes` is the approval
+    order, `derivedFrom` is the content history, and the two differ when a branch is approved out of order.
   - In EIA-649 terms it is closest to a **product baseline** as fielded for that capability. It is not a
     functional or allocated baseline: those baseline *requirements documents*, which cmtrack doesn't hold.
   - **Baselines behind**: approved baselines that select an older version than the release line's
@@ -195,7 +199,8 @@ what cmtrack contributes that the source can't compute.
 | `releasedAs` | Release → Version | 1 → 0..1, immutable | EIA-649 *release* (the act) |
 | `baselineOf` | Baseline → Capability | * → 1 | |
 | `selects` | Baseline → Version | 1 → *, one per CI | `oslc_config:selects`, CMPO *packages* |
-| `supersedes` | Baseline → Baseline | 0..1 → 0..1 | `prov:wasRevisionOf` |
+| `derivedFrom` | Baseline → Baseline | * → 0..1 | ⊑ `prov:wasDerivedFrom` (baseline lineage: a tree per capability) |
+| `supersedes` | Baseline → Baseline | 0..1 → 0..1 | `prov:wasRevisionOf` (set on approval) |
 | `affects` | CSC ticket → CSC | * → 1 | |
 | `fixedIn` | Ticket → Version | * → * | |
 | `childOf` | CSC ticket → parent ticket | * → 1 | |

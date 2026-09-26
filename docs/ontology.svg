@@ -25,8 +25,8 @@
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_baseline</title>
-<path fill="#fdf5e8" stroke="#e0c38f" d="M20,-175C20,-175 194,-175 194,-175 200,-175 206,-181 206,-187 206,-187 206,-279 206,-279 206,-285 200,-291 194,-291 194,-291 20,-291 20,-291 14,-291 8,-285 8,-279 8,-279 8,-187 8,-187 8,-181 14,-175 20,-175"/>
-<text text-anchor="start" x="64.5" y="-275.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="16.00">Baselines</text>
+<path fill="#fdf5e8" stroke="#e0c38f" d="M20,-175C20,-175 194,-175 194,-175 200,-175 206,-181 206,-187 206,-187 206,-317 206,-317 206,-323 200,-329 194,-329 194,-329 20,-329 20,-329 14,-329 8,-323 8,-317 8,-317 8,-187 8,-187 8,-181 14,-175 20,-175"/>
+<text text-anchor="start" x="64.5" y="-313.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="16.00">Baselines</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_work</title>
@@ -55,7 +55,7 @@
 <text text-anchor="start" x="60" y="-419.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">Release source</text>
 </g>
 <!-- CI&#45;&gt;RS -->
-<g id="edge20" class="edge">
+<g id="edge21" class="edge">
 <title>CI&#45;&gt;RS</title>
 <path fill="none" stroke="#555555" stroke-dasharray="5,2" d="M706.74,-147.68C666.14,-180.2 586.17,-239.49 508,-270 421.83,-303.64 389.79,-273.99 303,-306 240.43,-329.08 175.13,-372.09 138.22,-398.47"/>
 <polygon fill="#555555" stroke="#555555" points="136.35,-396.79 132.1,-402.87 139.21,-400.77 136.35,-396.79"/>
@@ -194,9 +194,17 @@
 <!-- Base&#45;&gt;Base -->
 <g id="edge13" class="edge">
 <title>Base&#45;&gt;Base</title>
-<path fill="none" stroke="#555555" d="M82.43,-228.68C74.72,-244.67 82.9,-260.5 107,-260.5 127.71,-260.5 136.67,-248.81 133.88,-235.37"/>
-<polygon fill="#555555" stroke="#555555" points="136.17,-234.49 131.57,-228.68 131.54,-236.09 136.17,-234.49"/>
+<path fill="none" stroke="#555555" d="M94.72,-228.68C90.86,-244.67 94.95,-260.5 107,-260.5 117.26,-260.5 121.75,-249.02 120.48,-235.74"/>
+<polygon fill="#555555" stroke="#555555" points="122.87,-235.17 119.28,-228.68 118.03,-235.99 122.87,-235.17"/>
 <text text-anchor="middle" x="107" y="-263.3" font-family="Helvetica,sans-Serif" font-size="9.00">supersedes</text>
+</g>
+<!-- Base&#45;&gt;Base -->
+<g id="edge14" class="edge">
+<title>Base&#45;&gt;Base</title>
+<path fill="none" stroke="#555555" d="M88.05,-228.59C72.31,-257.65 78.63,-292.5 107,-292.5 133.27,-292.5 140.63,-262.63 129.09,-235.14"/>
+<polygon fill="#555555" stroke="#555555" points="131.19,-233.85 125.95,-228.59 126.77,-235.96 131.19,-233.85"/>
+<text text-anchor="start" x="78.5" y="-305.3" font-family="Helvetica,sans-Serif" font-size="9.00">derivedFrom</text>
+<text text-anchor="start" x="90.5" y="-295.3" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#999999">lineage</text>
 </g>
 <!-- PT -->
 <g id="node7" class="node">
@@ -212,21 +220,21 @@
 <text text-anchor="start" x="343" y="-671.8" font-family="Helvetica,sans-Serif" font-size="9.00">state: analysis … done | error</text>
 </g>
 <!-- CT&#45;&gt;CSC -->
-<g id="edge15" class="edge">
+<g id="edge16" class="edge">
 <title>CT&#45;&gt;CSC</title>
 <path fill="none" stroke="#555555" stroke-dasharray="5,2" d="M393.4,-660.97C369.41,-632.98 324.77,-576.41 303,-520 260.82,-410.7 239.98,-373.23 266,-259 274.43,-221.98 276.24,-208.93 303,-182 315.87,-169.05 332.61,-158.83 348.99,-151.01"/>
 <polygon fill="#555555" stroke="#555555" points="350.15,-153.17 355.49,-148.01 348.1,-148.72 350.15,-153.17"/>
 <text text-anchor="middle" x="254.5" y="-261.8" font-family="Helvetica,sans-Serif" font-size="9.00">affects</text>
 </g>
 <!-- CT&#45;&gt;Ver -->
-<g id="edge16" class="edge">
+<g id="edge17" class="edge">
 <title>CT&#45;&gt;Ver</title>
 <path fill="none" stroke="#555555" stroke-dasharray="5,2" d="M484.41,-667.04C525.58,-657.33 575.71,-640.09 612,-610 671.2,-560.91 707.3,-475.21 723.63,-428.2"/>
 <polygon fill="#555555" stroke="#555555" points="725.96,-428.97 725.9,-421.55 721.32,-427.38 725.96,-428.97"/>
 <text text-anchor="middle" x="576.5" y="-651.8" font-family="Helvetica,sans-Serif" font-size="9.00">fixedIn</text>
 </g>
 <!-- CT&#45;&gt;PT -->
-<g id="edge14" class="edge">
+<g id="edge15" class="edge">
 <title>CT&#45;&gt;PT</title>
 <path fill="none" stroke="#555555" stroke-dasharray="5,2" d="M484.2,-684.04C522.35,-686.68 569.68,-689.97 612,-693 634.17,-694.59 658.61,-696.38 679.75,-697.95"/>
 <polygon fill="#555555" stroke="#555555" points="679.62,-700.4 686.79,-698.47 679.99,-695.51 679.62,-700.4"/>
@@ -240,14 +248,14 @@
 <text text-anchor="start" x="364.5" y="-755.8" font-family="Helvetica,sans-Serif" font-size="9.00">key + lexorank only</text>
 </g>
 <!-- Back&#45;&gt;CI -->
-<g id="edge19" class="edge">
+<g id="edge20" class="edge">
 <title>Back&#45;&gt;CI</title>
 <path fill="none" stroke="#555555" d="M462.68,-746.57C479.45,-738.87 496.61,-728 508,-713 552.18,-654.83 496.69,-610.07 541,-552 562.46,-523.87 591.08,-544.54 612,-516 665.26,-443.34 618.39,-402.07 645,-316 663.51,-256.12 697.11,-190.83 717.31,-154.2"/>
 <polygon fill="#555555" stroke="#555555" points="719.66,-155.02 720.92,-147.71 715.38,-152.64 719.66,-155.02"/>
 <text text-anchor="middle" x="576.5" y="-554.8" font-family="Helvetica,sans-Serif" font-size="9.00">about</text>
 </g>
 <!-- Back&#45;&gt;PT -->
-<g id="edge17" class="edge">
+<g id="edge18" class="edge">
 <title>Back&#45;&gt;PT</title>
 <path fill="none" stroke="#555555" d="M462.84,-753.13C522.46,-741.89 619.44,-723.6 679.82,-712.22"/>
 <polygon fill="#555555" stroke="#555555" points="680.57,-714.57 687,-710.86 679.67,-709.75 680.57,-714.57"/>
@@ -260,7 +268,7 @@
 <text text-anchor="start" x="718.5" y="-777.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">Team</text>
 </g>
 <!-- Back&#45;&gt;Team -->
-<g id="edge18" class="edge">
+<g id="edge19" class="edge">
 <title>Back&#45;&gt;Team</title>
 <path fill="none" stroke="#555555" d="M462.84,-765.59C529.92,-768.91 644.28,-774.56 700.62,-777.35"/>
 <polygon fill="#555555" stroke="#555555" points="700.74,-779.81 707.85,-777.71 700.98,-774.91 700.74,-779.81"/>
@@ -276,7 +284,7 @@
 <text text-anchor="start" x="41.5" y="-546.1" font-family="Helvetica,sans-Serif" font-size="8.00" fill="#777777">status accounting · prov:Activity</text>
 </g>
 <!-- RS&#45;&gt;Rel -->
-<g id="edge21" class="edge">
+<g id="edge22" class="edge">
 <title>RS&#45;&gt;Rel</title>
 <path fill="none" stroke="#555555" stroke-dasharray="1,5" d="M162.07,-421C201.37,-421 255.81,-421 303.53,-421"/>
 <polygon fill="#555555" stroke="#555555" points="310.82,-421 303.82,-424.15 307.32,-421 303.82,-421 303.82,-421 303.82,-421 307.32,-421 303.82,-417.85 310.82,-421 310.82,-421"/>
@@ -289,7 +297,7 @@
 <text text-anchor="start" x="65.5" y="-487.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">Ticket source</text>
 </g>
 <!-- TS&#45;&gt;CT -->
-<g id="edge22" class="edge">
+<g id="edge23" class="edge">
 <title>TS&#45;&gt;CT</title>
 <path fill="none" stroke="#555555" stroke-dasharray="1,5" d="M156.64,-503.04C172.81,-508.57 190.61,-515.63 206,-524 275.77,-561.95 347.2,-622.83 383.7,-655.87"/>
 <polygon fill="#555555" stroke="#555555" points="389.25,-660.92 381.96,-658.54 386.67,-658.57 384.08,-656.21 384.08,-656.21 384.08,-656.21 386.67,-658.57 386.2,-653.88 389.25,-660.92 389.25,-660.92"/>

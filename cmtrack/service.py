@@ -4,7 +4,9 @@ Every function takes an open sqlite3 connection and does NOT commit: the caller
 owns the transaction (the API wraps each request in ``with conn:``; scripts
 should do the same). References to CIs and IFCs accept an id or a name.
 """
+import csv
 import datetime as dt
+import io
 import json
 import sqlite3
 
@@ -1274,6 +1276,21 @@ def set_ifc_parent(conn, ref, parent):
     return get_ifc(conn, ifc["id"])
 
 
+def update_ifc(conn, ref, **fields):
+    """Change an IFC's parent and/or description (only the fields given)."""
+    ifc = get_ifc(conn, ref)
+    if "parent" in fields and (fields["parent"] or None) != _ifc_name(conn, ifc["parent_id"]):
+        set_ifc_parent(conn, ifc["id"], fields["parent"] or None)
+    if "description" in fields and (fields["description"] or None) != ifc["description"]:
+        conn.execute("UPDATE ifc SET description = ? WHERE id = ?", (fields["description"] or None, ifc["id"]))
+        log(conn, "ifc", ifc["id"], "updated", description=fields["description"] or None)
+    return get_ifc(conn, ifc["id"])
+
+
+def _ifc_name(conn, ifc_id):
+    return get_ifc(conn, ifc_id)["name"] if ifc_id else None
+
+
 def _ancestors(conn, ifc_id):
     return conn.execute(
         """WITH RECURSIVE a(id, parent_id, name, depth) AS (
@@ -1295,8 +1312,8 @@ def ifc_detail(conn, ref):
     out["children"] = [r["name"] for r in conn.execute(
         "SELECT name FROM ifc WHERE parent_id = ? ORDER BY name", (ifc["id"],))]
     out["baselines"] = to_dicts(conn.execute(
-        "SELECT id, name, status, source, source_ref, created_at, approved_at FROM baseline "
-        "WHERE ifc_id = ? ORDER BY id", (ifc["id"],)))
+        "SELECT id, name, status, source, source_ref, created_at, approved_at, derived_from_id, supersedes_id "
+        "FROM baseline WHERE ifc_id = ? ORDER BY id", (ifc["id"],)))
     current = current_baseline(conn, ifc["id"])
     out["current_hscm"] = baseline_detail(conn, current["id"]) if current else None
     return out
@@ -1325,8 +1342,19 @@ def baseline_detail(conn, baseline_id):
     out = to_dict(b)
     out["ifc"] = get_ifc(conn, b["ifc_id"])["name"]
     out["supersedes"] = get_baseline(conn, b["supersedes_id"])["name"] if b["supersedes_id"] else None
+    out["derived_from"] = get_baseline(conn, b["derived_from_id"])["name"] if b["derived_from_id"] else None
+    out["derivations"] = to_dicts(conn.execute(
+        "SELECT id, name, status FROM baseline WHERE derived_from_id = ? ORDER BY id", (b["id"],)))
     out["entries"] = baseline_entries(conn, b["id"])
     return out
+
+
+def baseline_lineage(conn, ifc_id):
+    """An IFC's baselines, oldest first, each with the baseline it was derived from (its lineage parent)."""
+    return to_dicts(conn.execute(
+        "SELECT b.id, b.name, b.status, b.source, b.source_ref, b.created_at, b.approved_at, b.derived_from_id, "
+        "b.supersedes_id, (SELECT COUNT(*) FROM baseline_entry e WHERE e.baseline_id = b.id) AS entries "
+        "FROM baseline b WHERE b.ifc_id = ? ORDER BY b.id", (ifc_id,)))
 
 
 def _resolve_entries(conn, entries):
@@ -1343,43 +1371,109 @@ def _write_entries(conn, baseline_id, resolved):
                      [(baseline_id, ci_id, v["id"]) for ci_id, v in resolved.items()])
 
 
-def create_baseline(conn, ifc_ref, name, entries=(), source="manual", source_ref=None):
+def create_baseline(conn, ifc_ref, name, entries=None, source="manual", source_ref=None, derived_from=None):
+    """A new draft baseline. ``derived_from`` (a baseline id of the same IFC) records its lineage; with no
+    ``entries`` given, it starts with that baseline's entries."""
     ifc = get_ifc(conn, ifc_ref)
     if not name:
         raise CMError("name is required")
-    resolved = _resolve_entries(conn, entries)
-    prev = current_baseline(conn, ifc["id"])
+    base = None
+    if derived_from:
+        base = get_baseline(conn, derived_from)
+        if base["ifc_id"] != ifc["id"]:
+            raise CMError(f"baseline {base['name']} belongs to another IFC")
+        if entries is None:
+            entries = [{"ci": e["ci"], "version": e["version_id"]} for e in baseline_entries(conn, base["id"])]
+    resolved = _resolve_entries(conn, entries or ())
     try:
         cur = conn.execute(
-            "INSERT INTO baseline (ifc_id, name, supersedes_id, source, source_ref) VALUES (?, ?, ?, ?, ?)",
-            (ifc["id"], name, prev["id"] if prev else None, source, source_ref))
+            "INSERT INTO baseline (ifc_id, name, derived_from_id, source, source_ref) VALUES (?, ?, ?, ?, ?)",
+            (ifc["id"], name, base["id"] if base else None, source, source_ref))
     except sqlite3.IntegrityError:
         raise Conflict(f"baseline {name!r} already exists for {ifc['name']}") from None
     _write_entries(conn, cur.lastrowid, resolved)
-    log(conn, "baseline", cur.lastrowid, "created", ifc=ifc["name"], name=name, source=source)
+    log(conn, "baseline", cur.lastrowid, "created", ifc=ifc["name"], name=name, source=source,
+        derived_from=base["name"] if base else None)
     return baseline_detail(conn, cur.lastrowid)
 
 
-def set_baseline_entries(conn, baseline_id, entries):
+def _draft(conn, baseline_id):
     b = get_baseline(conn, baseline_id)
     if b["status"] != "draft":
-        raise CMError(f"baseline {b['name']} is {b['status']}; clone it to change it")
+        raise CMError(f"baseline {b['name']} is {b['status']}; branch from it to change it")
+    return b
+
+
+def set_baseline_entries(conn, baseline_id, entries):
+    b = _draft(conn, baseline_id)
     _write_entries(conn, b["id"], _resolve_entries(conn, entries))
     log(conn, "baseline", b["id"], "entries_set", count=len(entries))
     return baseline_detail(conn, b["id"])
 
 
+def set_baseline_entry(conn, baseline_id, ci_ref, version):
+    """Put one CI's version into a draft baseline (adds the CI, or replaces its version)."""
+    b = _draft(conn, baseline_id)
+    ci = get_ci(conn, ci_ref)
+    ver = find_version(conn, ci, version)
+    old = conn.execute("SELECT v.name FROM baseline_entry e JOIN version v ON v.id = e.version_id "
+                       "WHERE e.baseline_id = ? AND e.ci_id = ?", (b["id"], ci["id"])).fetchone()
+    conn.execute("INSERT OR REPLACE INTO baseline_entry (baseline_id, ci_id, version_id) VALUES (?, ?, ?)",
+                 (b["id"], ci["id"], ver["id"]))
+    log(conn, "baseline", b["id"], "entry_set", ci=ci["name"], version=ver["name"], was=old["name"] if old else None)
+    return baseline_detail(conn, b["id"])
+
+
+def remove_baseline_entry(conn, baseline_id, ci_ref):
+    b = _draft(conn, baseline_id)
+    ci = get_ci(conn, ci_ref)
+    if not conn.execute("DELETE FROM baseline_entry WHERE baseline_id = ? AND ci_id = ?", (b["id"], ci["id"])).rowcount:
+        raise NotFound(f"{ci['name']} is not in baseline {b['name']}")
+    log(conn, "baseline", b["id"], "entry_removed", ci=ci["name"])
+    return baseline_detail(conn, b["id"])
+
+
+def refresh_baseline(conn, baseline_id):
+    """Move every entry of a draft that is behind its release family's effective version up to it."""
+    b = _draft(conn, baseline_id)
+    moved = []
+    for e in baseline_entries(conn, b["id"]):
+        ver = get_version(conn, e["version_id"])
+        eff = effective_version(conn, ver["release_id"])
+        if eff and eff["id"] != ver["id"]:
+            conn.execute("UPDATE baseline_entry SET version_id = ? WHERE baseline_id = ? AND ci_id = ?",
+                         (eff["id"], b["id"], ver["ci_id"]))
+            moved.append({"ci": e["ci"], "from": e["version"], "to": eff["name"]})
+    if moved:
+        log(conn, "baseline", b["id"], "refreshed", moved=moved)
+    return {"baseline": baseline_detail(conn, b["id"]), "moved": moved}
+
+
+def delete_baseline(conn, baseline_id):
+    """Discard a draft. Drafts others were derived from are kept, so the lineage never loses a node."""
+    b = _draft(conn, baseline_id)
+    kids = [r["name"] for r in conn.execute("SELECT name FROM baseline WHERE derived_from_id = ?", (b["id"],))]
+    if kids:
+        raise CMError(f"baseline {b['name']} can't be discarded: {', '.join(kids)} derived from it")
+    conn.execute("DELETE FROM baseline_entry WHERE baseline_id = ?", (b["id"],))
+    conn.execute("DELETE FROM baseline WHERE id = ?", (b["id"],))
+    log(conn, "ifc", b["ifc_id"], "baseline_discarded", name=b["name"])
+    return {"ifc": _ifc_name(conn, b["ifc_id"]), "name": b["name"]}
+
+
 def clone_baseline(conn, baseline_id, name):
+    """Branch: a new draft derived from this baseline, starting with its entries."""
     b = get_baseline(conn, baseline_id)
-    entries = [{"ci": e["ci"], "version": e["version_id"]} for e in baseline_entries(conn, b["id"])]
-    return create_baseline(conn, b["ifc_id"], name, entries)
+    return create_baseline(conn, b["ifc_id"], name, derived_from=b["id"])
 
 
 def _approve(conn, b):
+    prev = current_baseline(conn, b["ifc_id"])
     conn.execute("UPDATE baseline SET status = 'superseded' WHERE ifc_id = ? AND status = 'approved' AND id != ?",
                  (b["ifc_id"], b["id"]))
-    conn.execute("UPDATE baseline SET status = 'approved', approved_at = ? WHERE id = ?", (now(), b["id"]))
-    log(conn, "baseline", b["id"], "approved")
+    conn.execute("UPDATE baseline SET status = 'approved', approved_at = ?, supersedes_id = ? WHERE id = ?",
+                 (now(), prev["id"] if prev and prev["id"] != b["id"] else None, b["id"]))
+    log(conn, "baseline", b["id"], "approved", supersedes=prev["name"] if prev else None)
 
 
 def approve_baseline(conn, baseline_id):
@@ -1422,6 +1516,11 @@ def _external_version(conn, ci, name):
     return ver
 
 
+def hscm_rows(text):
+    """Rows of an HSCM CSV (header ci,version[,type])."""
+    return list(csv.DictReader(io.StringIO(text.strip())))
+
+
 def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
     """Record a scraped HSCM as a baseline.
 
@@ -1453,10 +1552,10 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
             warnings.append(f"row {i}: {ci_name} listed more than once; last row wins")
         resolved[ci["id"]] = ver
 
-    prev = current_baseline(conn, ifc["id"])
+    prev = current_baseline(conn, ifc["id"])   # a new HSCM revision builds on the one in force
     try:
         cur = conn.execute(
-            "INSERT INTO baseline (ifc_id, name, supersedes_id, source, source_ref) VALUES (?, ?, ?, 'scraped', ?)",
+            "INSERT INTO baseline (ifc_id, name, derived_from_id, source, source_ref) VALUES (?, ?, ?, 'scraped', ?)",
             (ifc["id"], name, prev["id"] if prev else None, source_ref))
     except sqlite3.IntegrityError:
         raise Conflict(f"baseline {name!r} already exists for {ifc['name']}") from None

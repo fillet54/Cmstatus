@@ -3,9 +3,7 @@
 CI and IFC path segments accept an id or a name (e.g. /api/cis/NAV-SW).
 Each mutating request runs in one transaction.
 """
-import csv
 import functools
-import io
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -285,17 +283,18 @@ def get_ifc(conn, ref):
 @tx
 def update_ifc(conn, ref):
     d = body()
-    if "parent" not in d:
-        raise svc.CMError("only 'parent' can be changed")
-    return jsonify(svc.to_dict(svc.set_ifc_parent(conn, ref, d["parent"])))
+    if not {"parent", "description"} & d.keys():
+        raise svc.CMError("only 'parent' and 'description' can be changed")
+    return jsonify(svc.to_dict(svc.update_ifc(conn, ref, **{k: d[k] for k in ("parent", "description") if k in d})))
 
 
 @bp.post("/ifcs/<ref>/baselines")
 @tx
 def create_baseline(conn, ref):
+    """{name, from?: baseline id to derive from (copies its entries unless entries are given), entries?}"""
     d = body()
-    return created(svc.create_baseline(conn, ref, d.get("name"), d.get("entries", []),
-                                       source_ref=d.get("source_ref")))
+    return created(svc.create_baseline(conn, ref, d.get("name"), d.get("entries"),
+                                       source_ref=d.get("source_ref"), derived_from=d.get("from")))
 
 
 @bp.post("/ifcs/<ref>/hscm")
@@ -304,7 +303,7 @@ def import_hscm(conn, ref):
     """JSON {name, source_ref?, approve?, rows: [{ci, version, type?}]}
     or text/csv with columns ci,version[,type] and ?name=&source_ref=&approve= query args."""
     if request.mimetype == "text/csv":
-        rows = list(csv.DictReader(io.StringIO(request.get_data(as_text=True))))
+        rows = svc.hscm_rows(request.get_data(as_text=True))
         opts = request.args
         approve = opts.get("approve", "true").lower() not in ("0", "false", "no")
     else:
@@ -324,6 +323,30 @@ def get_baseline(conn, bid):
 @tx
 def set_entries(conn, bid):
     return jsonify(svc.set_baseline_entries(conn, bid, body().get("entries", [])))
+
+
+@bp.put("/baselines/<int:bid>/entries/<ci>")
+@tx
+def set_entry(conn, bid, ci):
+    return jsonify(svc.set_baseline_entry(conn, bid, ci, body().get("version")))
+
+
+@bp.delete("/baselines/<int:bid>/entries/<ci>")
+@tx
+def remove_entry(conn, bid, ci):
+    return jsonify(svc.remove_baseline_entry(conn, bid, ci))
+
+
+@bp.post("/baselines/<int:bid>/refresh")
+@tx
+def refresh_baseline(conn, bid):
+    return jsonify(svc.refresh_baseline(conn, bid))
+
+
+@bp.delete("/baselines/<int:bid>")
+@tx
+def delete_baseline(conn, bid):
+    return jsonify(svc.delete_baseline(conn, bid))
 
 
 @bp.post("/baselines/<int:bid>/clone")

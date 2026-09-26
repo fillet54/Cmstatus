@@ -24,7 +24,7 @@ Env: `CMTRACK_DB` (SQLite path), `CMTRACK_TICKET_SOURCES` and `CMTRACK_RELEASE_S
 | Lineage | `version_parent` | DAG of what each build was built from. Derived from the releases (`lineage=auto`) or set by hand for merges (`manual`). |
 | Manifest | `manifest_entry` | Composite CI version → pinned child versions. |
 | IFC | `ifc` | Capability, with `parent_id` hierarchy. |
-| Baseline | `baseline` + `baseline_entry` | The HSCM list: one version per CI. draft → approved → superseded. |
+| Baseline | `baseline` + `baseline_entry` | The HSCM list: one version per CI. draft → approved → superseded. `derived_from_id` = the baseline it was built from (lineage); `supersedes_id` = the approved one it replaced (set on approval). |
 | Backlog | `backlog` + `backlog_item` + `backlog_ci` | A ranked list of top-level ticket keys shared by a set of teams, related to CIs. Stores only key + lexorank; tickets are read live. |
 | Event | `event` | Append-only log of every change (status accounting). |
 
@@ -44,7 +44,9 @@ Env: `CMTRACK_DB` (SQLite path), `CMTRACK_TICKET_SOURCES` and `CMTRACK_RELEASE_S
   Corrections are logged as `corrected` events with old → new.
 - A release's `released_version` never changes. `effective_version` = latest released version in its family;
   `baselines_behind` = approved HSCMs still fielding an older one.
-- Approving a baseline requires every entry to be `released` or `external`; approved baselines are frozen (clone to change).
+- Approving a baseline requires every entry to be `released` or `external`; approved baselines are frozen (branch to change).
+- Baseline lineage: a new baseline records the baseline it was built from (`from` / a branch / an import builds on the
+  current approved one), so an IFC's baselines form a tree. Only drafts nothing was built from can be discarded.
 - Scraped HSCMs create placeholder CIs and `external` versions as needed and are approved as-is, returning warnings.
 
 ## Version lineage and ranges
@@ -200,12 +202,16 @@ POST /versions/<id>/release        {released_at?}   promote (gate enforced)
 POST /versions/<id>/remap {to}     POST /versions/<id>/detach
 PUT  /versions/<id>/manifest       {children: [{ci, version}]}   composites only
 GET  /versions/<id>/where-used     composites + baselines, transitively
-POST /ifcs                         {name, parent?}     PATCH /ifcs/<ifc> {parent}
+POST /ifcs                         {name, parent?, description?}
 GET  /ifcs/<ifc>                   ancestors, children, baselines, current HSCM
-POST /ifcs/<ifc>/baselines         {name, entries: [{ci, version}]}  → draft
 POST /ifcs/<ifc>/hscm              JSON {name, rows:[{ci, version, type?}], source_ref?, approve?}
                                    or text/csv (ci,version[,type]) with ?name=&source_ref=
-PUT  /baselines/<id>/entries   POST /baselines/<id>/clone   POST /baselines/<id>/approve
+POST /ifcs/<ifc>/baselines         {name, from?, entries?}  → draft (from = baseline id: copies its entries, records lineage)
+PUT  /baselines/<id>/entries   POST /baselines/<id>/clone {name} (branch)   POST /baselines/<id>/approve
+PUT  /baselines/<id>/entries/<ci> {version}   DELETE /baselines/<id>/entries/<ci>   (drafts)
+POST /baselines/<id>/refresh      move entries behind their effective version up to it (drafts)
+DELETE /baselines/<id>            discard a draft nothing was built from
+PATCH /ifcs/<ifc>                 {parent?, description?}
 GET  /baselines/<a>/diff/<b>
 GET  /versions/<id>/lineage        PUT /versions/<id>/parents {parents}   DELETE /versions/<id>/parents
 GET  /cis/<ci>/versions?to=&from=  range over the lineage DAG, oldest first
@@ -245,9 +251,12 @@ every URL works as a plain link.
 /backlogs             shared backlogs, and a form to create one
 /backlogs/<b>         the ranked backlog: drag and drop (or ⤒ ↑ ↓) to reorder, pull from the source, add by key,
                       remove, hide done
-/ifcs                 IFC tree with each IFC's current HSCM
-/ifcs/<ifc>           current HSCM entries (stale ones flagged), baseline history
-/baselines/<id>       entries, compare with another baseline of the IFC (diff loaded via htmx)
+/cis/<ci>/lineage     every build as a git-style graph: release lines, patch/emergency branches, merges
+/ifcs                 IFC tree with each IFC's current HSCM; add a capability
+/ifcs/<ifc>           baseline lineage tree, current HSCM entries (stale ones flagged); new baseline (from any
+                      baseline or empty), import an HSCM CSV (file or paste), edit parent/description
+/baselines/<id>       entries, compare with another baseline of the IFC (diff loaded via htmx), lineage, branch;
+                      drafts: pick versions, add/remove CIs, bring stale entries up to date, approve, discard
 /events               audit log, entity filter, infinite scroll
 ```
 
