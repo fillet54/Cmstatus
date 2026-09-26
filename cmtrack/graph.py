@@ -1,72 +1,16 @@
-"""SVG layouts for lineage: a git-style graph of a CI's versions, and the IFC timeline.
+"""Timelines: lineage laid out on a time axis, one lane per line of work while it's active.
 
-``layout(nodes)`` takes nodes in display order, children before parents, each a dict with ``id`` and
-``parents`` (ids; parents not in ``nodes`` are ignored), and returns what ``ui.graph`` draws: every node with
-its ``row``, ``lane`` and ``x``/``y``, the SVG path of every edge, and the size. A node's first parent continues
-its lane (so a line of releases stays in one lane and a branch rejoins it where it forked); further parents
-(merges) join the lane already heading to that parent, or open a new one.
+``timeline`` draws a CI's versions (release lines, fix branches, merges) and the IFCs' HSCM builds; ``newest_first``
+orders a DAG for display (the service uses it to sort versions parents-first).
 """
 import datetime as dt
 import heapq
 
-ROW = 40     # px per row
-LANE = 16    # px per lane
 LANES = 6    # lane colours before they repeat (ui.css .ui-graph__l0 … l5)
 
 
-def _x(lane):
-    return LANE // 2 + lane * LANE
-
-
-def _y(row):
-    return ROW // 2 + row * ROW
-
-
-def _path(row, col, lane, prow, pcol):
-    """Child (row, col) down lane ``lane`` to parent (prow, pcol)."""
-    x0, y0, xl, x1, y1, h = _x(col), _y(row), _x(lane), _x(pcol), _y(prow), ROW // 2
-    if prow == row + 1:
-        return f"M{x0} {y0} L{x1} {y1}" if x0 == x1 else f"M{x0} {y0} C{x0} {y0 + h} {x1} {y1 - h} {x1} {y1}"
-    d = f"M{x0} {y0} "
-    d += f"L{xl} {y0 + ROW} " if xl == x0 else f"C{x0} {y0 + h} {xl} {y0 + h} {xl} {y0 + ROW} "
-    d += f"L{xl} {y1 - ROW} "
-    d += f"L{x1} {y1}" if xl == x1 else f"C{xl} {y1 - h} {x1} {y1 - h} {x1} {y1}"
-    return d
-
-
-def _free(lanes):
-    if None in lanes:
-        return lanes.index(None)
-    lanes.append(None)
-    return len(lanes) - 1
-
-
-def layout(nodes):
-    row_of = {n["id"]: i for i, n in enumerate(nodes)}
-    lanes = []                       # lane -> id of the node the lane is heading to (None = free)
-    placed, pending, width = [], [], 1
-    for row, n in enumerate(nodes):
-        mine = [i for i, x in enumerate(lanes) if x == n["id"]]
-        col = mine[0] if mine else _free(lanes)
-        for i in mine:
-            lanes[i] = None
-        for k, p in enumerate(p for p in n["parents"] if row_of.get(p, -1) > row):
-            lane = col if k == 0 else lanes.index(p) if p in lanes else _free(lanes)
-            lanes[lane] = p
-            pending.append((row, col, lane, p, k > 0))
-        width = max(width, len(lanes), col + 1)
-        while lanes and lanes[-1] is None:
-            lanes.pop()
-        placed.append({**n, "row": row, "lane": col, "color": col % LANES, "x": _x(col), "y": _y(row)})
-    edges = [{"d": _path(row, col, lane, row_of[p], placed[row_of[p]]["lane"]), "color": lane % LANES, "merge": merge}
-             for row, col, lane, p, merge in pending]
-    return {"nodes": placed, "edges": edges, "width": width * LANE, "height": len(nodes) * ROW, "row": ROW,
-            "lane": LANE}
-
-
 def newest_first(nodes, key):
-    """``nodes`` ordered for ``layout``: children before parents, otherwise by ``key`` descending (so rows read
-    as a timeline, and the line with the newest work takes the first lane)."""
+    """``nodes`` (each with ``id`` and ``parents``) children before parents, otherwise by ``key`` descending."""
     by_id = {n["id"]: n for n in nodes}
     waiting = {i: 0 for i in by_id}
     children = {}
@@ -112,12 +56,15 @@ def _day(value):
     return dt.date.fromisoformat(str(value)[:10])
 
 
-def timeline(nodes, group, today, px_per_day=ZOOMS["months"], caption=None, fit_width=None):
-    """Lay out nodes (oldest first; each with ``id``, ``parents``, ``date``) on a time axis: x is the date,
-    one lane per ``group`` while it is active. A lane is held from the parent a line branches off to its last
-    node plus room for its labels, then reused, so finished lines don't add height. ``caption(node)`` names
-    the line at its first node. Returns positioned nodes, edge paths, lane captions, axis ticks, today's x
-    and the size; the axis runs from a quarter before the first node to a year after today, so today can
+def timeline(nodes, group, today, px_per_day=ZOOMS["months"], fit_width=None):
+    """Lay out nodes (oldest first; each with ``id``, ``parents``, ``date``, ``name``, and optionally ``label``
+    and ``caption``) on a time axis: x is the date, one lane per ``group`` while it is active. A lane is held
+    from the parent a line branches off to its last node plus room for its labels, then reused, so finished
+    lines don't add height. A node's ``caption`` is drawn above it (e.g. the line's name at its first node),
+    its ``label`` (default ``short_label(name)``) beside it. A first parent in another lane is a branch: the
+    edge turns out of the parent into the child's lane. Further parents are merges: the edge runs along the
+    parent's lane and turns into the child. Returns positioned nodes, edge paths, captions, axis ticks, today's
+    x and the size; the axis runs from a quarter before the first node to a year after today, so today can
     always be scrolled to the middle. ``fit_width`` (px) stretches the scale so the timeline is at least that
     wide, for zooms that would otherwise leave its container part empty."""
     origin = min([_day(n["date"]) for n in nodes] + [today]) - dt.timedelta(days=90)
@@ -129,17 +76,21 @@ def timeline(nodes, group, today, px_per_day=ZOOMS["months"], caption=None, fit_
     dense = px_per_day < 0.35                          # too cramped for labels: dots only, names on hover
     room = 6 if dense else LABEL_PX
 
-    spans, first, members = {}, {}, {}
+    spans, first = {}, {}
     for i, n in enumerate(nodes):
         g = group(n)
-        members.setdefault(g, []).append(n)
         first.setdefault(g, i)
-        lo = min([x(n["date"])] + [x(by_id[p]["date"]) for p in n["parents"] if p in by_id])
+        lo = min([x(n["date"])] + [x(by_id[p]["date"]) for p in n["parents"][:1] if p in by_id])
         hi = x(n["date"]) + room
-        if first[g] == i and caption and not dense:
-            hi = max(hi, x(n["date"]) + round(len(caption(n)) * CHAR_PX))
+        if n.get("caption") and not dense:
+            hi = max(hi, x(n["date"]) + round(len(n["caption"]) * CHAR_PX))
         a, b = spans.get(g, (lo, hi))
         spans[g] = (min(a, lo), max(b, hi))
+    for n in nodes:                                        # a merge edge runs along its parent's lane: hold it
+        for p in n["parents"][1:]:
+            if p in by_id:
+                g = group(by_id[p])
+                spans[g] = (spans[g][0], max(spans[g][1], x(n["date"])))
     lane_of, ends = {}, []
     for g, (lo, hi) in sorted(spans.items(), key=lambda kv: (kv[1][0], first[kv[0]])):
         lane = next((k for k, e in enumerate(ends) if e + 6 < lo), None)
@@ -150,22 +101,24 @@ def timeline(nodes, group, today, px_per_day=ZOOMS["months"], caption=None, fit_
 
     y = lambda lane: TL_AXIS + lane * TL_LANE + TL_LANE // 2
     placed = [{**n, "x": x(n["date"]), "y": y(lane_of[group(n)]), "lane": lane_of[group(n)],
-               "color": lane_of[group(n)] % LANES, "label": short_label(n["name"])} for n in nodes]
+               "color": lane_of[group(n)] % LANES, "label": n.get("label") or short_label(n["name"])} for n in nodes]
     at = {n["id"]: n for n in placed}
     edges = []
     for n in placed:
         for k, p in enumerate(q for q in n["parents"] if q in at):
             a = at[p]
+            c = max(2, min(12, (n["x"] - a["x"]) // 2))
             if a["y"] == n["y"]:
                 d = f"M{a['x']} {a['y']} L{n['x']} {n['y']}"
-            else:                                            # turn out of the parent into the child's lane
-                c = max(2, min(12, (n["x"] - a["x"]) // 2))
+            elif k == 0:                                     # branch: turn out of the parent into the child's lane
                 d = (f"M{a['x']} {a['y']} C{a['x'] + c} {a['y']} {a['x'] + c} {n['y']} {a['x'] + 2 * c} {n['y']} "
                      f"L{n['x']} {n['y']}")
-            edges.append({"d": d, "color": n["color"], "merge": k > 0})
-    captions = [{"text": caption(members[g][0]), "x": x(members[g][0]["date"]) - 4, "y": y(lane_of[g]) - 9,
-                 "color": lane_of[g] % LANES, "href": members[g][0].get("group_href")}
-                for g in members] if caption else []
+            else:                                            # merge: along the parent's lane, then into the child
+                d = (f"M{a['x']} {a['y']} L{n['x'] - 2 * c} {a['y']} C{n['x'] - c} {a['y']} {n['x'] - c} {n['y']} "
+                     f"{n['x']} {n['y']}")
+            edges.append({"d": d, "color": a["color"] if k else n["color"], "merge": k > 0})
+    captions = [{"text": n["caption"], "x": n["x"] - 4, "y": n["y"] - 9, "color": n["color"], "href": n.get("caption_href")}
+                for n in placed if n.get("caption")]
 
     ticks = []
     step = 1 if px_per_day >= 2 else 3 if px_per_day >= 0.3 else 12

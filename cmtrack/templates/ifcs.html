@@ -24,7 +24,7 @@
     {% if t.nodes %}
     {% call ui.card() %}
       {% call ui.card_header("Timeline", "every IFC's HSCMs by date · a new IFC branches off the HSCM it spawned from") %}{% endcall %}
-      {% call ui.card_body() %}{% include "_ifc_timeline.html" %}{% endcall %}
+      {% call ui.card_body() %}{% include "_timeline.html" %}{% endcall %}
     {% endcall %}
     {% endif %}
   </div>

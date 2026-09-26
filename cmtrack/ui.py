@@ -124,22 +124,15 @@ def styleguide_samples():
     ticket = lambda key, summary, state, versions, reason=None, status=None, type=None: {
         "key": key, "summary": summary, "state": state, "state_reason": reason, "status": status, "type": type,
         "url": jira + key, "versions": [{"name": v} for v in versions]}
-    v = lambda name, release, status, *parents, **kw: {"id": name, "name": name, "release": release,
-                                                          "status": status, "parents": list(parents), **kw}
-    lineage = [v("2027.Q1-b2", "2027.Q1", "built", "2027.Q1-b1"),
-               v("2026.Q4.P1", "2026.Q4.P1", "planned", "2026.Q4-b4", dot="hollow"),
-               v("2027.Q1-b1", "2027.Q1", "built", "2026.Q4-b4", "2026.Q4.ER1"),
-               v("2026.Q4.ER1", "2026.Q4.ER1", "released", "2026.Q4-b4", current=True),
-               v("2026.Q4-b4", "2026.Q4", "released", "2026.Q4-b3", current=True),
-               v("2026.Q4-b3", "2026.Q4", "rejected", dot="danger")]
     return {
-        "graph_sample": graph.layout(lineage),
         "timeline_sample": graph.timeline([
-            {"id": 1, "name": "Build 1", "date": "2024-01-10", "parents": [], "ifc": "A 1.0", "dot": "muted"},
-            {"id": 2, "name": "HSC1", "date": "2024-04-02", "parents": [1], "ifc": "A 1.0", "final": True},
-            {"id": 3, "name": "HSC1", "date": "2024-06-20", "parents": [2], "ifc": "A 1.0.1", "current": True},
-            {"id": 4, "name": "HSC1.1", "date": "2024-09-15", "parents": [3], "ifc": "A 1.0.1", "dot": "hollow"}],
-            lambda n: n["ifc"], dt.date(2024, 10, 1), 0.6, caption=lambda n: n["ifc"]),
+            {"id": 1, "name": "2026.Q4-b1", "label": "b1", "caption": "2026.Q4", "date": "2026-09-10", "parents": [], "line": 0},
+            {"id": 2, "name": "2026.Q4-b2", "label": "b2", "date": "2026-10-20", "parents": [1], "line": 0, "ring": True},
+            {"id": 3, "name": "2026.Q4.ER1", "label": "ER1", "caption": "2026.Q4.ER1", "date": "2026-11-18",
+             "parents": [2], "line": 1, "current": True},
+            {"id": 4, "name": "2027.Q1-b1", "label": "b1", "caption": "2027.Q1", "date": "2026-12-20", "parents": [2, 3],
+             "line": 0, "dot": "hollow"}],
+            lambda n: n["line"], dt.date(2027, 1, 15), 0.9),
         "progress": progress,
         "tickets": [
             ticket("NAVL-105", "Blend terrain-referenced fixes into the filter", "peer_review", ["2027.Q1-b1"],

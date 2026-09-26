@@ -151,25 +151,9 @@
     </div>
   {% endcall %}
 
-{% set code %}{% raw %}{# g = graph.layout(nodes): nodes newest first, each {id, parents, dot?, current?} #}
-{% call(n) ui.graph(g, label="Version lineage") %}
-  <span class="ui-graph__main">{{ ui.ident(n.name, href="#", plain=True) }}{{ ui.version_status(n.status) }}</span>
-  <span class="ui-graph__meta">{{ n.release }}</span>
-{% endcall %}
-{% endraw %}{% endset %}
-  {% call example("graph (lineage)", code) %}
-    <div style="max-width: 560px;">
-    {% call ui.card(flush=True) %}
-      {% call(n) ui.graph(graph_sample, label="Sample version lineage") %}
-        <span class="ui-graph__main">{{ ui.ident(n.name, href="#", plain=True) }}{{ ui.version_status(n.status) }}</span>
-        <span class="ui-graph__meta">{{ n.release }}</span>
-      {% endcall %}
-    {% endcall %}
-    </div>
-  {% endcall %}
-
-{% set code %}{% raw %}{# t = graph.timeline(nodes, group, today, px_per_day, caption=..., fit_width=...) #}
-{{ ui.timeline(t, label="IFC timeline", refit=url_for(...), target="#ifc-timeline") }}
+{% set code %}{% raw %}{# t = graph.timeline(nodes, group, today, px_per_day, fit_width=...): nodes oldest first,
+   each {id, name, date, parents, label?, caption?, dot?, ring?, current?} #}
+{{ ui.timeline(t, label="Version lineage", refit=url_for(...), target="#ci-lineage") }}
 {% endraw %}{% endset %}
   {% call example("timeline", code) %}
     {{ ui.timeline(timeline_sample, label="Sample IFC timeline") }}

@@ -120,11 +120,15 @@ class BaselineTests(unittest.TestCase):
         opts = self.c.get("/fragments/version-options?ci=NAV-SW").get_data(as_text=True)
         self.assertIn("2026.Q4.ER1 (released)", opts)
         self.assertNotIn("2026.Q4-b3", opts)                                          # rejected
-        page = self.c.get("/cis/NAV-SW/lineage").get_data(as_text=True)
-        self.assertIn('class="ui-graph"', page)
-        self.assertIn("ui-graph__merge", page)                                        # Q1-b1 merges ER1
-        rows = page.split('class="ui-graph__rows"')[1]
-        self.assertLess(rows.index("2027.Q2-b3"), rows.index("2026.Q4-b1"))           # newest first
+        ci = self.c.get("/cis/NAV-SW").get_data(as_text=True)
+        self.assertIn('hx-get="/cis/NAV-SW/lineage" hx-trigger="toggle once"', ci)       # loaded on demand
+        frag = self.c.get("/cis/NAV-SW/lineage?zoom=weeks").get_data(as_text=True)
+        self.assertNotIn("<html", frag)
+        self.assertIn('id="ci-lineage"', frag)
+        self.assertIn("ui-graph__merge", frag)                                        # Q1-b1 merges ER1
+        self.assertIn(">2026.Q4.ER1</text>", frag)                                    # the fix's lane is captioned
+        self.assertIn(">ER1</text>", frag)                                            # ...and its build labelled
+        self.assertLess(frag.index(">2026.Q4<"), frag.index(">2027.Q1<"))               # oldest first, left to right
 
     def test_backdating(self):
         api = lambda m, p, d=None: getattr(self.c, m)("/api" + p, json=d)
@@ -160,35 +164,29 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual((engine["managed"], engine["release_source"], len(engine["cscs"])), (1, None, 2))
         released = [r for r in engine["releases"] if r["status"] == "released"]
         self.assertTrue(any(r["kind"] == "planned" for r in released))
-        self.assertIn('class="ui-graph"', self.c.get("/cis/ENGINE-SW/lineage").get_data(as_text=True))
+        self.assertIn('class="ui-timeline', self.c.get("/cis/ENGINE-SW/lineage").get_data(as_text=True))
 
 class GraphLayoutTests(unittest.TestCase):
-    def test_lanes(self):
-        nodes = [{"id": "q1b2", "parents": ["q1b1"]}, {"id": "p1", "parents": ["q4b4"]},
-                 {"id": "q1b1", "parents": ["q4b4", "er1"]}, {"id": "er1", "parents": ["q4b4"]},
-                 {"id": "q4b4", "parents": ["gone"]}]
-        g = graph.layout(nodes)
-        lanes = {n["id"]: n["lane"] for n in g["nodes"]}
-        self.assertEqual(lanes, {"q1b2": 0, "p1": 1, "q1b1": 0, "er1": 2, "q4b4": 0})
-        self.assertEqual(len(g["edges"]), 5)                                          # 'gone' is not drawn
-        self.assertEqual(sum(e["merge"] for e in g["edges"]), 1)
-        self.assertEqual(g["width"], 3 * graph.LANE)
-
     def test_timeline(self):
-        nodes = [{"id": 1, "name": "Build 1", "parents": [], "g": "a", "date": "2020-01-01"},
+        # a: 1-2-7-5 (7 merges b's 4 back in); b: 3-4 off 2; c: 6 off 5, reusing b's lane once b's merge is done
+        nodes = [{"id": 1, "name": "Build 1", "parents": [], "g": "a", "date": "2020-01-01", "caption": "A"},
                  {"id": 2, "name": "HSC1", "parents": [1], "g": "a", "date": "2020-03-01"},
-                 {"id": 3, "name": "HSC1", "parents": [2], "g": "b", "date": "2020-04-01"},
+                 {"id": 3, "name": "HSC1", "parents": [2], "g": "b", "date": "2020-04-01", "caption": "B"},
                  {"id": 4, "name": "HSC1.1", "parents": [3], "g": "b", "date": "2020-06-01"},
-                 {"id": 5, "name": "HSC1.1", "parents": [2], "g": "a", "date": "2021-05-01"},
-                 {"id": 6, "name": "HSC1", "parents": [5], "g": "c", "date": "2021-06-01"}]
-        t = graph.timeline(nodes, lambda n: n["g"], dt.date(2021, 7, 1), 1.0, caption=lambda n: n["g"].upper())
+                 {"id": 7, "name": "HSC1.2", "parents": [2, 4], "g": "a", "date": "2020-07-01"},
+                 {"id": 5, "name": "HSC1.3", "parents": [7], "g": "a", "date": "2021-05-01"},
+                 {"id": 6, "name": "HSC1", "parents": [5], "g": "c", "date": "2021-06-01", "caption": "C", "label": "c1"}]
+        t = graph.timeline(nodes, lambda n: n["g"], dt.date(2021, 7, 1), 1.0)
         at = {n["id"]: n for n in t["nodes"]}
-        self.assertEqual([at[i]["label"] for i in (1, 2, 4)], ["B1", "H1", "H1.1"])
+        self.assertEqual([at[i]["label"] for i in (1, 2, 4, 6)], ["B1", "H1", "H1.1", "c1"])
         self.assertEqual(at[2]["x"] - at[1]["x"], 60)                                   # 60 days at 1 px/day
         self.assertEqual((at[1]["lane"], at[3]["lane"], at[6]["lane"]), (0, 1, 1))     # c reuses b's lane
+        merge = [e for e in t["edges"] if e["merge"]]
+        self.assertEqual(len(merge), 1)                                                # 4 merges into 7...
+        self.assertTrue(merge[0]["d"].startswith(f"M{at[4]['x']} {at[4]['y']} L"))    # ...along b's lane first
         self.assertEqual(t["today_x"] - at[6]["x"], 30)
         self.assertEqual([c["text"] for c in t["captions"]], ["A", "B", "C"])
-        self.assertEqual(len(t["edges"]), 5)
+        self.assertEqual(len(t["edges"]), 7)
         self.assertIn("2021", [k["label"] for k in t["ticks"] if k["major"]])
         self.assertEqual(graph.short_label("Build 12"), "B12")
         self.assertEqual(graph.short_label("Delta drop"), "Delta d")

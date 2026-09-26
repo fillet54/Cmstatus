@@ -156,19 +156,19 @@ of versions.
 | File | Type in |
 |---|---|
 | `schema.sql` | `version_parent` + `ix_vparent_parent` |
-| `cmtrack/graph.py` | `layout` (+ `_x`, `_y`, `_path`, `_free`) and `newest_first`; the timeline half is Phase 10 |
+| `cmtrack/graph.py` | all of it: `newest_first`, and the timeline (`ZOOMS`, `short_label`, `timeline`) |
 | `service.py` | lineage section: `release_head`, `rebuild_lineage`, `_closure`, `ancestor_ids`, `descendant_ids`, `version_parents`, `lineage`, `version_range`, `_topo_order` (on `graph.newest_first`), `ci_versions`, `release_range`. **Skip** `set_version_parents` and `unabsorbed_fixes` (Phase 8). Add the `rebuild_lineage(...)` calls in `create_release`, `add_version`, `update_release`, `release_version`, `sync_ci`, the remaps and `detach_release`. |
 | `api.py` | `GET /versions/<id>/lineage`, `GET /cis/<ci>/versions?to=&from=` |
-| `views.py` | `VERSION_DOTS`, `version_graph`, `ci_lineage` (`/cis/<ci>/lineage`) |
-| templates | the lineage card in `version.html`; `lineage.html` and the "Lineage" button in `ci.html`; `graph` in `ui/components.html` (+ `.ui-graph*` CSS) |
-| tests | `test_auto_lineage` (planned releases only), `SyncTests.test_detach_and_phantoms`, `GraphLayoutTests.test_lanes` |
+| `views.py` | `VERSION_DOTS`, `zoomed_timeline`, `ci_timeline`, `ci_lineage` (`/cis/<ci>/lineage`, a fragment) |
+| templates | the lineage card in `version.html`; `_timeline.html`; the on-demand "Lineage" section in `ci.html`; `timeline` in `ui/components.html` (+ `.ui-graph__*` / `.ui-tl*` CSS) and `static/timeline.js`; the `attrs` argument of `disclosure` |
+| tests | `test_auto_lineage` (planned releases only), `SyncTests.test_detach_and_phantoms`, `GraphLayoutTests` |
 
 **Working when**
 - `GET /api/cis/NAV-SW/versions?to=2026.Q4-b4` → b1, b2, b3, b4 (rejected b3 stays in the chain).
 - `2027.Q1-b1`'s parent is `2026.Q4-b4` (the Q4 release); `?to=2027.Q1-b2&from=2026.Q4-b4` → Q1-b1, Q1-b2.
 - `release_range(Q1)` is `{from: 2026.Q4-b4, to: <Q1 head>}`: the "what's new in this release" range.
-- The version page shows "Built from" / "Built on by" links; `/cis/NAV-SW/lineage` draws every build as a
-  git-style graph, one lane per release line.
+- The version page shows "Built from" / "Built on by" links; opening "Lineage" on the CI page loads every build
+  on a time axis: the quarters along one lane, fixes branching off and merging back, zoomable, centred on today.
 
 ---
 
@@ -272,9 +272,8 @@ HSC1.1, …) ending in a final one; all of it on a timeline.
 | `schema.sql` | `ifc` (`spawned_from_id`, `final_id`), `baseline` (`seq`, `derived_from_id`, `supersedes_id`), `baseline_entry` + `ix_entry_version`, `ux_baseline_seq` |
 | `service.py` | IFCs section (`get_ifc`, `_spawn_point`, `create_ifc`, `update_ifc`, `_spawn_ancestors`, `list_ifcs`, `ifc_detail`); HSCM builds section (`current_baseline`, `_latest_build`, `baseline_detail`, `baseline_lineage`, `_next_build`, `create_baseline`, the entry edits, `refresh_baseline`, `delete_baseline`, `_approve` / `_approval_time` / `approve_baseline`, `finalize_ifc`, `reopen_ifc`, `diff_baselines`), `_external_version`, `hscm_rows`, `import_hscm`; the real `behind_effective` |
 | `api.py` | IFC and baseline endpoints, including final / reopen and the HSCM import (JSON or CSV, with `date`) |
-| `graph.py` | the timeline half: `ZOOMS`, `short_label`, `timeline` |
 | `views.py` | `with_staleness`, `BASELINE_DOTS`, `ifc_timeline`, `ifc_timeline_fragment`, `spawn_options`, `ifcs`, `ifc`, `baseline`, `version_options` (+ its fragment), `baseline_diff`, the IFC and baseline form posts; the stale card and the timeline in `dashboard`; "Fielded in" in `ci` |
-| templates | `ifcs.html`, `ifc.html`, `baseline.html`, `_entries.html`, `_draft_entries.html`, `_version_options.html`, `_diff.html`, `_ifc_timeline.html`; `timeline` in `ui/components.html` (+ `.ui-tl*` CSS) and `static/timeline.js`; the baselines-behind alert in `_release.html`; IFCs in the nav |
+| templates | `ifcs.html`, `ifc.html`, `baseline.html`, `_entries.html`, `_draft_entries.html`, `_version_options.html`, `_diff.html`; the baselines-behind alert in `_release.html`; IFCs in the nav |
 | `cmtrack/history.py` | generate years of IFC history and load it (`--db` / `--url`) |
 | tests | the IFC part of `test_full_flow`; `test_baselines.py` |
 

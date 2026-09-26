@@ -1,5 +1,6 @@
 """HTML views: every page renders, htmx requests get fragments.  Run: python -m unittest discover -s tests"""
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -63,6 +64,18 @@ class ViewTests(unittest.TestCase):
         diff = self.get(f"/baselines/{b}/diff?other={a}", HX)
         self.assertIn("added", diff)
         self.assertIn("SUITE", diff)
+
+    def test_release_table_sorting(self):
+        rows = lambda html: re.findall(r'hx-boost="false" onclick="event.preventDefault\(\)">([^<]+)</a>', html)
+        page = self.get("/cis/NAV-SW")
+        self.assertEqual(rows(page)[:3], ["2027.Q2", "2027.Q1", "2026.Q4"])               # latest first
+        self.assertNotIn(">Reset<", page)
+        frag = self.get("/cis/NAV-SW/releases-table?sort=name&dir=asc", HX)
+        self.assertNotIn("<html", frag)
+        self.assertEqual(rows(frag)[:3], ["2026.Q4", "2026.Q4.ER1", "2026.Q4.P1"])        # fixes stay under their line
+        self.assertIn('aria-sort="ascending"', frag)
+        self.assertIn("Reset", frag)
+        self.assertIn("sort=name&amp;dir=desc", frag)                                     # clicking again flips it
 
     def test_events_paging(self):
         first = self.get("/events", HX)

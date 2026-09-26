@@ -1,0 +1,17 @@
+{#- A timeline with its zoom control, swapped in place when the zoom changes. `t` = views.zoomed_timeline:
+    graph.timeline plus id, endpoint + args (the fragment's URL), label and legend. -#}
+{% import "ui/components.html" as ui %}
+<div id="{{ t.id }}" class="ui-stack" style="--ui-gap: 8px;">
+  <div class="ui-row" style="--ui-gap: 12px; justify-content: space-between;">
+    {% set zooms = [] %}
+    {% for z in ("years", "quarters", "months", "weeks") %}
+      {% set _ = zooms.append({"label": z | capitalize, "active": t.zoom == z,
+                               "attrs": {"hx-get": url_for(t.endpoint, zoom=z, **t.args), "hx-target": "#" ~ t.id,
+                                         "hx-swap": "outerHTML", "hx-push-url": "false",
+                                         "hx-vals": "js:{width: document.querySelector('#" ~ t.id ~ " .ui-timeline').clientWidth}"}}) %}
+    {% endfor %}
+    {{ ui.segmented(zooms, label="Zoom") }}
+    <span class="ui-muted ui-tl__legend">{{ t.legend }} · <span class="ui-tl__legend-hl">●</span> current</span>
+  </div>
+  {{ ui.timeline(t, label=t.label, refit=url_for(t.endpoint, zoom=t.zoom, **t.args), target="#" ~ t.id) }}
+</div>

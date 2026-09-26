@@ -103,6 +103,27 @@ def release_families(releases):
     return [(r, children.get(r["id"], [])) for r in releases if not r["parent_id"]]
 
 
+RELEASE_SORTS = {
+    "name": lambda r: r["name"],
+    "kind": lambda r: r["kind"],
+    "status": lambda r: r["status"],
+    "target": lambda r: r["target_date"] or str(r["created_at"])[:10],
+    "released": lambda r: r["released_version"] or "",
+    "versions": lambda r: r["planned_versions"] + r["unplanned_versions"],
+}
+
+
+def release_table(releases, sort=None, direction=None, focus_id=None):
+    """The releases table: families (patch/emergency releases stay under the release they patch) sorted by
+    ``sort`` (a RELEASE_SORTS key) and ``direction``; no sort = latest target first."""
+    sort = sort if sort in RELEASE_SORTS else None
+    direction = direction if sort and direction in ("asc", "desc") else "desc"
+    key = lambda r: (RELEASE_SORTS[sort or "target"](r), r["id"])
+    families = sorted(release_families(releases), key=lambda f: key(f[0]), reverse=direction == "desc")
+    return {"families": [(root, sorted(kids, key=key, reverse=direction == "desc")) for root, kids in families],
+            "sort": sort, "dir": direction, "focus_id": focus_id}
+
+
 # ----------------------------------------------------------------------------- dashboard
 
 @bp.get("/")
@@ -181,11 +202,22 @@ def render_ci(conn, ref, preview=None):
         "JOIN version v ON v.id = e.version_id WHERE e.ci_id = ? AND b.status = 'approved' ORDER BY i.name",
         (detail["id"],)))
     missing = any(a["kind"].startswith("missing") for a in detail["attention"])
-    return render_template("ci.html", ci=detail, families=release_families(detail["releases"]), fielded=fielded,
-                           backlogs=svc.list_backlogs(conn, detail["id"]), overview=ci_overview(conn, detail["releases"]),
+    overview = ci_overview(conn, detail["releases"])
+    return render_template("ci.html", ci=detail, table=release_table(detail["releases"], focus_id=overview["focus_id"]),
+                           fielded=fielded, backlogs=svc.list_backlogs(conn, detail["id"]), overview=overview,
                            candidates=svc.remap_candidates(conn, detail["id"]) if missing else None,
                            source_configured=detail["release_source"] in (current_app.config["RELEASE_SOURCES"] or {}),
                            preview=preview)
+
+
+@bp.get("/cis/<ref>/releases-table")
+def release_table_fragment(ref):
+    """The CI page's releases table sorted by ?sort=&dir= (none: latest first), keeping ?selected= highlighted."""
+    conn = get_db()
+    ci = svc.get_ci(conn, ref)
+    a = request.args
+    return render_template("_release_table.html", ci=svc.to_dict(ci), table=release_table(
+        svc.list_releases(conn, ci["id"]), a.get("sort"), a.get("dir"), a.get("selected", type=int)))
 
 
 def edit_options(conn, r):
@@ -259,55 +291,85 @@ BASELINE_DOTS = {"draft": "hollow", "superseded": "muted"}
 VERSION_DOTS = {"planned": "hollow", "rejected": "danger"}
 
 
+def zoomed_timeline(nodes, group, zoom, width, **frame):
+    """graph.timeline at a named zoom, stretched to ``width`` (the box in the browser) when that zoom would leave
+    it part empty. ``frame`` is what _timeline.html needs: id, endpoint + args (its fragment URL), label, legend."""
+    zoom = zoom if zoom in graph.ZOOMS else "months"
+    t = graph.timeline(nodes, group, dt.date.today(), graph.ZOOMS[zoom], fit_width=width if width and width > 0 else None)
+    return {**t, "zoom": zoom, **frame}
+
+
 def ifc_timeline(conn, zoom="months", width=None):
-    """Every IFC's HSCMs on a time axis (graph.timeline): a lane per active IFC, spawns branching off the HSCM
-    they came from. In-progress IFCs' current HSCMs are highlighted; final ones are ringed. ``width`` is the
-    timeline's box in the browser: a zoom too small to fill it is stretched to fit."""
-    nodes = []
+    """Every IFC's HSCMs on a time axis: a lane per active IFC, spawns branching off the HSCM they came from.
+    In-progress IFCs' current HSCMs are highlighted; final ones are ringed."""
+    nodes, seen = [], set()
     for b in svc.baseline_lineage(conn):
         when = b["approved_at"] or b["created_at"]
         nodes.append({**b, "date": when, "parents": [b["derived_from_id"]] if b["derived_from_id"] else [],
                       "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved" and not b["final"],
-                      "href": url_for("ui.baseline", bid=b["id"]), "group_href": url_for("ui.ifc", ref=b["ifc"]),
+                      "ring": b["final"], "href": url_for("ui.baseline", bid=b["id"]),
+                      "caption": None if b["ifc_id"] in seen else b["ifc"].removeprefix("IFC "),
+                      "caption_href": url_for("ui.ifc", ref=b["ifc"]),
                       "title": f"{b['ifc']} {b['name']} · {'final' if b['final'] else b['status']} · {str(when)[:10]}"})
-    zoom = zoom if zoom in graph.ZOOMS else "months"
-    t = graph.timeline(nodes, lambda n: n["ifc_id"], dt.date.today(), graph.ZOOMS[zoom],
-                       caption=lambda n: n["ifc"].removeprefix("IFC "), fit_width=width if width and width > 0 else None)
-    return {**t, "zoom": zoom}
+        seen.add(b["ifc_id"])
+    return zoomed_timeline(nodes, lambda n: n["ifc_id"], zoom, width, id="ifc-timeline",
+                           endpoint="ui.ifc_timeline_fragment", args={}, label="IFC and HSCM timeline",
+                           legend="● approved · ○ draft · ◉ final · B = build, H = HSC")
 
 
 @bp.get("/fragments/ifc-timeline")
 def ifc_timeline_fragment():
-    """The timeline at ?zoom=, fitted to ?width= (the zoom buttons and static/timeline.js send it)."""
+    """The IFC timeline at ?zoom=, fitted to ?width= (the zoom buttons and static/timeline.js send it)."""
     a = request.args
-    return render_template("_ifc_timeline.html", t=ifc_timeline(get_db(), a.get("zoom", "months"), a.get("width", type=int)))
+    return render_template("_timeline.html", t=ifc_timeline(get_db(), a.get("zoom", "months"), a.get("width", type=int)))
 
 
-def version_graph(conn, ci_id):
-    """A CI's versions as a lineage graph (newest first): release lines, patch branches and merges."""
+def ci_timeline(conn, ci, zoom="months", width=None):
+    """A CI's versions on a time axis: its planned releases along one lane, each patch/emergency branching off
+    its base version in a lane of its own, merges curving back in. Released versions are ringed; the one
+    fielded now (the latest release line's effective version) is highlighted."""
+    releases = {r["id"]: r for r in svc.list_releases(conn, ci["id"])}
+    versions = {v["id"]: svc.to_dict(v) for v in svc.ci_versions(conn, ci["id"])}
     parents = {}
     for child, parent in conn.execute("SELECT p.version_id, p.parent_id FROM version_parent p "
-                                      "JOIN version v ON v.id = p.version_id WHERE v.ci_id = ?", (ci_id,)):
+                                      "JOIN version v ON v.id = p.version_id WHERE v.ci_id = ?", (ci["id"],)):
         parents.setdefault(child, []).append(parent)
-    releases = {r["id"]: r for r in svc.list_releases(conn, ci_id)}
-    versions = {v["id"]: svc.to_dict(v) for v in svc.ci_versions(conn, ci_id)}
-    promoted = {r["released_version_id"] for r in releases.values()}
+    shipped = [r for r in releases.values() if r["kind"] == "planned" and r["status"] == "released"]
+    fielded = svc.effective_version(conn, shipped[-1]["id"]) if shipped else None
 
-    def first(v):
-        """Parents in drawing order: the one in its own release, else on a planned line, keeps the lane."""
+    def ordered(v):
+        """Parents with the one in its own release (else on a planned line) first: that's the lane it continues."""
         def rank(p):
             pv = versions.get(p)
             return (not pv or pv["release_id"] != v["release_id"],
                     not pv or releases[pv["release_id"]]["kind"] != "planned", p)
         return sorted(parents.get(v["id"], []), key=rank)
 
-    nodes = []
+    nodes, seen = [], set()
     for v in versions.values():
         rel = releases[v["release_id"]]
         when = v["built_at"] or v["planned_date"] or rel["target_date"] or v["created_at"]
-        nodes.append({**v, "parents": first(v), "rel": rel, "when": when, "dot": VERSION_DOTS.get(v["status"]),
-                      "current": v["id"] in promoted})
-    return graph.layout(graph.newest_first(nodes, key=lambda n: (n["when"] or "", n["seq"], n["id"])))
+        nodes.append({**v, "date": when, "parents": ordered(v), "rel": rel, "dot": VERSION_DOTS.get(v["status"]),
+                      "label": v["name"].removeprefix(rel["name"]).lstrip("-.") or rel["name"].rsplit(".", 1)[-1],
+                      "caption": None if rel["id"] in seen else rel["name"],
+                      "caption_href": url_for("ui.release", rid=rel["id"]),
+                      "ring": v["id"] == rel["released_version_id"], "current": bool(fielded) and v["id"] == fielded["id"],
+                      "href": url_for("ui.version", vid=v["id"]),
+                      "title": f"{v['name']} · {v['status']} · {str(when)[:10]}"})
+        seen.add(rel["id"])
+    nodes.sort(key=lambda n: (str(n["date"])[:10], n["id"]))
+    return zoomed_timeline(nodes, lambda n: "line" if n["rel"]["kind"] == "planned" else n["rel"]["id"], zoom, width,
+                           id="ci-lineage", endpoint="ui.ci_lineage", args={"ref": ci["name"]},
+                           label=f"Version lineage of {ci['name']}", legend="● built · ○ planned · ◉ released · - - merge")
+
+
+@bp.get("/cis/<ref>/lineage")
+def ci_lineage(ref):
+    """The CI's version timeline (a fragment the CI page loads on demand) at ?zoom=, fitted to ?width=."""
+    conn = get_db()
+    a = request.args
+    return render_template("_timeline.html", t=ci_timeline(conn, svc.get_ci(conn, ref), a.get("zoom", "months"),
+                                                           a.get("width", type=int)))
 
 
 def spawn_options(conn, exclude=None):
@@ -371,13 +433,6 @@ def version_options_fragment():
     """<option>s for the version picker of the add-entry form (the CI is chosen first)."""
     ci = request.args.get("ci")
     return render_template("_version_options.html", options=version_options(get_db(), ci) if ci else [])
-
-
-@bp.get("/cis/<ref>/lineage")
-def ci_lineage(ref):
-    conn = get_db()
-    ci = svc.get_ci(conn, ref)
-    return render_template("lineage.html", ci=ci, g=version_graph(conn, ci["id"]))
 
 
 @bp.get("/baselines/<int:bid>/diff")

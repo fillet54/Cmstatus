@@ -1,0 +1,49 @@
+{#- A CI's releases, grouped by line (patch/emergency releases under the release they patch), sorted by
+    `table.sort` / `table.dir` (default: latest first). Sorting swaps this whole card in place. -#}
+{% import "ui/components.html" as ui %}
+{% set cols = [("Release", "name"), ("Kind", "kind"), ("Status", "status"), ("Target / CR", "target"),
+               ("Released as", "released"), ("Versions", "versions")] %}
+{% set headers = [] %}
+{% for label, key in cols %}
+  {% set on = (table.sort or "target") == key %}
+  {% set nxt = "desc" if on and table.dir == "asc" else "asc" %}
+  {% set _ = headers.append({"label": label, "align": "end" if key == "versions" else None,
+                             "sorted": table.dir if on else None,
+                             "attrs": {"hx-get": url_for('ui.release_table_fragment', ref=ci.name, sort=key, dir=nxt),
+                                       "hx-target": "#release-table", "hx-swap": "outerHTML", "hx-push-url": "false",
+                                       "hx-vals": "js:{selected: document.querySelector('#release-rows .ui-row--selected')?.dataset.rid || ''}",
+                                       "title": "Sort by " ~ label | lower}}) %}
+{% endfor %}
+<div id="release-table">
+{% call ui.card(flush=True) %}
+  {% call ui.card_header("Releases", "Patch and emergency releases sit under the release they patch. Select one for details.") %}
+    {% if table.sort %}{{ ui.button("Reset", size="sm", variant="ghost", icon="refresh",
+                                    attrs={"hx-get": url_for('ui.release_table_fragment', ref=ci.name), "hx-target": "#release-table",
+                                           "hx-swap": "outerHTML", "hx-push-url": "false",
+                                           "hx-vals": "js:{selected: document.querySelector('#release-rows .ui-row--selected')?.dataset.rid || ''}",
+                                           "title": "Back to latest first"}) }}{% endif %}
+  {% endcall %}
+  {% call ui.table(headers, body_id="release-rows") %}
+    {% for root, kids in table.families %}
+      {% for r in [root] + kids %}
+      {% set child = r is not sameas root %}
+      <tr class="ui-row--link{{ ' ui-row--child' if child }}{{ ' ui-row--selected' if r.id == table.focus_id }}" data-rid="{{ r.id }}"
+          hx-get="{{ url_for('ui.release', rid=r.id) }}" hx-target="#release-panel" hx-push-url="false"
+          hx-on::after-request="this.closest('tbody').querySelectorAll('.ui-row--selected').forEach(e => e.classList.remove('ui-row--selected')); this.classList.add('ui-row--selected')">
+        <td>{% if child %}<span class="ui-tree-mark">└</span>{% endif %}<a class="ui-ident ui-ident--plain" href="{{ url_for('ui.release', rid=r.id) }}"
+               hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a>
+          {%- if r.source_state == "missing" %} {{ ui.badge("missing", "danger", outline=True) }}{% elif ci.release_source and not r.source_key and r.kind != "external" %} {{ ui.badge("by hand", outline=True) }}{% endif %}</td>
+        <td>{{ ui.release_kind(r.kind) }}</td>
+        <td>{{ ui.version_status(r.status) }}</td>
+        <td>{% if child and r.reason %}{{ ui.ident(r.reason, plain=True) }}{% else %}<span class="ui-mono">{{ r.target_date or "—" }}</span>{% endif %}</td>
+        <td>{% if r.released_version %}{{ ui.ident(r.released_version, plain=True) }}{% endif %}</td>
+        <td class="ui-end">
+          {%- if r.kind != "planned" or not ci.release_source %}{{ r.planned_versions + r.unplanned_versions }}
+          {%- else %}{{ r.planned_versions }}{% if r.unplanned_versions %} <span class="ui-tone-warning" title="builds added by hand, not in the release source">+{{ r.unplanned_versions }}</span>{% endif %}{% endif -%}
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}{{ ui.empty_row("No releases yet. " ~ ("Sync from " ~ ci.release_source ~ " to load them." if ci.release_source else "Add one under “Add a release”."), 6) }}{% endfor %}
+  {% endcall %}
+{% endcall %}
+</div>

@@ -18,7 +18,6 @@
   </form>
   {% endif %}
   {{ ui.button("Work items", variant="primary", href=url_for('ui.work', ref=ci.name)) }}
-  {{ ui.button("Lineage", href=url_for('ui.ci_lineage', ref=ci.name), icon="branch") }}
 {% endcall %}
 
 {% if preview %}
@@ -58,35 +57,21 @@
   {% endif %}
 {% endcall %}
 
+{% if ci.releases %}
+{% call ui.card() %}
+  {% call ui.disclosure("Lineage", "every build on a time axis: release lines, fix branches and merges",
+                        attrs={"hx-get": url_for('ui.ci_lineage', ref=ci.name), "hx-trigger": "toggle once",
+                               "hx-target": "find .ui-disclosure__body", "hx-push-url": "false"}) %}
+    <span class="ui-spinner" aria-hidden="true"></span>
+  {% endcall %}
+{% endcall %}
+{% endif %}
+
 <div class="ui-split">
   <div class="ui-stack">
     {% if ci.attention %}{% include "_attention.html" %}{% endif %}
 
-    {% call ui.card(flush=True) %}
-      {% call ui.card_header("Releases", "Patch and emergency releases sit under the release they patch. Select one for details.") %}{% endcall %}
-      {% call ui.table(["Release", "Kind", "Status", "Target / CR", "Released as", {"label": "Versions", "align": "end"}], body_id="release-rows") %}
-        {% for root, kids in families %}
-          {% for r in [root] + kids %}
-          {% set child = r is not sameas root %}
-          <tr class="ui-row--link{{ ' ui-row--child' if child }}{{ ' ui-row--selected' if r.id == o.focus_id }}"
-              hx-get="{{ url_for('ui.release', rid=r.id) }}" hx-target="#release-panel" hx-push-url="false"
-              hx-on::after-request="this.closest('tbody').querySelectorAll('.ui-row--selected').forEach(e => e.classList.remove('ui-row--selected')); this.classList.add('ui-row--selected')">
-            <td>{% if child %}<span class="ui-tree-mark">└</span>{% endif %}<a class="ui-ident ui-ident--plain" href="{{ url_for('ui.release', rid=r.id) }}"
-                   hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a>
-              {%- if r.source_state == "missing" %} {{ ui.badge("missing", "danger", outline=True) }}{% elif ci.release_source and not r.source_key and r.kind != "external" %} {{ ui.badge("by hand", outline=True) }}{% endif %}</td>
-            <td>{{ ui.release_kind(r.kind) }}</td>
-            <td>{{ ui.version_status(r.status) }}</td>
-            <td>{% if child and r.reason %}{{ ui.ident(r.reason, plain=True) }}{% else %}<span class="ui-mono">{{ r.target_date or "—" }}</span>{% endif %}</td>
-            <td>{% if r.released_version %}{{ ui.ident(r.released_version, plain=True) }}{% endif %}</td>
-            <td class="ui-end">
-              {%- if r.kind != "planned" or not ci.release_source %}{{ r.planned_versions + r.unplanned_versions }}
-              {%- else %}{{ r.planned_versions }}{% if r.unplanned_versions %} <span class="ui-tone-warning" title="builds added by hand, not in the release source">+{{ r.unplanned_versions }}</span>{% endif %}{% endif -%}
-            </td>
-          </tr>
-          {% endfor %}
-        {% else %}{{ ui.empty_row("No releases yet. " ~ ("Sync from " ~ ci.release_source ~ " to load them." if ci.release_source else "Add one under “Add a release”."), 6) }}{% endfor %}
-      {% endcall %}
-    {% endcall %}
+    {% include "_release_table.html" %}
 
     {% call ui.card(flush=True) %}
       {% call ui.card_header("Fielded in", "approved baselines (HSCMs) that list " ~ ci.name) %}{% endcall %}
@@ -185,3 +170,4 @@
   </aside>
 </div>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='timeline.js') }}"></script>{% endblock %}

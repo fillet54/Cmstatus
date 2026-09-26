@@ -370,12 +370,16 @@
 {#- headers: ["Release", {"label": "Versions", "align": "end"}, ...]. caller = the <tr> rows.
     Rows can use classes ui-row--child (indented family member) and ui-row--selected.
     body_id: id for the <tbody>, e.g. as an htmx swap target for the rows. #}
+{#- headers: labels, or {label, align?: "end", sr?: True, sorted?: "asc"/"desc", attrs?} (with attrs, the header is a
+    sort button: attrs carry its hx-get; `sorted` marks the current sort column). #}
 {% macro table(headers, caption=None, dense=False, id=None, body_id=None, attrs=None) -%}
 <div class="ui-table-wrap"><table class="ui-table{% if dense %} ui-table--dense{% endif %}"{% if id %} id="{{ id }}"{% endif %}{{ (attrs or {}) | xmlattr }}>
   {%- if caption %}<caption>{{ caption }}</caption>{% endif %}
   <thead><tr>
     {%- for h in headers %}
-    {%- if h is mapping %}<th scope="col"{% if h.align == 'end' %} class="ui-end"{% endif %}>{% if h.sr %}<span class="ui-sr-only">{{ h.label }}</span>{% else %}{{ h.label }}{% endif %}</th>
+    {%- if h is mapping and h.attrs %}<th scope="col"{% if h.align == 'end' %} class="ui-end"{% endif %}{% if h.sorted %} aria-sort="{{ 'ascending' if h.sorted == 'asc' else 'descending' }}"{% endif %}>
+      <button type="button" class="ui-th-sort{% if h.sorted %} is-sorted{% endif %}"{{ h.attrs | xmlattr }}>{{ h.label }}<span aria-hidden="true">{{ '▲' if h.sorted == 'asc' else '▼' if h.sorted else '↕' }}</span></button></th>
+    {%- elif h is mapping %}<th scope="col"{% if h.align == 'end' %} class="ui-end"{% endif %}>{% if h.sr %}<span class="ui-sr-only">{{ h.label }}</span>{% else %}{{ h.label }}{% endif %}</th>
     {%- else %}<th scope="col">{{ h }}</th>{% endif %}
     {%- endfor %}
   </tr></thead>
@@ -484,8 +488,8 @@
 {%- endmacro %}
 
 {#- A collapsible section (edit forms, details). Body is the caller; `pad` gives it card padding. #}
-{% macro disclosure(title, subtitle=None, open=False, pad=True, cls="") -%}
-<details class="ui-disclosure {{ cls }}"{% if open %} open{% endif %}>
+{% macro disclosure(title, subtitle=None, open=False, pad=True, cls="", attrs=None) -%}
+<details class="ui-disclosure {{ cls }}"{% if open %} open{% endif %}{{ (attrs or {}) | xmlattr }}>
   <summary class="ui-disclosure__summary">
     {{ icon("chevron-right", 14, cls="ui-disclosure__chevron") }}
     <div class="ui-disclosure__main"><span class="ui-disclosure__title">{{ title }}</span>
@@ -556,27 +560,9 @@
 </div>
 {%- endmacro %}
 
-{#- Lineage graph (cmtrack/graph.py layout): lanes drawn as SVG beside one row per node, newest first.
-    The caller renders each row: {% call(n) ui.graph(g, label="...") %}…{{ n.name }}…{% endcall %}.
-    A node's `dot` picks its marker: solid (default), hollow (not yet real), muted, danger; `current` rings it. #}
-{% macro graph(g, label) -%}
-<div class="ui-graph" role="group" aria-label="{{ label }}" style="--ui-graph-row: {{ g.row }}px; --ui-graph-w: {{ g.width }}px;">
-  <svg class="ui-graph__svg" width="{{ g.width }}" height="{{ g.height }}" viewBox="0 0 {{ g.width }} {{ g.height }}" aria-hidden="true">
-    {%- for e in g.edges %}<path class="ui-graph__l{{ e.color }}{% if e.merge %} ui-graph__merge{% endif %}" d="{{ e.d }}"/>{% endfor %}
-    {%- for n in g.nodes %}
-    {%- if n.current %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="7.5"/>{% endif %}
-    <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="4.5"/>
-    {%- endfor %}
-  </svg>
-  <ol class="ui-graph__rows">
-    {%- for n in g.nodes %}<li class="ui-graph__row{% if n.current %} is-current{% endif %}">{{ caller(n) }}</li>{% endfor %}
-  </ol>
-</div>
-{%- endmacro %}
-
 {#- Timeline (graph.timeline): x is time, a lane per active line. Scrolls sideways inside its container and
     opens centred on today (static/timeline.js). Nodes carry `href`, `title`, `label`, `dot`, `current`
-    (highlighted), `final` (ringed). With `refit` (a URL that takes ?width=) and `target`, a timeline narrower
+    (highlighted), `ring` (ringed). With `refit` (a URL that takes ?width=) and `target`, a timeline narrower
     than its box is fetched again at that width and swapped into `target`, so it always fills the box. #}
 {% macro timeline(t, label, refit=None, target=None) -%}
 <div class="ui-timeline{% if t.dense %} is-dense{% endif %}" data-center="{{ t.today_x }}" role="group" aria-label="{{ label }}" tabindex="0"
@@ -599,7 +585,7 @@
     <a href="{{ n.href }}" class="ui-tl__node{% if n.current %} is-current{% endif %}"{% if n.current %} aria-current="true"{% endif %}>
       <title>{{ n.title }}</title>
       {%- if n.current %}<circle class="ui-tl__halo" cx="{{ n.x }}" cy="{{ n.y }}" r="9"/>{% endif %}
-      {%- if n.final %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="7"/>{% endif %}
+      {%- if n.ring %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="7"/>{% endif %}
       <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="4"/>
       <text class="ui-tl__label" x="{{ n.x + 7 }}" y="{{ n.y + 3.5 }}">{{ n.label }}</text>
     </a>

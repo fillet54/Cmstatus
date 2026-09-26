@@ -21,7 +21,7 @@
   {% call ui.card_header("IFC timeline", "every IFC's HSCMs by date · a new IFC branches off the HSCM it spawned from") %}
     {{ ui.button("Capabilities", href=url_for('ui.ifcs'), size="sm", variant="ghost") }}
   {% endcall %}
-  {% call ui.card_body() %}{% include "_ifc_timeline.html" %}{% endcall %}
+  {% call ui.card_body() %}{% include "_timeline.html" %}{% endcall %}
 {% endcall %}
 {% endif %}
 

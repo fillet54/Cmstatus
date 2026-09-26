@@ -257,8 +257,9 @@ every URL works as a plain link.
 /backlogs             shared backlogs, and a form to create one
 /backlogs/<b>         the ranked backlog: drag and drop (or ⤒ ↑ ↓) to reorder, pull from the source, add by key,
                       remove, hide done
-/cis/<ci>/lineage     every build as a git-style graph: release lines, patch/emergency branches, merges
-/ifcs                 IFCs (spawned from, builds, current, final) and the lineage graph; add an IFC
+/cis/<ci>/lineage     fragment for the CI page's "Lineage" section (loaded when opened): every build on a time
+                      axis, planned releases along one lane, patch/emergency branches, merges; zoomable
+/ifcs                 IFCs (spawned from, builds, current, final) and the IFC timeline; add an IFC
 /ifcs/<ifc>           its builds, current HSCM entries (stale ones flagged); start the next build, import an HSCM
                       CSV as the next build (file or paste), mark final / reopen, edit spawn point/description
 /baselines/<id>       entries, compare with another HSCM (diff loaded via htmx), lineage;
@@ -290,7 +291,7 @@ Macros: shell (`marking_banner`, `app_header`), structure (`page_header`, `bread
 `state_counts`), feedback (`alert`, `empty`), actions (`button`, `icon_button`, `button_group`, `icon`), forms
 (`field`, `input`, `select`, `checkbox`, `search_box`, `segmented`, `tabs`), data (`table`, `empty_row`, `dl`,
 `audit_list`, `stamp`, `disclosure`), release sources (`source_state`, `pinned`), tickets and backlogs (`ticket_ref`, `ticket_line`, `group_label`, `rank_item`, `drop_line`,
-`lineage`, `graph`, `timeline`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
+`lineage`, `timeline`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
 
 Every status is a glyph and a word as well as a colour. Identifiers are monospace, times always UTC (`utc` filter:
 `2026-09-23 14:24Z`), focus is always visible. Config in `cmtrack/ui.py`: `CMTRACK_MARKING` (+
