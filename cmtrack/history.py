@@ -1,4 +1,4 @@
-"""Years of IFC / HSCM history for trying the IFC views at scale.
+"""Years of history for trying the views at scale: IFCs and their HSCMs, and hand-managed CSCIs.
 
     python -m cmtrack.history load --db cmtrack.db [--reset]       # generate and load
     python -m cmtrack.history load --url http://127.0.0.1:5000
@@ -9,9 +9,14 @@ IFCs are a letter and a dotted version (IFC A 1.0, IFC A 1.0.2.1). A first child
 HSC at the time; the source can still get HSC fixes afterwards. Short versions (1.0, 2.1) have Build 1-3
 before their HSCs; longer ones only have HSCs. HSC1 means complete; HSC1.1, HSC1.2 fix what was found after.
 
-``generate`` writes plain data (CIs, IFCs, and dated HSCM events with their full CI -> version lists);
-``load`` replays it through the HTTP API in date order, dating each HSCM by its document (``date``), then marks
-the IFCs that are done final. ``--db`` runs the same calls in-process against a database file (a running
+The managed CSCIs (ENGINE-SW, PORTAL-SW, LEDGER-SW) have no release source: quarterly releases entered by hand,
+2-4 builds each (sometimes one rejected), the last tested and released at quarter end; emergency and patch
+releases after some quarters, usually merged into the next quarter's first build (a two-parent version in the
+lineage), sometimes a quarter later (unabsorbed until then); the current quarter part-built, the next ones planned.
+
+``generate`` writes plain data (CIs, IFCs, dated HSCM events with their full CI -> version lists, and the CSCI
+steps); ``load`` replays it through the HTTP API in date order, dating each HSCM by its document (``date``) and
+backdating builds and releases, then marks the IFCs that are done final. ``--db`` runs the same calls in-process against a database file (a running
 server sees the rows at once); ``--reset`` deletes that file first.
 """
 import argparse
@@ -72,6 +77,63 @@ TREE = [
     ("IFC B 3.0", ("IFC B 2.1", "HSC1.1"), 3, ["HSC1"], 1),
 ]
 STARTS = {"A": dt.date(2019, 3, 4), "B": dt.date(2021, 1, 11)}
+MANAGED = [("ENGINE-SW", "Processing engine", dt.date(2022, 1, 1), "ENG"),
+           ("PORTAL-SW", "User portal", dt.date(2023, 4, 1), "PRT"),
+           ("LEDGER-SW", "Records service", dt.date(2024, 1, 1), "LDG")]
+
+
+def csci_steps(rng, today):
+    """Dated API steps for the managed CSCIs' release history (see the module docstring)."""
+    steps = []
+    last_q = (today.year * 4 + (today.month - 1) // 3) + 3                # three quarters past today's
+    for ci, description, start, project in MANAGED:
+        at = lambda d: min(d, today).isoformat()
+        steps.append({"at": at(start), "do": "ci", "ci": ci, "description": description,
+                      "cscs": [[f"{ci.lower()[:-3]}-core", project, "core", "Core"],
+                               [f"{ci.lower()[:-3]}-ui", project, "ui", "UI"]]})
+        fixes, head = [], None                                             # released fixes not yet merged
+        for qi in range(start.year * 4 + (start.month - 1) // 3, last_q + 1):
+            year, q = divmod(qi, 4)
+            name, target = f"{year}.Q{q + 1}", dt.date(year, 3 * q + 3, 15)
+            begin = max(start, target - dt.timedelta(days=100))            # builds start before the quarter does
+            n = rng.randint(2, 4)
+            builds = [f"{name}-b{i}" for i in range(1, n + 1)]
+            steps.append({"at": at(begin), "do": "release", "ci": ci, "name": name, "kind": "planned",
+                          "target_date": target.isoformat(), "builds": builds})
+            reject = rng.randint(0, n - 2) if n >= 3 and rng.random() < 0.3 else None
+            for i, b in enumerate(builds):
+                built = begin + dt.timedelta(days=(target - begin).days * (i + 1) // (n + 1))
+                if built > today:
+                    break
+                steps.append({"at": built.isoformat(), "do": "status", "ci": ci, "version": b, "status": "built"})
+                if i == reject:
+                    steps.append({"at": built.isoformat(), "do": "status", "ci": ci, "version": b, "status": "rejected"})
+                if i == 0 and fixes and head and rng.random() < 0.75:          # fold the earlier fixes in
+                    steps.append({"at": max([built] + [f[1] for f in fixes]).isoformat(), "do": "merge", "ci": ci,
+                                  "version": b, "parents": [head] + [f[0] for f in fixes]})
+                    fixes = []
+            if target > today:
+                continue
+            steps.append({"at": target.isoformat(), "do": "status", "ci": ci, "version": builds[-1], "status": "tested"})
+            steps.append({"at": target.isoformat(), "do": "release_version", "ci": ci, "version": builds[-1]})
+            head = builds[-1]                    # fixes not merged yet carry over to the next quarter
+            for kind, tag, chance, (lo, hi) in (("emergency", "ER", 0.4, (10, 30)), ("patch", "P", 0.25, (35, 60))):
+                if rng.random() >= chance:
+                    continue
+                opened = target + dt.timedelta(days=rng.randint(lo, hi))
+                fix = f"{name}.{tag}1"
+                shipped = opened + dt.timedelta(days=rng.randint(7, 20))
+                if opened > today:
+                    continue
+                steps.append({"at": opened.isoformat(), "do": "release", "ci": ci, "name": fix, "kind": kind,
+                              "parent": name, "reason": f"CR-{rng.randint(1000, 1999)}"})
+                steps.append({"at": (opened + dt.timedelta(days=3)).isoformat(), "do": "status", "ci": ci,
+                              "version": fix, "status": "built"})
+                if shipped <= today:
+                    steps.append({"at": shipped.isoformat(), "do": "status", "ci": ci, "version": fix, "status": "tested"})
+                    steps.append({"at": shipped.isoformat(), "do": "release_version", "ci": ci, "version": fix})
+                    fixes.append((fix, shipped))
+    return sorted(steps, key=lambda s: s["at"])
 
 
 def generate(seed=7, today=None):
@@ -139,7 +201,7 @@ def generate(seed=7, today=None):
              and dt.date.fromisoformat(last[i["name"]]) < today - dt.timedelta(days=120)]
     return {"description": __doc__.splitlines()[0], "seed": seed, "generated": today.isoformat(),
             "cis": [{"name": k, "type": v} for k, v in sorted(cis.items())],
-            "ifcs": ifcs, "events": events, "final": final}
+            "ifcs": ifcs, "events": events, "final": final, "cscis": csci_steps(rng, today)}
 
 
 # ----------------------------------------------------------------------------- loading
@@ -189,8 +251,28 @@ def load(data, call, out=print):
             ids[(e["ifc"], e["name"])] = out_["baseline"]["id"]
     for name in data["final"]:
         call("post", f"/ifcs/{name}/final")
+    versions = {}                                    # (ci, version name) -> id
+    for st in data.get("cscis", []):
+        ci, when = st["ci"], st["at"] + "T12:00:00+00:00"
+        if st["do"] == "ci":
+            call("post", "/cis", {"name": ci, "description": st["description"]})
+            for name, project, product, team in st["cscs"]:
+                call("post", f"/cis/{ci}/cscs", {"name": name, "jira_project": project, "affected_product": product,
+                                                 "team": team})
+        elif st["do"] == "release":
+            rel = call("post", f"/cis/{ci}/releases", {k: st[k] for k in ("name", "kind", "target_date", "parent",
+                                                                          "reason", "builds") if k in st})
+            versions.update({(ci, v["name"]): v["id"] for v in rel["versions"]})
+        elif st["do"] == "status":
+            call("patch", f"/versions/{versions[(ci, st['version'])]}",
+                 {"status": st["status"], **({"built_at": when} if st["status"] == "built" else {})})
+        elif st["do"] == "release_version":
+            call("post", f"/versions/{versions[(ci, st['version'])]}/release", {"released_at": when})
+        elif st["do"] == "merge":
+            call("put", f"/versions/{versions[(ci, st['version'])]}/parents", {"parents": st["parents"]})
     hscms = sum(e["type"] == "hscm" for e in data["events"])
-    out(f"loaded {len(data['ifcs'])} IFCs, {hscms} HSCMs, {len(data['final'])} final")
+    cscis = sum(st["do"] == "ci" for st in data.get("cscis", []))
+    out(f"loaded {len(data['ifcs'])} IFCs, {hscms} HSCMs, {len(data['final'])} final; {cscis} managed CSCIs")
 
 
 def main(argv=None):

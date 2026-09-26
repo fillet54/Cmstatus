@@ -156,6 +156,11 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual([b["name"] for b in self.api("/ifcs/IFC%20A%201.0")["baselines"]][:4],
                          ["Build 1", "Build 2", "Build 3", "HSC1"])
         self.assertEqual(self.c.get("/").status_code, 200)
+        engine = self.api("/cis/ENGINE-SW")                                            # a managed CSCI
+        self.assertEqual((engine["managed"], engine["release_source"], len(engine["cscs"])), (1, None, 2))
+        released = [r for r in engine["releases"] if r["status"] == "released"]
+        self.assertTrue(any(r["kind"] == "planned" for r in released))
+        self.assertIn('class="ui-graph"', self.c.get("/cis/ENGINE-SW/lineage").get_data(as_text=True))
 
 class GraphLayoutTests(unittest.TestCase):
     def test_lanes(self):
