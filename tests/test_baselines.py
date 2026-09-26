@@ -174,7 +174,7 @@ class BaselineTests(unittest.TestCase):
         self.assertTrue(all(k["project"] and k["fix_versions"] and k["state"] in STATES for k in kids))
         self.assertTrue(any(k["project"] in csc_projects for k in kids))
         self.app.config["TICKET_SOURCES"] = {"jira": StaticSource(data["tickets"], name="jira")}
-        work = self.c.get("/cis/ENGINE-SW/work").get_data(as_text=True)                # parents -> CSCs -> tickets
+        work = self.c.get(f"/releases/{released[-1]['id']}").get_data(as_text=True)  # parents -> CSCs -> tickets
         self.assertRegex(work, r">(FEAT|DR)-\d+<")
 
 class GraphLayoutTests(unittest.TestCase):

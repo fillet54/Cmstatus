@@ -1,4 +1,4 @@
-{#- Range picker + report; swapped into #work when the range changes. Each end shows what it is (IFC/HSCM,
+{#- Range picker + report on the release page; swapped into #release-work when the range changes. Each end shows what it is (IFC/HSCM,
     release, version); its edit button opens the fuzzy picker (static/picker.js) over the hidden select. -#}
 {% import "ui/components.html" as ui %}
 {% macro pick_end(label, name, id, value, end, empty_text, first) -%}
@@ -25,8 +25,9 @@
 {%- endmacro %}
 {% call ui.card() %}
   {% call ui.card_body() %}
-  <form class="ui-stack" style="--ui-gap: 12px;" action="{{ url_for('ui.work', ref=ci.name) }}"
-        hx-get="{{ url_for('ui.work', ref=ci.name) }}" hx-target="#work" hx-push-url="true" hx-trigger="change" hx-indicator="#work-busy">
+  <form class="ui-stack" style="--ui-gap: 12px;" action="{{ url_for('ui.release', rid=r.id) }}"
+        hx-get="{{ url_for('ui.release', rid=r.id) }}" hx-target="#release-work-content" hx-push-url="true" hx-trigger="change" hx-indicator="#work-busy">
+    <input type="hidden" name="section" value="work">
     <div class="ui-row" style="--ui-gap: 12px; align-items: flex-end;">
       {{ pick_end("From (exclusive)", "from", "work-from", frm, ends["from"], "The beginning", "(the beginning)") }}
       <span class="ui-mono ui-muted" style="padding-bottom: 14px;">..</span>
@@ -66,8 +67,8 @@
 {% elif report %}
 {% if report['items'] %}
 <div class="ui-row" style="justify-content: flex-end;">
-  {{ ui.button("Expand all", size="sm", variant="ghost", attrs={"onclick": "document.querySelectorAll('#work details.ui-disclosure').forEach(d => d.open = true)"}) }}
-  {{ ui.button("Collapse all", size="sm", variant="ghost", attrs={"onclick": "document.querySelectorAll('#work details.ui-disclosure').forEach(d => d.open = false)"}) }}
+  {{ ui.button("Expand all", size="sm", variant="ghost", attrs={"onclick": "document.querySelectorAll('#release-work .ui-work-group').forEach(d => d.open = true)"}) }}
+  {{ ui.button("Collapse all", size="sm", variant="ghost", attrs={"onclick": "document.querySelectorAll('#release-work .ui-work-group').forEach(d => d.open = false)"}) }}
 </div>
 {% endif %}
 {% include "_work_items.html" %}

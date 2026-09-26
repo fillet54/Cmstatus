@@ -327,10 +327,34 @@ body.ui {
 .ui-tickets { margin: 0; padding: 0; list-style: none; }
 .ui-ticket { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto auto; gap: 12px; align-items: start; padding: 8px 16px; border-top: 1px solid var(--ui-subtle); font-size: 13px; }
 .ui-ticket:first-child { border-top: 0; }
+.ui-ticket__summary { min-width: 0; overflow-wrap: anywhere; }
 .ui-ticket__versions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 .ui-ticket--blocked { background: #FFFBF1; }
 .ui-ticket--error { background: #FFF7F6; }
 .ui-group-label { padding: 10px 16px 2px; font-size: 12px; font-weight: 600; color: var(--ui-muted); letter-spacing: 0.04em; }
+
+/* One column grid for work-report headings, parent rows and child ticket rows. */
+.ui-section-heading { margin: 4px 0 0; font-size: 20px; font-weight: 600; }
+.ui-work-report { --ui-work-cols: minmax(145px, 180px) minmax(0, 1fr) minmax(120px, 150px) minmax(155px, 210px); }
+.ui-work-columns, .ui-work-report .ui-work-parent, .ui-work-report .ui-ticket {
+  display: grid; grid-template-columns: var(--ui-work-cols); gap: 12px; align-items: start;
+}
+.ui-work-columns { padding: 0 16px; color: var(--ui-muted); font-size: 12px; font-weight: 600; }
+.ui-work-columns > :first-child, .ui-work-report .ui-ticket > :first-child { padding-left: 22px; }
+.ui-work-parent__key, .ui-work-parent__progress { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ui-work-parent__key .ui-disclosure__chevron { margin-top: 0; }
+.ui-work-parent__summary { min-width: 0; overflow-wrap: anywhere; }
+.ui-work-report .ui-ticket__versions { justify-content: flex-start; }
+.ui-work-report .ui-group-label { padding-left: 38px; }
+@media (max-width: 760px) {
+  .ui-work-columns { display: none; }
+  .ui-work-report .ui-work-parent, .ui-work-report .ui-ticket { grid-template-columns: minmax(0, 1fr) auto; }
+  .ui-work-parent__key, .ui-work-report .ui-ticket > :first-child { grid-column: 1; grid-row: 1; }
+  .ui-work-parent__state, .ui-work-report .ui-ticket__state { grid-column: 2; grid-row: 1; }
+  .ui-work-parent__summary, .ui-work-report .ui-ticket__summary { grid-column: 1 / -1; grid-row: 2; }
+  .ui-work-parent__progress, .ui-work-report .ui-ticket__versions { grid-column: 1 / -1; grid-row: 3; }
+  .ui-work-report .ui-ticket > :first-child { padding-left: 0; }
+}
 
 .ui-ident--unknown { background: var(--ui-warning-soft); color: var(--ui-warning-ink); }
 .ui-kv { display: inline-flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; }

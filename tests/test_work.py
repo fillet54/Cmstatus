@@ -34,6 +34,9 @@ class WorkTests(unittest.TestCase):
     def vid(self, name, ci="NAV-SW"):
         return self.call("get", f"/cis/{ci}/versions?to={name}")[-1]["id"]
 
+    def rid(self, name, ci="NAV-SW"):
+        return next(r["id"] for r in self.call("get", f"/cis/{ci}/releases") if r["name"] == name)
+
     def names(self, to, frm=None, ci="NAV-SW"):
         q = f"/cis/{ci}/versions?to={to}" + (f"&from={frm}" if frm else "")
         return [v["name"] for v in self.call("get", q)]
@@ -111,8 +114,15 @@ class WorkTests(unittest.TestCase):
                          ["NAVL-101", "NAVL-120"])
         self.call("get", "/cis/NAV-SW/work", status=400)
 
-    def test_work_page_ticket_and_version_status(self):
-        path = "/cis/NAV-SW/work?from=2026.Q4-b2&to=2027.Q1-b2"
+    def test_release_page_ticket_and_version_status(self):
+        default = self.c.get(f"/releases/{self.rid('2027.Q1')}").get_data(as_text=True)
+        self.assertIn("Tickets and comparisons", default)
+        self.assertIn("NAVL-105", default)
+        self.assertIn('id="release-work-content"', default)
+        self.assertIn('hx-target="#release-work-content"', default)
+        self.assertIn('name="section" value="work"', default)
+        self.assertIn('class="ui-disclosure ui-card ui-work-group" open', default)
+        path = f"/releases/{self.rid('2027.Q1')}?from=2026.Q4-b2&to=2027.Q1-b2"
 
         def stats(url=path, headers=None):
             page = self.c.get(url, headers=headers or {}).get_data(as_text=True)
@@ -131,14 +141,14 @@ class WorkTests(unittest.TestCase):
         self.assertNotIn("Completed tickets", self.c.get("/cis/NAV-SW").get_data(as_text=True))
 
         # Changing the range refreshes the status block in the htmx fragment.
-        fragment, selected = stats("/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2",
+        fragment, selected = stats(f"/releases/{self.rid('2027.Q1')}?section=work&from=2026.Q4-b4&to=2027.Q1-b2",
                                    {"HX-Request": "true"})
         self.assertNotIn("<html", fragment)
         self.assertEqual(selected["Versions accounted for"], "3")
 
         # A ticket tied to multiple versions, or returned twice by the source, counts once.
         ticket = next(r for r in self.source.records if r.key == "NAVL-105")
-        ticket.fix_versions.append("2027.Q1-b2")
+        ticket.fix_versions = [*ticket.fix_versions, "2027.Q1-b2"]
         original = self.source.tickets_for_versions
         self.source.tickets_for_versions = lambda *args: original(*args) + [original(*args)[0]]
         self.assertEqual(stats()[1]["Completed tickets"], "2")
@@ -206,7 +216,7 @@ class WorkTests(unittest.TestCase):
         self.source.tickets_for_versions = boom
         err = self.call("get", "/cis/NAV-SW/work?to=2027.Q1-b1", status=502)
         self.assertIn("jira is down", err["error"])
-        page = self.c.get("/cis/NAV-SW/work?to=2027.Q1-b1")
+        page = self.c.get(f"/releases/{self.rid('2027.Q1')}?to=2027.Q1-b1")
         self.assertEqual(page.status_code, 200)                              # the page still renders
         self.assertIn("Couldn't get tickets", page.get_data(as_text=True))
         work_page = page.get_data(as_text=True)
@@ -223,25 +233,29 @@ class WorkTests(unittest.TestCase):
         r = c.get("/api/cis/NAV-SW/work?to=2027.Q1-b1")
         self.assertEqual((r.status_code, r.get_json()["error"]),
                          (400, "no ticket source configured (set CMTRACK_TICKET_SOURCES)"))
-        self.assertIn("no ticket source configured", c.get("/cis/NAV-SW/work?to=2027.Q1-b1").get_data(as_text=True))
-        self.assertIn("Versions accounted for", c.get("/cis/NAV-SW/work?to=2027.Q1-b1").get_data(as_text=True))
+        release_url = f"/releases/{self.rid('2027.Q1')}?to=2027.Q1-b1"
+        self.assertIn("no ticket source configured", c.get(release_url).get_data(as_text=True))
+        self.assertIn("Versions accounted for", c.get(release_url).get_data(as_text=True))
 
     # ------------------------------------------------------------------ views
 
     def test_views(self):
-        page = self.c.get("/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2").get_data(as_text=True)
+        release_url = f"/releases/{self.rid('2027.Q1')}"
+        page = self.c.get(release_url + "?from=2026.Q4-b4&to=2027.Q1-b2").get_data(as_text=True)
         self.assertIn("<html", page)
         self.assertIn("NAVL-120", page)                          # merged emergency fix is in the range
-        frag = self.c.get("/cis/NAV-SW/work?from=2026.Q4.ER1&to=2027.Q1-b2",
+        frag = self.c.get(release_url + "?section=work&from=2026.Q4.ER1&to=2027.Q1-b2",
                           headers={"HX-Request": "true"}).get_data(as_text=True)
         self.assertNotIn("<html", frag)
         self.assertNotIn("NAVL-120", frag)
-        page = self.c.get("/cis/NAV-SW/work").get_data(as_text=True)
+        page = self.c.get(release_url).get_data(as_text=True)
         self.assertNotIn("What's new in", page)
         self.assertIn('<optgroup label="HSCMs (the version they list)">', page)
         self.assertIn("data-picker", page)
-        by_hscm = self.c.get("/cis/NAV-SW/work?from=hscm:IFC-1/Build 1&to=release:2027.Q1").get_data(as_text=True)
-        by_name = self.c.get("/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2").get_data(as_text=True)
+        self.assertIn('class="ui-work-columns"', page)
+        self.assertIn('class="ui-work-parent__key"', page)
+        by_hscm = self.c.get(release_url + "?from=hscm:IFC-1/Build 1&to=release:2027.Q1").get_data(as_text=True)
+        by_name = self.c.get(release_url + "?from=2026.Q4-b4&to=2027.Q1-b2").get_data(as_text=True)
         self.assertIn('value="hscm:IFC-1/Build 1" selected', by_hscm)                # names in the URL...
         self.assertEqual(by_hscm.count("NAVL-"), by_name.count("NAVL-"))            # ...mean the versions they stand for
         self.assertIn("IFC-1 · Build 1</a>", by_hscm)                               # shown as IFC · HSCM › release › version
@@ -252,8 +266,11 @@ class WorkTests(unittest.TestCase):
         self.assertIn('class="ui-tl__note"', by_name)                               # ...and the HSCMs that list them
         frag = self.c.get("/cis/NAV-SW/work/lineage?from=2026.Q4-b4&to=2027.Q1-b2&zoom=weeks&width=900")
         self.assertIn('id="work-lineage"', frag.get_data(as_text=True))
-        bad = self.c.get("/cis/NAV-SW/work?to=release:NOPE").get_data(as_text=True)
+        bad = self.c.get(release_url + "?to=release:NOPE").get_data(as_text=True)
         self.assertIn("can&#39;t use &#39;release:NOPE&#39;", bad)
+        legacy = self.c.get("/cis/NAV-SW/work?to=2027.Q1-b2")
+        self.assertEqual((legacy.status_code, legacy.headers["Location"]),
+                         (302, release_url + "?to=2027.Q1-b2"))
         self.assertIn("How each CSC implemented it", self.c.get("/tickets/PRG-10").get_data(as_text=True))
         self.assertIn("NAVX-222 is still open", self.c.get("/tickets/NAVX-221").get_data(as_text=True))
         self.assertEqual([s["state"] for s in self.call("get", "/ticket-states")], list(STATES))

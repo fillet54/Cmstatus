@@ -236,9 +236,13 @@ def edit_options(conn, r):
 def release(rid):
     conn = get_db()
     r = svc.release_detail(conn, rid)
-    return page("release.html", "_release.html", r=r, built_from=built_from(conn, r),
-                work_range=svc.release_range(conn, rid), options=edit_options(conn, r),
-                ci_row=svc.get_ci(conn, r["ci_id"]))
+    work_range = svc.release_range(conn, rid)
+    ctx = dict(r=r, built_from=built_from(conn, r), work_range=work_range,
+               options=edit_options(conn, r), ci_row=svc.get_ci(conn, r["ci_id"]))
+    if is_fragment() and request.args.get("section") != "work":
+        return page("release.html", "_release.html", **ctx)
+    ctx.update(release_work_context(conn, ctx["ci_row"], work_range))
+    return page("release.html", "_work.html" if request.args.get("section") == "work" else "_release.html", **ctx)
 
 
 @bp.get("/versions/<int:vid>")
@@ -285,10 +289,28 @@ def work_end(conn, ci, ref):
 
 @bp.get("/cis/<ref>/work")
 def work(ref):
-    """Parent tickets -> CSC -> CSC tickets for a version range (from..to over the lineage DAG). Either end can be
-    a version, a release or an HSCM (see ``work_end``), all by name in the URL."""
+    """Older work-page links open the release that owns their selected end version."""
     conn = get_db()
     ci = svc.get_ci(conn, ref)
+    to = request.args.get("to")
+    target = None
+    if to:
+        try:
+            target = work_end(conn, ci, to)["release"]["id"]
+        except svc.CMError:
+            pass
+    if target is None:
+        releases = [r for r in reversed(svc.list_releases(conn, ci["id"])) if r["kind"] != "external"]
+        shipped = [r for r in releases if r["kind"] == "planned" and r["status"] == "released"]
+        target = (shipped[0] if shipped else releases[0])["id"] if releases else None
+    if target is None:
+        return redirect(url_for("ui.ci", ref=ci["name"]))
+    args = {key: request.args[key] for key in ("from", "to", "source") if key in request.args}
+    return redirect(url_for("ui.release", rid=target, **args))
+
+
+def release_work_context(conn, ci, work_range):
+    """Comparison choices, selected versions and live tickets for a release page."""
     releases = [r for r in reversed(svc.list_releases(conn, ci["id"])) if r["kind"] != "external"]
     hscms = conn.execute("SELECT b.name, i.name AS ifc, v.name AS version FROM baseline_entry e "
                          "JOIN baseline b ON b.id = e.baseline_id JOIN ifc i ON i.id = b.ifc_id "
@@ -297,11 +319,12 @@ def work(ref):
                {"group": "Versions", "options": [v["name"] for v in reversed(svc.ci_versions(conn, ci["id"]))]},
                {"group": "HSCMs (the version they list)",
                 "options": [(f"hscm:{h['ifc']}/{h['name']}", f"{h['ifc']} · {h['name']} → {h['version']}") for h in hscms]}]
-    frm, to = request.args.get("from") or None, request.args.get("to") or None
-    if to is None and "to" not in request.args:            # default: what's new in the latest shipped release
-        shipped = [r for r in releases if r["kind"] == "planned" and r["status"] == "released"]
-        rng = svc.release_range(conn, shipped[0]["id"]) if shipped else None
-        frm, to = (rng["from"], f"release:{shipped[0]['name']}") if rng else (None, None)
+    if "to" in request.args:
+        frm, to = request.args.get("from") or None, request.args.get("to") or None
+    elif "from" in request.args:
+        frm, to = request.args.get("from") or None, work_range["to"] if work_range else None
+    else:
+        frm, to = (work_range["from"], work_range["to"]) if work_range else (None, None)
     ends, problems = {}, []
     for side, value in (("from", frm), ("to", to)):
         try:
@@ -316,7 +339,7 @@ def work(ref):
     if head:
         version_count = len(report["versions"]) if report else len(svc.version_range(
             conn, ci["id"], head["version"]["name"], base["version"]["name"] if base else None))
-    return page("work.html", "_work.html", ci=ci, choices=choices, frm=frm, to=to, ends=ends, problems=problems,
+    return dict(ci=ci, choices=choices, frm=frm, to=to, ends=ends, problems=problems, open_all=True,
                 report=report, source_error=source_error, version_count=version_count,
                 lineage=range_timeline(conn, ci, ends))
 

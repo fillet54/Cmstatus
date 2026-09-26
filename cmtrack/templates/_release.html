@@ -74,11 +74,10 @@
   {% endcall %}
   {% endif %}
 
-  {% if work_range %}
+  {% if work_range and not standalone %}
   {% call ui.card_section("Work since the previous release") %}
     <div class="ui-row">
-      {{ ui.button("Open work items", variant="primary",
-                   href=url_for('ui.work', ref=r.ci, to=work_range.to, **({'from': work_range['from']} if work_range['from'] else {}))) }}
+      {{ ui.button("View tickets", variant="primary", href=url_for('ui.release', rid=r.id) ~ '#release-work') }}
       <span class="ui-mono ui-muted" style="font-size: 12px;">{{ work_range['from'] or "start" }}..{{ work_range.to }}</span>
     </div>
   {% endcall %}

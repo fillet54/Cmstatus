@@ -461,8 +461,8 @@
 {% macro ticket_line(t, href=None) -%}
 <li class="ui-ticket ui-ticket--{{ t.state }}">
   {{ ticket_ref(t.key, href or url_for("ui.ticket", key=t.key), t.url) }}
-  <div>{{ t.summary or "" }}{% if t.type and t.type not in ("Story",) %} {{ badge(t.type, outline=True) }}{% endif %}{{ state_reason(t) }}</div>
-  {{ state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}
+  <div class="ui-ticket__summary">{{ t.summary or "" }}{% if t.type and t.type not in ("Story",) %} {{ badge(t.type, outline=True) }}{% endif %}{{ state_reason(t) }}</div>
+  <div class="ui-ticket__state">{{ state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}</div>
   <div class="ui-ticket__versions">{% for v in t.versions or [] %}{{ version_chip(v) }}{% endfor %}</div>
 </li>
 {%- endmacro %}
@@ -471,21 +471,15 @@
     ticket and its progress, and whose body lists each CSC's tickets. #}
 {% macro work_group(item, open=False) -%}
 {%- set p = item.parent -%}
-<details class="ui-disclosure ui-card"{% if open %} open{% endif %}>
-  <summary class="ui-disclosure__summary">
-    {{ icon("chevron-right", 14, cls="ui-disclosure__chevron") }}
-    <div class="ui-disclosure__main">
-      <div class="ui-row" style="--ui-gap: 6px 10px;">
-        {%- if p %}{{ ticket_ref(p.key, url_for("ui.ticket", key=p.key), p.url) }}<span class="ui-disclosure__title">{{ p.summary or "" }}</span>
-          {%- if p.type %}{{ badge(p.type, outline=True) }}{% endif %}{{ state_pill(p.state, title=("Source status: " ~ p.status) if p.status else None) }}
-        {%- else %}<span class="ui-disclosure__title ui-muted">No parent ticket</span>{% endif %}
-      </div>
-      {%- if p and p.state == "error" %}{{ state_reason(p) }}{% endif %}
-      <div class="ui-row" style="--ui-gap: 4px; margin-top: 4px;">
-        {%- for g in item.cscs %}{{ chip((g.csc or "unmapped") ~ " · " ~ g.progress.done ~ "/" ~ g.progress.total) }}{% endfor %}
-      </div>
+<details class="ui-disclosure ui-card ui-work-group"{% if open %} open{% endif %}>
+  <summary class="ui-disclosure__summary ui-work-parent">
+    <div class="ui-work-parent__key">{{ icon("chevron-right", 14, cls="ui-disclosure__chevron") }}
+      {% if p %}{{ ticket_ref(p.key, url_for("ui.ticket", key=p.key), p.url) }}{% else %}<span class="ui-muted">No parent</span>{% endif %}
     </div>
-    <div class="ui-row ui-muted" style="flex-wrap: nowrap;">{{ state_bar(item.progress, width="96px") }}<span class="ui-mono">{{ item.progress.done }}/{{ item.progress.total }}</span></div>
+    <div class="ui-work-parent__summary">{% if p %}<span class="ui-disclosure__title">{{ p.summary or "" }}</span>
+      {% if p.type %} {{ badge(p.type, outline=True) }}{% endif %}{% if p.state == "error" %}{{ state_reason(p) }}{% endif %}{% endif %}</div>
+    <div class="ui-work-parent__state">{% if p %}{{ state_pill(p.state, title=("Source status: " ~ p.status) if p.status else None) }}{% endif %}</div>
+    <div class="ui-work-parent__progress ui-muted">{{ state_bar(item.progress, width="96px") }}<span class="ui-mono">{{ item.progress.done }}/{{ item.progress.total }}</span></div>
   </summary>
   <ul class="ui-tickets ui-disclosure__body">
     {%- for g in item.cscs %}

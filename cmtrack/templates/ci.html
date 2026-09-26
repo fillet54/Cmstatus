@@ -17,7 +17,7 @@
     {{ ui.button("Sync from " ~ ci.release_source, type="submit", icon="refresh", attrs={"title": "Create, update and flag releases and builds to match " ~ ci.release_source}) }}
   </form>
   {% endif %}
-  {{ ui.button("Work items", variant="primary", href=url_for('ui.work', ref=ci.name)) }}
+  {% if o.focus_id %}{{ ui.button("View tickets", variant="primary", href=url_for('ui.release', rid=o.focus_id) ~ '#release-work') }}{% endif %}
 {% endcall %}
 
 {% if preview %}

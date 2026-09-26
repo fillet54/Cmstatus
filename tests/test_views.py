@@ -55,6 +55,7 @@ class ViewTests(unittest.TestCase):
         self.assertNotIn("<html", panel)
         self.assertIn("2026.Q4.ER1", panel)                   # effective version
         self.assertIn("still field an older version", panel)  # IFC-1 Build 2 fields b4
+        self.assertNotIn("release-work-content", panel)        # CI sidebar stays a small fragment
 
     def test_baseline_staleness_and_diff(self):
         ifc = self.api("/ifcs/IFC-1")
@@ -89,7 +90,7 @@ class ViewTests(unittest.TestCase):
         rid = self.api("/cis/NAV-SW/releases")[0]["id"]
         vid = self.api(f"/releases/{rid}")["versions"][0]["id"]
         bid = self.api("/ifcs/IFC-1")["current_hscm"]["id"]
-        for path in ("/", "/cis", "/cis/NAV-SW", f"/releases/{rid}", f"/versions/{vid}", "/cis/NAV-SW/work",
+        for path in ("/", "/cis", "/cis/NAV-SW", f"/releases/{rid}", f"/versions/{vid}",
                      "/backlogs", "/backlogs/Nav & Display", "/ifcs", "/ifcs/IFC-1", "/ifcs/IFC-2", f"/baselines/{bid}", "/events",
                      "/ui"):
             page = self.get(path)

@@ -65,7 +65,7 @@
       {% else %}<span class="ui-muted">nothing yet</span>{% endfor %}
       </div>
     {% endcall %}
-    {% call ui.card_section() %}<div>{{ ui.button("All work up to " ~ v.name, href=url_for('ui.work', ref=ci.name, to=v.name), size="sm") }}</div>{% endcall %}
+    {% call ui.card_section() %}<div>{{ ui.button("All work up to " ~ v.name, href=url_for('ui.release', rid=rel.id, to=v.name) ~ '#release-work', size="sm") }}</div>{% endcall %}
   {% endcall %}
 
   {% call ui.card(flush=True) %}

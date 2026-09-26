@@ -250,14 +250,11 @@ every URL works as a plain link.
 /cis                  CI list; search + type/managed filters re-render the rows via htmx
 /cis/<ci>             releases grouped by family (click one to load its panel), "Needs attention" (remap, detach,
                       cancel), sync / preview sync, last sync summary, add a release by hand, where fielded, CSCs
-/cis/<ci>/work        work items for a from..to range. Each end is a version, a release (release:2026.Q3 = its released
-                      version, else latest build) or an HSCM (hscm:IFC A 3.0/HSC1.1 = the version it lists), by name in
-                      the URL so links can be shared; shown as IFC › release › version, the edit button opens a fuzzy
-                      picker. Default: what's new in the latest shipped release. The versions in range as a timeline
-                      (from its start, faded; merged fixes; notes for the IFC HSCMs that list them). Parent tickets
-                      expand to each CSC's tickets
-/releases/<id>        versions, released vs effective version, baselines behind, unabsorbed fixes, work link;
-                      edit (pins synced fields), unpin, add a build, cancel, correct the release date
+/releases/<id>        release details, versions, baselines behind, unabsorbed fixes, and tickets for what's new in
+                      this release. From/to selectors compare any version, release, or HSCM; the selected versions
+                      appear on a timeline, and parent tickets expand to CSC ticket rows in aligned columns.
+                      Edit (pins synced fields), unpin, add a build, cancel, correct the release date.
+/cis/<ci>/work        older links redirect to the release page for their selected end version
 /versions/<id>        tickets fixed in it, lineage (built from / built on by), manifest, where-used, history;
                       edit name / planned date, correct the build date
 /tickets/<key>        a parent ticket and how each CSC implemented it, across CIs
@@ -286,7 +283,7 @@ snippet, plus a CI overview page built only from macros.
 {% set nav_current = "cis" %}
 {% block content %}
   {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", url_for("ui.cis")), ("NAV-SW", None)]) %}
-    {{ ui.button("Work items", variant="primary", href=url_for("ui.work", ref="NAV-SW")) }}
+    {{ ui.button("View tickets", variant="primary", href=url_for("ui.release", rid=release.id) ~ "#release-work") }}
   {% endcall %}
   {% call ui.card(flush=True) %}{% call ui.table(["Release", "Status"]) %}...{% endcall %}{% endcall %}
 {% endblock %}

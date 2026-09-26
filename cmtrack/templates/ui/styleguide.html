@@ -47,7 +47,7 @@
 {% block title %}NAV-SW{% endblock %}
 {% block content %}
   {% call ui.page_header("NAV-SW", "Navigation software", crumbs=[("Configuration items", url_for("ui.cis")), ("NAV-SW", None)]) %}
-    {{ ui.button("Work items", variant="primary", href=url_for("ui.work", ref="NAV-SW")) }}
+    {{ ui.button("View tickets", variant="primary", href=url_for("ui.release", rid=release.id) ~ "#release-work") }}
   {% endcall %}
 {% endblock %}
 
@@ -259,7 +259,7 @@
 <section class="sg-section ui-stack" id="actions">
   <h2 class="sg-h">Actions and icons</h2>
   {% set code %}{% raw %}
-{{ ui.button("Open work items", variant="primary", href=url_for("ui.work", ref=ci.name)) }}
+{{ ui.button("View tickets", variant="primary", href=url_for("ui.release", rid=release.id) ~ "#release-work") }}
 {{ ui.button("Pull from Jira", variant="primary", icon="download", attrs={"hx-post": url, "hx-target": "#items"}) }}
 {{ ui.button("Remove", variant="danger", size="sm") }}
 {{ ui.icon_button("refresh", "Refresh from Jira") }}      {# the label is required: it is the aria-label #}
