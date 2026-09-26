@@ -223,13 +223,14 @@
 
 {% macro state_glyph(state, size=14) -%}
 <svg class="ui-glyph" width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  {%- if state == "analysis_in_progress" %}<circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.2"/>
+  {%- if state == "in_analysis" %}<circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.2"/>
   {%- elif state == "ready_for_work" %}<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none"/>
   {%- elif state == "in_progress" %}<circle cx="8" cy="8" r="6"/><path d="M8 2 A6 6 0 0 1 8 14 Z" fill="currentColor"/>
   {%- elif state == "peer_review" %}<path d="M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z"/>
-  {%- elif state == "merge_blocked" %}<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M6 5.5 L6 10.5 M10 5.5 L10 10.5"/>
+  {%- elif state == "blocked" %}<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M6 5.5 L6 10.5 M10 5.5 L10 10.5"/>
   {%- elif state == "verification" %}<path d="M8 1.5 L13.5 3.5 L13.5 8 C13.5 11 11 13.5 8 14.5 C5 13.5 2.5 11 2.5 8 L2.5 3.5 Z" stroke-width="1.5"/><path d="M5.5 8 L7.3 9.8 L10.6 6.3" stroke-width="1.5"/>
   {%- elif state == "done" %}<circle cx="8" cy="8" r="6.5" fill="currentColor" stroke="none"/><path d="M5 8.2 L7.1 10.2 L11 6" stroke="#FFFFFF" stroke-width="1.7"/>
+  {%- elif state == "cancelled" %}<circle cx="8" cy="8" r="6"/><path d="M3.8 12.2 L12.2 3.8"/>
   {%- elif state == "error" %}<path d="M8 1.5 L15 14 L1 14 Z"/><path d="M8 6 L8 9.5 M8 11.5 L8 11.6" stroke-width="1.7"/>
   {%- else %}<circle cx="8" cy="8" r="6"/>{% endif -%}
 </svg>
@@ -241,9 +242,9 @@
 <span class="ui-state ui-state--{{ state }}"{% if title %} title="{{ title }}"{% endif %}>{{ state_glyph(state, 12) }}{{ label or ui_states[state] }}</span>
 {%- endmacro %}
 
-{#- The source's explanation, shown for error and merge_blocked tickets. t: a ticket dict. #}
+{#- The source's explanation, shown for error and blocked tickets. t: a ticket dict. #}
 {% macro state_reason(t) -%}
-{%- if t.state_reason and t.state in ("error", "merge_blocked") -%}
+{%- if t.state_reason and t.state in ("error", "blocked") -%}
 <div class="ui-reason ui-reason--{{ t.state }}">{{ t.state_reason }}</div>
 {%- endif -%}
 {%- endmacro %}
@@ -263,7 +264,7 @@
 {% macro state_counts(progress, all=False) -%}
 <div class="ui-statecounts">
   {%- for s, label in ui_states.items() if all or progress[s] %}
-  <div><span>{{ label }}</span><b class="{{ 'ui-tone-danger' if s == 'error' else 'ui-tone-warning' if s == 'merge_blocked' else '' }}">{{ progress[s] }}</b></div>
+  <div><span>{{ label }}</span><b class="{{ 'ui-tone-danger' if s == 'error' else 'ui-tone-warning' if s == 'blocked' else '' }}">{{ progress[s] }}</b></div>
   {%- endfor %}
 </div>
 {%- endmacro %}
@@ -319,14 +320,22 @@
        {%- if invalid %} aria-invalid="true" aria-describedby="{{ id or name }}-error"{% endif %}{{ (attrs or {}) | xmlattr }}>
 {%- endmacro %}
 
-{#- options: ["a", "b"] or [(value, label), ...]. selected: the selected value. #}
+{#- options: ["a", "b"], [(value, label), ...], or {"group": label, "options": [...]} for an <optgroup>.
+    selected: the selected value. With attrs {"data-picker": ""}, static/picker.js adds a fuzzy search box. #}
 {% macro select(name, options, selected=None, id=None, mono=False, attrs=None) -%}
 <select class="ui-select{% if mono %} ui-select--mono{% endif %}" name="{{ name }}" id="{{ id or name }}"{{ (attrs or {}) | xmlattr }}>
+  {%- for opt in options %}
+  {%- if opt is mapping %}
+  {%- if opt.options %}<optgroup label="{{ opt.group }}">{{ _options(opt.options, selected) }}</optgroup>{% endif %}
+  {%- else %}{{ _options([opt], selected) }}{% endif %}
+  {%- endfor %}
+</select>
+{%- endmacro %}
+{% macro _options(options, selected) -%}
   {%- for opt in options %}
   {%- set value, text = (opt if opt is not string else (opt, opt)) %}
   <option value="{{ value }}"{% if value == selected %} selected{% endif %}>{{ text }}</option>
   {%- endfor %}
-</select>
 {%- endmacro %}
 
 {% macro checkbox(name, label, checked=False, value="1", attrs=None) -%}

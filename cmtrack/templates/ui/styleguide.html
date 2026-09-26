@@ -200,7 +200,7 @@
     {% endcall %}
     {% set code %}{% raw %}
 {{ ui.state_pill(t.state, title="Source status: " ~ t.status) }}
-{{ ui.state_reason(t) }}      {# only for error / merge_blocked #}
+{{ ui.state_reason(t) }}      {# only for error / blocked #}
 {% endraw %}{% endset %}
     {% call example("state_pill (ticket workflow states)", code) %}
       <div class="ui-stack" style="--ui-gap: 10px;">

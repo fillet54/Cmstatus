@@ -9,7 +9,7 @@ import unittest
 
 from cmtrack import create_app
 from cmtrack.demo import DEMO_TICKETS, seed
-from cmtrack.tickets import STATES, StaticSource, TicketRecord, load_sources, normalize_state
+from cmtrack.tickets import STATES, StaticSource, TicketRecord, load_sources, normalize_state, rollup
 
 
 
@@ -95,12 +95,12 @@ class WorkTests(unittest.TestCase):
         p = w["progress"]
         self.assertEqual(list(p), list(STATES) + ["total"])                    # every state, workflow order
         self.assertEqual({k: v for k, v in p.items() if v},
-                         {"analysis_required": 1, "in_progress": 1, "peer_review": 1, "merge_blocked": 1,
+                         {"analysis_required": 1, "in_progress": 1, "peer_review": 1, "blocked": 1,
                           "verification": 2, "done": 2, "total": 8})
         by_parent = {(i["parent"] or {}).get("key"): i for i in w["items"]}
         self.assertEqual(list(by_parent), ["PRG-10", "PRG-12", "PRG-15", "PRG-18", None])   # orphans last
         blocked = next(t for g in by_parent["PRG-10"]["cscs"] for t in g["tickets"] if t["key"] == "NAVL-106")
-        self.assertEqual((blocked["state"], blocked["status"]), ("merge_blocked", "Ready to Merge"))
+        self.assertEqual((blocked["state"], blocked["status"]), ("blocked", "Ready to Merge"))
         self.assertIn("NAVX-205", blocked["state_reason"])
         self.assertEqual([(g["csc"], [t["key"] for t in g["tickets"]]) for g in by_parent["PRG-12"]["cscs"]],
                          [("nav-maps", ["NAVX-210", "NAVX-211"])])
@@ -129,7 +129,7 @@ class WorkTests(unittest.TestCase):
         rng = "/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2"
         state = lambda: next(t["state"] for i in self.call("get", rng)["items"] for g in i["cscs"]
                              for t in g["tickets"] if t["key"] == "NAVL-106")
-        self.assertEqual(state(), "merge_blocked")
+        self.assertEqual(state(), "blocked")
         next(r for r in self.source.records if r.key == "NAVL-106").state = "verification"
         self.assertEqual(state(), "verification")
         self.assertEqual(calls, [["2026.Q4.ER1", "2027.Q1-b1", "2027.Q1-b2"]] * 2)   # the range, asked twice
@@ -197,7 +197,15 @@ class WorkTests(unittest.TestCase):
                           headers={"HX-Request": "true"}).get_data(as_text=True)
         self.assertNotIn("<html", frag)
         self.assertNotIn("NAVL-120", frag)
-        self.assertIn("<html", self.c.get("/cis/NAV-SW/work").get_data(as_text=True))
+        page = self.c.get("/cis/NAV-SW/work").get_data(as_text=True)
+        self.assertNotIn("What's new in", page)
+        self.assertIn('<optgroup label="HSCMs (the version they list)">', page)
+        self.assertIn("data-picker", page)
+        hscm = next(b for b in self.call("get", "/ifcs/IFC-1")["baselines"] if b["name"] == "Build 1")["id"]
+        by_hscm = self.c.get(f"/cis/NAV-SW/work?from=hscm:{hscm}&to=2027.Q1-b2").get_data(as_text=True)
+        by_name = self.c.get("/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2").get_data(as_text=True)
+        self.assertIn(f'value="hscm:{hscm}" selected', by_hscm)                     # the HSCM stays chosen...
+        self.assertEqual(by_hscm.count("NAVL-"), by_name.count("NAVL-"))            # ...and means the version it lists
         self.assertIn("How each CSC implemented it", self.c.get("/tickets/PRG-10").get_data(as_text=True))
         self.assertIn("NAVX-222 is still open", self.c.get("/tickets/NAVX-221").get_data(as_text=True))
         self.assertEqual([s["state"] for s in self.call("get", "/ticket-states")], list(STATES))
@@ -207,8 +215,22 @@ class WorkTests(unittest.TestCase):
 
 
 class TicketUnitTests(unittest.TestCase):
+    def test_rollup(self):
+        self.assertEqual(rollup(["done", "done"]), "done")
+        self.assertEqual(rollup(["done", "cancelled"]), "done")                         # cancelled ones don't count
+        self.assertEqual(rollup(["cancelled", "cancelled"]), "cancelled")
+        self.assertEqual(rollup(["verification", "done"]), "verification")              # the least advanced
+        self.assertEqual(rollup(["analysis_required", "in_analysis"]), "analysis_required")
+        self.assertEqual(rollup(["in_analysis", "peer_review"]), "in_progress")          # work has started
+        self.assertEqual(rollup(["done", "blocked", "in_progress"]), "blocked")
+        self.assertEqual(rollup([]), None)
+        src = StaticSource([{"key": "FEAT-1"}, {"key": "A-1", "parent_key": "FEAT-1", "state": "done"},
+                            {"key": "B-1", "parent_key": "FEAT-1", "state": "peer_review"}])
+        self.assertEqual(src.get_tickets(["FEAT-1"])[0].state, "peer_review")          # a parent without a state
+
     def test_normalize_state(self):
-        self.assertEqual(normalize_state("Merge Blocked"), ("merge_blocked", None))
+        self.assertEqual(normalize_state("Merge Blocked"), ("blocked", None))              # old names still read
+        self.assertEqual(normalize_state("Canceled"), ("cancelled", None))
         self.assertEqual(normalize_state("peer-review", "r"), ("peer_review", "r"))
         self.assertEqual(normalize_state(None), ("error", "source did not supply a state"))
         self.assertEqual(normalize_state("error", "linked epic missing"), ("error", "linked epic missing"))

@@ -6,23 +6,14 @@
         hx-get="{{ url_for('ui.work', ref=ci.name) }}" hx-target="#work" hx-push-url="true" hx-trigger="change" hx-indicator="#work-busy">
     <div class="ui-row" style="--ui-gap: 12px; align-items: flex-end;">
       {% call ui.field("From (exclusive)", "work-from") %}
-        {{ ui.select("from", [("", "(beginning)")] + versions | map(attribute="name") | list, selected=frm or "", id="work-from", mono=True) }}
+        {{ ui.select("from", [("", "(beginning)")] + choices, selected=frm or "", id="work-from", mono=True, attrs={"data-picker": ""}) }}
       {% endcall %}
       <span class="ui-mono ui-muted" style="padding-bottom: 8px;">..</span>
       {% call ui.field("To (inclusive)", "work-to") %}
-        {{ ui.select("to", [("", "choose…")] + versions | map(attribute="name") | list, selected=to or "", id="work-to", mono=True) }}
+        {{ ui.select("to", [("", "choose…")] + choices, selected=to or "", id="work-to", mono=True, attrs={"data-picker": ""}) }}
       {% endcall %}
       <span id="work-busy" class="ui-spinner htmx-indicator" aria-hidden="true" style="margin-bottom: 10px;"></span>
     </div>
-    {% if presets %}
-    {% set items = [] %}
-    {% for p in presets %}
-      {% set href = url_for('ui.work', ref=ci.name, to=p.to, **({'from': p['from']} if p['from'] else {})) %}
-      {% set _ = items.append({"label": p.release, "href": href, "active": p.to == to and p['from'] == frm,
-                               "attrs": {"hx-get": href, "hx-target": "#work", "hx-push-url": "true"}}) %}
-    {% endfor %}
-    <div class="ui-row"><span class="ui-muted">What's new in</span>{{ ui.segmented(items, label="Release presets") }}</div>
-    {% endif %}
   </form>
   {% endcall %}
 {% endcall %}

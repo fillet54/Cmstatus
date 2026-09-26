@@ -179,11 +179,11 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 
 | File | Type in |
 |---|---|
-| `cmtrack/tickets.py` | `STATES`, `ERROR`, `normalize_state`, `TicketRecord` (leave `cis` out until Phase 7 if you like), `TicketSource` (`tickets_for_versions`, `get_tickets`, `get_children`), `StaticSource`, `pick_source` |
+| `cmtrack/tickets.py` | `STATES`, `ALIASES`, `WORKFLOW`, `rollup`, `ERROR`, `normalize_state`, `TicketRecord` (leave `cis` out until Phase 7 if you like), `TicketSource` (`tickets_for_versions`, `get_tickets`, `get_children`), `StaticSource`, `pick_source` |
 | `service.py` | tickets section: `_ask`, `_progress`, `_Resolver`, `_group_by_csc`, `work_report`, `ticket_detail` |
 | `__init__.py` | `TICKET_SOURCES` config, falling back to `CMTRACK_TICKET_SOURCES` |
 | `api.py` | `ticket_source`, `versions_arg`, `GET /ticket-states`, `GET /cis/<ci>/work`, `GET /tickets/<key>` |
-| `views.py` | `ticket_source`, `live`, `work` (with the "What's new in" presets), `ticket`; the version view gains `report` / `source_error` |
+| `views.py` | `ticket_source`, `live`, `work` (versions or `hscm:<id>` at either end; default: the latest shipped release), `ticket`; the version view gains `report` / `source_error` |
 | `ui/components.html` | `state_glyph`, `state_pill`, `state_reason`, `state_bar`, `state_counts`, `ticket_ref`, `version_chip`, `ticket_line`, `group_label`, `work_group` (+ their CSS) |
 | templates | `_work.html`, `_work_items.html`, `work.html`, `ticket.html`; the "Work items" button in `ci.html`; the work link in `_release.html`; "Fixed in this version" in `version.html` |
 | `cmtrack/demo.py` | `seed` (the parts built so far), `DEMO_TICKETS`, `demo_source` |
@@ -191,7 +191,8 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 
 **Working when**
 - `CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source python -m cmtrack`, then `/cis/NAV-SW/work`:
-  clicking "What's new in: 2027.Q1" shows parent tickets with state bars, expanding to CSC → tickets with fix versions.
+  choosing 2026.Q4-b4 .. 2027.Q1-b2 (type to search; `static/picker.js`, optgroups in `ui.select`) shows parent tickets
+  with state bars, expanding to CSC → tickets with fix versions. An HSCM can stand for either end.
 - A merge-blocked or error ticket shows its reason inline; `/tickets/PRG-10` shows every CSC that worked on it.
 - If the source raises, the work page shows an alert and the API returns 502, not a crash.
 - **Then:** write your `JiraSource(TicketSource)` (the docstring at the top of `tickets.py` is the template),
@@ -243,7 +244,7 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 - Add `2026.Q4.ER1` to the source (or by hand, with a reason) and sync: it hangs under 2026.Q4 and gets
   its base version once Q4 is released. Ship it. Two open emergencies on a line show under Needs attention.
 - The Q1 panel warns "Not built on 1 earlier fix" until you `PUT /versions/<Q1-b1>/parents
-  {"parents": ["2026.Q4-b4", "2026.Q4.ER1"]}`. After that, "What's new in 2027.Q1" includes ER1's tickets.
+  {"parents": ["2026.Q4-b4", "2026.Q4.ER1"]}`. After that, 2026.Q4-b4 .. 2027.Q1-b2 includes ER1's tickets.
 
 ---
 

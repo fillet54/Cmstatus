@@ -12,8 +12,8 @@
 
 {% if t.state == "error" and t.state_reason %}
 {% call ui.alert("danger", "Something is off in " ~ t.source) %}{{ t.state_reason }}{% endcall %}
-{% elif t.state == "merge_blocked" and t.state_reason %}
-{% call ui.alert("warning", "Merge blocked") %}{{ t.state_reason }}{% endcall %}
+{% elif t.state == "blocked" and t.state_reason %}
+{% call ui.alert("warning", "Blocked") %}{{ t.state_reason }}{% endcall %}
 {% endif %}
 
 {% call ui.stats(t.key) %}

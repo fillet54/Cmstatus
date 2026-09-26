@@ -65,16 +65,16 @@ class UiTests(unittest.TestCase):
         r = self.app.test_client().get("/ui")
         self.assertEqual(r.status_code, 200)
         html = r.get_data(as_text=True)
-        for needle in ("ui-state--merge_blocked", "ui-statebar__done", 'data-move="top"', "ui-rank-item--lifted",
+        for needle in ("ui-state--blocked", "ui-statebar__done", 'data-move="top"', "ui-rank-item--lifted",
                        "&lt;ul class=&#34;ui-tickets&#34;&gt;", "{% call ui.page_header"):
             self.assertIn(needle, html)
 
     # ------------------------------------------------------------------ macros
 
     def test_state_pill_and_bar(self):
-        html = self.render('{{ ui.state_pill("merge_blocked", title="Source status: Ready") }}')
-        self.assertIn('class="ui-state ui-state--merge_blocked" title="Source status: Ready"', html)
-        self.assertIn("Merge blocked", html)
+        html = self.render('{{ ui.state_pill("blocked", title="Source status: Ready") }}')
+        self.assertIn('class="ui-state ui-state--blocked" title="Source status: Ready"', html)
+        self.assertIn("Blocked", html)
         self.assertIn("ui-state--error", self.render('{{ ui.state_pill("nonsense") }}'))   # unknown -> error
         progress = {"done": 2, "in_progress": 1, "error": 1, "total": 4}
         html = self.render("{{ ui.state_bar(p) }}", p=progress)
@@ -84,8 +84,8 @@ class UiTests(unittest.TestCase):
         self.assertIn('aria-label="no tickets"', self.render("{{ ui.state_bar(p) }}", p={"total": 0}))
 
     def test_state_reason_only_for_error_and_blocked(self):
-        t = {"state": "merge_blocked", "state_reason": "waits on NAVX-205"}
-        self.assertIn("ui-reason--merge_blocked", self.render("{{ ui.state_reason(t) }}", t=t))
+        t = {"state": "blocked", "state_reason": "waits on NAVX-205"}
+        self.assertIn("ui-reason--blocked", self.render("{{ ui.state_reason(t) }}", t=t))
         t["state"] = "in_progress"
         self.assertNotIn("waits", self.render("{{ ui.state_reason(t) }}", t=t))
 

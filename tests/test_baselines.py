@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from cmtrack import create_app, graph, history
+from cmtrack.tickets import STATES, StaticSource
 from cmtrack.demo import seed
 
 
@@ -161,10 +162,20 @@ class BaselineTests(unittest.TestCase):
                          ["Build 1", "Build 2", "Build 3", "HSC1"])
         self.assertEqual(self.c.get("/").status_code, 200)
         engine = self.api("/cis/ENGINE-SW")                                            # a managed CSCI
-        self.assertEqual((engine["managed"], engine["release_source"], len(engine["cscs"])), (1, None, 2))
+        self.assertEqual((engine["managed"], engine["release_source"]), (1, None))
         released = [r for r in engine["releases"] if r["status"] == "released"]
         self.assertTrue(any(r["kind"] == "planned" for r in released))
         self.assertIn('class="ui-timeline', self.c.get("/cis/ENGINE-SW/lineage").get_data(as_text=True))
+        tops = [t for t in data["tickets"] if not t.get("parent_key")]
+        kids = [t for t in data["tickets"] if t.get("parent_key")]
+        self.assertTrue(tops and all(t["key"].split("-")[0] in ("FEAT", "DR") and "state" not in t for t in tops))
+        csc_projects = {c["jira_project"] for c in engine["cscs"]}
+        self.assertTrue(1 <= len(csc_projects) <= 5)
+        self.assertTrue(all(k["project"] and k["fix_versions"] and k["state"] in STATES for k in kids))
+        self.assertTrue(any(k["project"] in csc_projects for k in kids))
+        self.app.config["TICKET_SOURCES"] = {"jira": StaticSource(data["tickets"], name="jira")}
+        work = self.c.get("/cis/ENGINE-SW/work").get_data(as_text=True)                # parents -> CSCs -> tickets
+        self.assertRegex(work, r">(FEAT|DR)-\d+<")
 
 class GraphLayoutTests(unittest.TestCase):
     def test_timeline(self):

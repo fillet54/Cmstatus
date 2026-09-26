@@ -6,7 +6,8 @@ Python 3.10+, Flask, SQLite. No other dependencies.
 ```
 python -m cmtrack                      # dev server on :5000, DB in ./cmtrack.db
 python -m unittest discover -s tests   # end-to-end scenario + views
-python -m cmtrack.history load --db cmtrack.db [--reset]   # generate years of IFC/HSCM history and load it
+python -m cmtrack.history load --db cmtrack.db [--reset]   # years of IFCs/HSCMs, managed CSCIs, CSCs; tickets.json
+CMTRACK_TICKET_SOURCES=jira=cmtrack.history:ticket_file python -m cmtrack   # ...serving those tickets
 python -m cmtrack.demo --db demo.db    # load a demo scenario, then:
 CMTRACK_DB=demo.db CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source \
   CMTRACK_RELEASE_SOURCES=jira=cmtrack.demo:demo_release_source python -m cmtrack
@@ -95,13 +96,15 @@ If the source raises, the API answers 502 and pages show the error in place of t
 the request, another CI's ticket) are left out of the report and listed under `warnings`; a parent the
 source can't find shows as an `error` placeholder.
 
-**States** (`GET /api/ticket-states`), in workflow order: `analysis_required`, `analysis_in_progress`,
-`ready_for_work`, `in_progress`, `peer_review`, `merge_blocked` (code ready, something is holding up the merge),
-`verification`, `done`, `error`. The source decides the state, usually with domain logic over the ticket and
-everything linked to it rather than one Jira status, and says why in `state_reason` where that helps. `error`
-means the source data doesn't add up (e.g. closed with open sub-tasks). A missing or unrecognized state is stored
-as `error` with a reason. Errors (and merge-blocked reasons) show next to the ticket so people know what to fix
-in Jira. `status` keeps the raw Jira status for display.
+**States** (`GET /api/ticket-states`), in workflow order: `analysis_required`, `in_analysis`, `ready_for_work`,
+`in_progress`, `peer_review`, `verification`, `done`; plus `blocked` (waiting on something: `state_reason` says what),
+`cancelled` and `error` (the source data doesn't add up, e.g. closed with open sub-tasks). The source decides a CSC
+ticket's state, usually with domain logic over the ticket and everything linked to it rather than one Jira status.
+A parent (DR/FEAT) ticket's state is consistent with its CSC tickets: `tickets.rollup` ignores cancelled ones,
+lets blocked or error win, and otherwise takes the least advanced (in progress once any CSC has started);
+`StaticSource` fills it in for parents that come without one. A missing or unrecognized state is stored as `error`
+with a reason; blocked and error reasons show next to the ticket so people know what to fix in Jira. `status`
+keeps the raw Jira status for display.
 
 ## Shared backlogs
 
@@ -247,7 +250,8 @@ every URL works as a plain link.
 /cis                  CI list; search + type/managed filters re-render the rows via htmx
 /cis/<ci>             releases grouped by family (click one to load its panel), "Needs attention" (remap, detach,
                       cancel), sync / preview sync, last sync summary, add a release by hand, where fielded, CSCs
-/cis/<ci>/work        work items for a from..to range ("what's new in <release>" presets); parent tickets
+/cis/<ci>/work        work items for a from..to range (fuzzy pickers: a version, or an HSCM = the version it lists;
+                      default: what's new in the latest shipped release); parent tickets
                       expand to each CSC's tickets
 /releases/<id>        versions, released vs effective version, baselines behind, unabsorbed fixes, work link;
                       edit (pins synced fields), unpin, add a build, cancel, correct the release date
@@ -301,7 +305,8 @@ Forms post plain HTML (boosted by htmx, `hx-push-url="false"`) and redirect back
 swaps 4xx/5xx responses too, so a failed post shows the error page instead of silently doing nothing.
 
 Pages extend `ui/layout.html`, import the macros and add no page-specific CSS. The only page scripts are
-`static/backlog.js` (backlog drag and drop) and `static/timeline.js` (centres a timeline on today, and re-fetches
+`static/backlog.js` (backlog drag and drop), `static/picker.js` (fuzzy search on a `select[data-picker]`) and
+`static/timeline.js` (centres a timeline on today, and re-fetches
 one that is narrower than its box at the box's width).
 
 ## Not yet built (next iterations)

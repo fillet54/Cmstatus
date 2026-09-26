@@ -1,8 +1,9 @@
 """Years of history for trying the views at scale: IFCs and their HSCMs, and hand-managed CSCIs.
 
-    python -m cmtrack.history load --db cmtrack.db [--reset]       # generate and load
+    python -m cmtrack.history load --db cmtrack.db [--reset]       # generate and load; tickets go to tickets.json
     python -m cmtrack.history load --url http://127.0.0.1:5000
     python -m cmtrack.history generate -o history.json [--seed 7]   # write it out instead (load history.json ...)
+    CMTRACK_TICKET_SOURCES=jira=cmtrack.history:ticket_file python -m cmtrack   # serve the tickets
 
 IFCs are a letter and a dotted version (IFC A 1.0, IFC A 1.0.2.1). A first child spawns from its parent
 (1.0.2 -> 1.0.2.1) and each later sibling from the sibling before it (1.0.2.1 -> 1.0.2.2), from the source's
@@ -13,6 +14,12 @@ The managed CSCIs (ENGINE-SW, PORTAL-SW, LEDGER-SW) have no release source: quar
 2-4 builds each (sometimes one rejected), the last tested and released at quarter end; emergency and patch
 releases after some quarters, usually merged into the next quarter's first build (a two-parent version in the
 lineage), sometimes a quarter later (unabsorbed until then); the current quarter part-built, the next ones planned.
+
+Each managed CSCI has 1-5 CSCs, each with its own Jira project. Tickets: top-level FEAT (feature) and DR
+(discrepancy) tickets, each split into CSC tickets in those projects and fixed in a build; a CSC ticket's state
+follows its build, and a parent's is rolled up from its CSC tickets (tickets.rollup). cmtrack stores no tickets,
+so ``load`` writes them to a file (``--tickets``, default tickets.json) that ``ticket_file`` serves as the ticket
+source (``CMTRACK_TICKETS_FILE`` points it elsewhere).
 
 ``generate`` writes plain data (CIs, IFCs, dated HSCM events with their full CI -> version lists, and the CSCI
 steps); ``load`` replays it through the HTTP API in date order, dating each HSCM by its document (``date``) and
@@ -28,6 +35,8 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from .tickets import StaticSource
 
 CIS = {
     "A": [("CORE-SW", "CSCI"), ("DATA-SW", "CSCI"), ("UI-SW", "CSCI"), ("NET-SW", "CSCI"), ("SVC-SW", "CSCI"),
@@ -80,6 +89,10 @@ STARTS = {"A": dt.date(2019, 3, 4), "B": dt.date(2021, 1, 11)}
 MANAGED = [("ENGINE-SW", "Processing engine", dt.date(2022, 1, 1), "ENG"),
            ("PORTAL-SW", "User portal", dt.date(2023, 4, 1), "PRT"),
            ("LEDGER-SW", "Records service", dt.date(2024, 1, 1), "LDG")]
+MANAGED_IN = {"A": ["ENGINE-SW", "PORTAL-SW"], "B": ["LEDGER-SW", "PORTAL-SW"]}   # which IFC lines field them
+
+
+COMPONENTS = ["core", "io", "sched", "store", "api", "ui", "sync", "auth"]
 
 
 def csci_steps(rng, today):
@@ -89,8 +102,8 @@ def csci_steps(rng, today):
     for ci, description, start, project in MANAGED:
         at = lambda d: min(d, today).isoformat()
         steps.append({"at": at(start), "do": "ci", "ci": ci, "description": description,
-                      "cscs": [[f"{ci.lower()[:-3]}-core", project, "core", "Core"],
-                               [f"{ci.lower()[:-3]}-ui", project, "ui", "UI"]]})
+                      "cscs": [[f"{ci.lower().removesuffix('-sw')}-{c}", f"{project}{c[:3].upper()}", ci, c.capitalize()]
+                               for c in rng.sample(COMPONENTS, rng.randint(1, 5))]})
         fixes, head = [], None                                             # released fixes not yet merged
         for qi in range(start.year * 4 + (start.month - 1) // 3, last_q + 1):
             year, q = divmod(qi, 4)
@@ -136,9 +149,95 @@ def csci_steps(rng, today):
     return sorted(steps, key=lambda s: s["at"])
 
 
+VERBS = ["Add", "Support", "Improve", "Rework", "Speed up", "Simplify"]
+THINGS = ["data export", "audit trail", "session handling", "report filters", "bulk import", "retry logic",
+          "config validation", "status dashboard", "search indexing", "access roles", "scheduling rules", "alerting"]
+FAULTS = ["Crash in {}", "Wrong totals in {}", "Timeout during {}", "Memory growth in {}", "Stale data after {}"]
+
+
+def csci_tickets(rng, steps, today):
+    """Jira-style tickets for the managed CSCIs: top-level FEAT (feature) and DR (discrepancy) tickets, each
+    split into CSC tickets in the CSCs' own projects, fixed in a build of the CSC's CSCI. A CSC ticket's state
+    follows its build (released: done; built: in progress .. verification; planned: analysis .. ready, now
+    and then blocked or cancelled). Parents carry no state: the ticket source rolls it up from their CSC tickets."""
+    cscs, builds, status, fix_of, release_of, shipped = {}, {}, {}, {}, {}, set()
+    for st in steps:
+        ci = st["ci"]
+        if st["do"] == "ci":
+            cscs[ci] = [{"name": n, "project": p, "product": prod} for n, p, prod, _ in st["cscs"]]
+        elif st["do"] == "release":
+            names = st.get("builds") or [st["name"]]
+            builds[(ci, st["name"])] = names
+            status.update({(ci, b): ("planned", st.get("target_date") or st["at"]) for b in names})
+            release_of.update({(ci, b): (ci, st["name"]) for b in names})
+            if st["kind"] != "planned":
+                fix_of[(ci, st["name"])] = st["kind"]
+        elif st["do"] == "status":
+            status[(ci, st["version"])] = (st["status"], status[(ci, st["version"])][1])
+        elif st["do"] == "release_version":
+            status[(ci, st["version"])] = ("released", status[(ci, st["version"])][1])
+            shipped.add(release_of[(ci, st["version"])])
+
+    counters = {}
+    def key(project):
+        counters[project] = counters.get(project, 0) + 1
+        return f"{project}-{counters[project]}"
+
+    def state(version):
+        done, when = status[version]
+        if release_of[version] in shipped:                     # its release shipped: the work is done
+            return rng.choices(["done", "cancelled"], [30, 1])[0]
+        if done in ("built", "tested"):
+            return rng.choice(["in_progress", "peer_review", "verification", "done"])
+        soon = (dt.date.fromisoformat(str(when)[:10]) - today).days < 120
+        return rng.choice(["ready_for_work", "in_progress", "in_analysis", "blocked"] if soon
+                          else ["analysis_required", "analysis_required", "in_analysis"])
+
+    tickets = []
+    def top(kind, summary, parts):
+        """One FEAT/DR ticket and its CSC tickets: parts = [(ci, csc, fix version)]."""
+        parent = key(kind)
+        tickets.append({"key": parent, "summary": summary, "type": "Feature" if kind == "FEAT" else "Discrepancy",
+                        "cis": sorted({ci for ci, _, _ in parts}), "url": f"https://jira.example.com/browse/{parent}"})
+        kids = []
+        for ci, csc, version in parts:
+            k, st = key(csc["project"]), state((ci, version))
+            kids.append(k)
+            reason = f"Waiting on {rng.choice([x for x in kids if x != k] or [parent])}" if st == "blocked" else None
+            tickets.append({"key": k, "summary": f"{summary} ({csc['name']})", "type": "Story" if kind == "FEAT" else "Bug",
+                            "state": st, "state_reason": reason, "status": st.replace("_", " ").title(),
+                            "parent_key": parent, "project": csc["project"], "affected_product": csc["product"],
+                            "fix_versions": [version], "url": f"https://jira.example.com/browse/{k}"})
+
+    for (ci, release), names in builds.items():
+        usable = [b for b in names if status[(ci, b)][0] != "rejected"]
+        if (ci, release) in fix_of:
+            top("DR", rng.choice(FAULTS).format(rng.choice(THINGS)),
+                [(ci, csc, usable[0]) for csc in rng.sample(cscs[ci], min(len(cscs[ci]), rng.randint(1, 2)))])
+            continue
+        for _ in range(rng.randint(2, 5)):
+            kind = "FEAT" if rng.random() < 0.7 else "DR"
+            summary = (f"{rng.choice(VERBS)} {rng.choice(THINGS)}" if kind == "FEAT"
+                       else rng.choice(FAULTS).format(rng.choice(THINGS)))
+            parts = [(ci, csc, rng.choice(usable)) for csc in rng.sample(cscs[ci], min(len(cscs[ci]), rng.randint(1, 3)))]
+            other = [c for c in cscs if c != ci and (c, release) in builds]
+            if other and rng.random() < 0.2:                      # sometimes another CSCI's CSC is in it too
+                o = rng.choice(other)
+                o_builds = [b for b in builds[(o, release)] if status[(o, b)][0] != "rejected"]
+                parts.append((o, rng.choice(cscs[o]), rng.choice(o_builds)))
+            top(kind, summary, parts)
+    return tickets
+
+
 def generate(seed=7, today=None):
     rng = random.Random(seed)
     today = today or dt.date.today()
+    csci_rng = random.Random(seed + 1)                 # its own stream, so the IFC history doesn't shift with it
+    steps = csci_steps(csci_rng, today)
+    shipped = {}                                       # managed CSCI -> [(date, version)] as released
+    for st in steps:
+        if st["do"] == "release_version":
+            shipped.setdefault(st["ci"], []).append((st["at"], st["version"]))
     counters, cis, ifcs, events = {}, {}, [], []
     dates, configs = {}, {}          # (ifc, hscm) -> date / {ci: version}
 
@@ -187,9 +286,10 @@ def generate(seed=7, today=None):
             if when > today:
                 break
             dates[(name, hscm)], configs[(name, hscm)] = when, dict(config)
+            fielded = {ci: [v for at, v in shipped.get(ci, []) if at <= when.isoformat()] for ci in MANAGED_IN[letter]}
             events.append({"at": when.isoformat(), "type": "hscm", "ifc": name, "name": hscm, "approve": not draft,
                            "source_ref": f"HSCM-{name.split()[1]}{name.split()[2]}-{hscm.replace(' ', '')}",
-                           "entries": dict(sorted(config.items()))})
+                           "entries": dict(sorted({**config, **{ci: vs[-1] for ci, vs in fielded.items() if vs}}.items()))})
 
     events.sort(key=lambda e: (e["at"], e["type"] != "ifc"))
     open_ifcs = {name for name, *_, got in TREE if got is not None}
@@ -199,9 +299,10 @@ def generate(seed=7, today=None):
             last[e["ifc"]] = e["at"]
     final = [i["name"] for i in ifcs if i["name"] not in open_ifcs and i["name"] in last
              and dt.date.fromisoformat(last[i["name"]]) < today - dt.timedelta(days=120)]
+    cis.update({ci: "CSCI" for ci, *_ in MANAGED})
     return {"description": __doc__.splitlines()[0], "seed": seed, "generated": today.isoformat(),
             "cis": [{"name": k, "type": v} for k, v in sorted(cis.items())],
-            "ifcs": ifcs, "events": events, "final": final, "cscis": csci_steps(rng, today)}
+            "ifcs": ifcs, "events": events, "final": final, "cscis": steps, "tickets": csci_tickets(csci_rng, steps, today)}
 
 
 # ----------------------------------------------------------------------------- loading
@@ -234,23 +335,7 @@ class InProcess:
 
 
 def load(data, call, out=print):
-    types = {c["name"]: c["type"] for c in data["cis"]}
-    descriptions = {i["name"]: i for i in data["ifcs"]}
-    ids = {}                                         # (ifc, hscm) -> baseline id
-    for e in data["events"]:
-        if e["type"] == "ifc":
-            spec = descriptions[e["ifc"]]
-            src = spec["spawned_from"]
-            call("post", "/ifcs", {"name": e["ifc"], "description": spec["description"],
-                                   "spawned_from": ids[(src["ifc"], src["hscm"])] if src else None})
-        else:
-            rows = [{"ci": ci, "version": v, "type": types.get(ci, "CSCI")} for ci, v in e["entries"].items()]
-            out_ = call("post", f"/ifcs/{e['ifc']}/hscm", {"name": e["name"], "rows": rows, "approve": e["approve"],
-                                                           "source_ref": e["source_ref"],
-                                                           "date": e["at"]})
-            ids[(e["ifc"], e["name"])] = out_["baseline"]["id"]
-    for name in data["final"]:
-        call("post", f"/ifcs/{name}/final")
+    """Replay a generated history: the managed CSCIs first (the HSCMs list their versions), then the IFCs."""
     versions = {}                                    # (ci, version name) -> id
     for st in data.get("cscis", []):
         ci, when = st["ci"], st["at"] + "T12:00:00+00:00"
@@ -270,6 +355,23 @@ def load(data, call, out=print):
             call("post", f"/versions/{versions[(ci, st['version'])]}/release", {"released_at": when})
         elif st["do"] == "merge":
             call("put", f"/versions/{versions[(ci, st['version'])]}/parents", {"parents": st["parents"]})
+    types = {c["name"]: c["type"] for c in data["cis"]}
+    descriptions = {i["name"]: i for i in data["ifcs"]}
+    ids = {}                                         # (ifc, hscm) -> baseline id
+    for e in data["events"]:
+        if e["type"] == "ifc":
+            spec = descriptions[e["ifc"]]
+            src = spec["spawned_from"]
+            call("post", "/ifcs", {"name": e["ifc"], "description": spec["description"],
+                                   "spawned_from": ids[(src["ifc"], src["hscm"])] if src else None})
+        else:
+            rows = [{"ci": ci, "version": v, "type": types.get(ci, "CSCI")} for ci, v in e["entries"].items()]
+            out_ = call("post", f"/ifcs/{e['ifc']}/hscm", {"name": e["name"], "rows": rows, "approve": e["approve"],
+                                                           "source_ref": e["source_ref"],
+                                                           "date": e["at"]})
+            ids[(e["ifc"], e["name"])] = out_["baseline"]["id"]
+    for name in data["final"]:
+        call("post", f"/ifcs/{name}/final")
     hscms = sum(e["type"] == "hscm" for e in data["events"])
     cscis = sum(st["do"] == "ci" for st in data.get("cscis", []))
     out(f"loaded {len(data['ifcs'])} IFCs, {hscms} HSCMs, {len(data['final'])} final; {cscis} managed CSCIs")
@@ -288,6 +390,7 @@ def main(argv=None):
     where.add_argument("--url", help="a running instance, e.g. http://127.0.0.1:5000")
     where.add_argument("--db", help="a database file, loaded in-process")
     lo.add_argument("--reset", action="store_true", help="first delete the database file (needs --db)")
+    lo.add_argument("--tickets", default="tickets.json", help="where to write the tickets (default tickets.json)")
     a = ap.parse_args(argv)
 
     if a.cmd == "generate":
@@ -308,6 +411,16 @@ def main(argv=None):
     if a.reset and os.path.exists(a.db):
         os.remove(a.db)
     load(data, InProcess(a.db) if a.db else Http(a.url))
+    with open(a.tickets, "w") as f:
+        json.dump(data.get("tickets", []), f, indent=1)
+    print(f"wrote {len(data.get('tickets', []))} tickets to {a.tickets}; serve them with "
+          f"CMTRACK_TICKET_SOURCES=jira=cmtrack.history:ticket_file")
+
+
+def ticket_file():
+    """A ticket source serving the tickets ``load`` wrote (CMTRACK_TICKETS_FILE, default tickets.json)."""
+    with open(os.environ.get("CMTRACK_TICKETS_FILE", "tickets.json")) as f:
+        return StaticSource(json.load(f), name="jira")
 
 
 if __name__ == "__main__":

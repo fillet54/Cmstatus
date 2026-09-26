@@ -44,21 +44,40 @@ from typing import Iterable, List, Optional
 # ticket and every issue linked to it, not a 1:1 map of one Jira status. cmtrack only stores and reports it.
 STATES = {
     "analysis_required":    "Analysis required",
-    "analysis_in_progress": "Analysis in progress",
+    "in_analysis":          "In analysis",
     "ready_for_work":       "Ready for work",
     "in_progress":          "In progress",
     "peer_review":          "Peer review",
-    "merge_blocked":        "Merge blocked",     # code is ready, but something is holding up the merge
     "verification":         "Verification",
     "done":                 "Done",
+    "blocked":              "Blocked",           # waiting on something; state_reason says what
+    "cancelled":            "Cancelled",
     "error":                "Error",             # something is off in the source data; state_reason says what
 }
+ALIASES = {"analysis_in_progress": "in_analysis", "merge_blocked": "blocked", "canceled": "cancelled"}
+WORKFLOW = ["analysis_required", "in_analysis", "ready_for_work", "in_progress", "peer_review", "verification", "done"]
+
+
+def rollup(states):
+    """A parent ticket's state from its CSC tickets' states: cancelled ones don't count (all cancelled: cancelled);
+    any error or blocked wins; otherwise the least advanced, except that once any CSC has started work
+    (in progress or later) a parent still partly in analysis is in progress."""
+    live = [s for s in states if s != "cancelled"]
+    if not live:
+        return "cancelled" if states else None
+    for s in ("error", "blocked"):
+        if s in live:
+            return s
+    least = min(live, key=WORKFLOW.index)
+    started = any(WORKFLOW.index(s) >= WORKFLOW.index("in_progress") for s in live)
+    return "in_progress" if started and WORKFLOW.index(least) < WORKFLOW.index("in_progress") else least
 ERROR = "error"
 
 
 def normalize_state(state, reason=None):
     """(state, reason) with anything missing or unrecognized turned into 'error' plus an explanation."""
     key = str(state or "").strip().lower().replace(" ", "_").replace("-", "_")
+    key = ALIASES.get(key, key)
     if key in STATES:
         return key, reason
     why = f"source sent unknown state {state!r}" if state else "source did not supply a state"
@@ -74,7 +93,7 @@ class TicketRecord:
     usually have neither.
 
     ``state`` is one of ``STATES`` and is the source's call; ``state_reason`` explains it where useful
-    (why it's ``error``, what a ``merge_blocked`` ticket waits on). ``status`` is the raw source status,
+    (why it's ``error``, what a ``blocked`` ticket waits on). ``status`` is the raw source status,
     kept for display.
     """
     key: str
@@ -152,8 +171,18 @@ class StaticSource(TicketSource):
     """In-memory source (tests, demos, a JSON export): answers from a fixed list of records."""
 
     def __init__(self, records: Iterable, name: str = "static"):
+        """``records``: TicketRecords or dicts. A parent given as a dict without a ``state`` gets its children's
+        (``rollup``)."""
         self.name = name
-        self.records = [r if isinstance(r, TicketRecord) else TicketRecord.from_dict(r) for r in records]
+        records = list(records)
+        kids = {}
+        for r in records:
+            parent = r.parent_key if isinstance(r, TicketRecord) else r.get("parent_key")
+            if parent:
+                kids.setdefault(parent, []).append(normalize_state(r.state if isinstance(r, TicketRecord) else r.get("state"))[0])
+        self.records = [r if isinstance(r, TicketRecord) else
+                        TicketRecord.from_dict({**r, "state": rollup(kids[r["key"]])} if not r.get("state") and r.get("key") in kids
+                                               else r) for r in records]
 
     def tickets_for_versions(self, ci, cscs, versions):
         pairs = {(c["jira_project"], c["affected_product"]) for c in cscs}

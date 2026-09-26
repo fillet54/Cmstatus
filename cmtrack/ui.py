@@ -119,7 +119,7 @@ def init_app(app):
 def styleguide_samples():
     """Fixed sample data for the /ui style guide (mirrors the demo scenario)."""
     progress = {s: 0 for s in tickets.STATES}
-    progress.update(analysis_required=1, in_progress=1, peer_review=1, merge_blocked=1, done=2, error=1, total=7)
+    progress.update(analysis_required=1, in_progress=1, peer_review=1, blocked=1, done=2, error=1, total=7)
     jira = "https://jira.example.com/browse/"
     ticket = lambda key, summary, state, versions, reason=None, status=None, type=None: {
         "key": key, "summary": summary, "state": state, "state_reason": reason, "status": status, "type": type,
@@ -137,17 +137,17 @@ def styleguide_samples():
         "tickets": [
             ticket("NAVL-105", "Blend terrain-referenced fixes into the filter", "peer_review", ["2027.Q1-b1"],
                    status="In Review"),
-            ticket("NAVL-106", "Terrain fix quality gating", "merge_blocked", ["2027.Q1-b2"],
+            ticket("NAVL-106", "Terrain fix quality gating", "blocked", ["2027.Q1-b2"],
                    "Waiting on NAVX-205 (shared interface change) to merge first", "Ready to Merge"),
             ticket("NAVX-221", "Declutter preset storage", "error", ["2027.Q1-b3"],
                    "Closed as Done but its sub-task NAVX-222 is still open", "Closed"),
         ],
         "backlog": [
             {"key": "PRG-22", "summary": "Route re-planning around restricted airspace", "type": "Feature",
-             "state": "analysis_in_progress", "rank": "h", "cis": ["NAV-SW"], "url": jira + "PRG-22"},
+             "state": "in_analysis", "rank": "h", "cis": ["NAV-SW"], "url": jira + "PRG-22"},
             {"key": "PRG-10", "summary": "GPS-denied navigation", "type": "Feature", "state": "in_progress",
              "rank": "i", "cis": ["NAV-SW", "DISPLAY-SW"], "url": jira + "PRG-10"},
-            {"key": "PRG-18", "summary": "Moving map declutter", "type": "Feature", "state": "analysis_in_progress",
+            {"key": "PRG-18", "summary": "Moving map declutter", "type": "Feature", "state": "in_analysis",
              "rank": "k", "cis": ["NAV-SW", "DISPLAY-SW"], "url": jira + "PRG-18"},
             {"key": "PRG-15", "summary": "CR-1234: heading drift after cold start", "type": "Change Request",
              "state": "done", "rank": "p", "cis": ["NAV-SW"], "url": jira + "PRG-15"},

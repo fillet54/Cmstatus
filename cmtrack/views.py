@@ -257,27 +257,27 @@ def version(vid):
 
 @bp.get("/cis/<ref>/work")
 def work(ref):
-    """Parent tickets -> CSC -> CSC tickets for a version range (from..to over the lineage DAG)."""
+    """Parent tickets -> CSC -> CSC tickets for a version range (from..to over the lineage DAG). Either end can be
+    a version or an HSCM (``hscm:<baseline id>``: the version of this CI that HSCM lists)."""
     conn = get_db()
     ci = svc.get_ci(conn, ref)
     versions = svc.ci_versions(conn, ci["id"])
-    presets = []
-    for root, kids in release_families(svc.list_releases(conn, ci["id"])):
-        for rel in [root] + kids:
-            if rel["kind"] == "external" or rel["status"] == "cancelled":
-                continue
-            rng = svc.release_range(conn, rel["id"])
-            if rng:
-                presets.append({"release": rel["name"], "kind": rel["kind"], "status": rel["status"], **rng})
+    hscms = conn.execute("SELECT b.id, b.name, i.name AS ifc, v.name AS version FROM baseline_entry e "
+                         "JOIN baseline b ON b.id = e.baseline_id JOIN ifc i ON i.id = b.ifc_id "
+                         "JOIN version v ON v.id = e.version_id WHERE e.ci_id = ? ORDER BY b.id DESC", (ci["id"],)).fetchall()
+    in_hscm = {f"hscm:{h['id']}": h["version"] for h in hscms}
+    choices = [{"group": "Versions", "options": [v["name"] for v in reversed(versions)]},
+               {"group": "HSCMs (the version they list)",
+                "options": [(f"hscm:{h['id']}", f"{h['ifc']} {h['name']} → {h['version']}") for h in hscms]}]
     frm, to = request.args.get("from") or None, request.args.get("to") or None
-    if to is None and "to" not in request.args:
-        # default: what's new in the latest release that has shipped, else the next one planned
-        shipped = [p for p in presets if p["status"] == "released" and p["kind"] == "planned"]
-        pick = shipped[-1] if shipped else (presets or [None])[0]
-        frm, to = (pick["from"], pick["to"]) if pick else (None, None)
-    report, source_error = live(svc.work_report, conn, ticket_source(), ci["id"], to, frm) if to else (None, None)
-    return page("work.html", "_work.html", ci=ci, versions=versions, presets=presets, frm=frm, to=to,
-                report=report, source_error=source_error)
+    if to is None and "to" not in request.args:            # default: what's new in the latest shipped release
+        shipped = [r for r in svc.list_releases(conn, ci["id"]) if r["kind"] == "planned" and r["status"] == "released"]
+        rng = svc.release_range(conn, shipped[-1]["id"]) if shipped else None
+        frm, to = (rng["from"], rng["to"]) if rng else (None, None)
+    head, base = in_hscm.get(to, to), in_hscm.get(frm, frm)
+    report, source_error = live(svc.work_report, conn, ticket_source(), ci["id"], head, base) if head else (None, None)
+    return page("work.html", "_work.html", ci=ci, choices=choices, frm=frm, to=to, report=report,
+                source_error=source_error)
 
 
 @bp.get("/tickets/<key>")
