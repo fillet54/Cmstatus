@@ -1714,15 +1714,16 @@ def work_report(conn, source, ci_ref, to=None, frm=None, versions=None):
     cscs = to_dicts(conn.execute("SELECT * FROM csc WHERE ci_id = ? ORDER BY name", (ci["id"],)))
     names = {v["name"]: v["id"] for v in vs}
     res = _Resolver(conn, getattr(source, "name", None))
-    rows = []
+    rows, seen = [], set()
     for rec in _ask(source, "tickets_for_versions", to_dict(ci), cscs, list(names)):
         t = res.ticket(rec, names)
         if t["ci"] not in (None, ci["name"]):
             res.warnings.append(f"{rec.key}: belongs to {t['ci']}, not {ci['name']}; skipped")
         elif not t["versions"]:
             res.warnings.append(f"{rec.key}: none of its fix versions {rec.fix_versions} are in the requested set")
-        else:
+        elif t["key"] not in seen:
             rows.append(t)
+            seen.add(t["key"])
     parents = res.parents(source, [r["parent_key"] for r in rows if r["parent_key"]])
     by_parent = {}
     for r in rows:

@@ -312,8 +312,13 @@ def work(ref):
     head, base = ends["to"], ends["from"]
     report, source_error = (live(svc.work_report, conn, ticket_source(), ci["id"], head["version"]["name"],
                                  base["version"]["name"] if base else None) if head else (None, None))
+    version_count = None
+    if head:
+        version_count = len(report["versions"]) if report else len(svc.version_range(
+            conn, ci["id"], head["version"]["name"], base["version"]["name"] if base else None))
     return page("work.html", "_work.html", ci=ci, choices=choices, frm=frm, to=to, ends=ends, problems=problems,
-                report=report, source_error=source_error, lineage=range_timeline(conn, ci, ends))
+                report=report, source_error=source_error, version_count=version_count,
+                lineage=range_timeline(conn, ci, ends))
 
 
 @bp.get("/tickets/<key>")

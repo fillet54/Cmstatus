@@ -1,5 +1,6 @@
 """Version lineage (DAG), ticket ingestion and work-item reports.  Run: python -m unittest discover -s tests"""
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -110,6 +111,40 @@ class WorkTests(unittest.TestCase):
                          ["NAVL-101", "NAVL-120"])
         self.call("get", "/cis/NAV-SW/work", status=400)
 
+    def test_work_page_ticket_and_version_status(self):
+        path = "/cis/NAV-SW/work?from=2026.Q4-b2&to=2027.Q1-b2"
+
+        def stats(url=path, headers=None):
+            page = self.c.get(url, headers=headers or {}).get_data(as_text=True)
+            values = dict(re.findall(
+                r'<div class="ui-stat__label">([^<]+)</div>\s*<div class="ui-stat__value[^\"]*">([^<]+)', page))
+            return page, values
+
+        page, values = stats()
+        self.assertLess(page.index('aria-label="NAV-SW work status for the selected range"'),
+                        page.index('>Versions in range<'))
+        self.assertEqual([values[label] for label in ("Completed tickets", "In progress", "Not started")],
+                         ["2", "5", "1"])
+        self.assertIn("1 blocked included", page)
+        report = self.call("get", "/cis/NAV-SW/work?from=2026.Q4-b2&to=2027.Q1-b2")
+        self.assertEqual(values["Versions accounted for"], str(len(report["versions"])))
+        self.assertNotIn("Completed tickets", self.c.get("/cis/NAV-SW").get_data(as_text=True))
+
+        # Changing the range refreshes the status block in the htmx fragment.
+        fragment, selected = stats("/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2",
+                                   {"HX-Request": "true"})
+        self.assertNotIn("<html", fragment)
+        self.assertEqual(selected["Versions accounted for"], "3")
+
+        # A ticket tied to multiple versions, or returned twice by the source, counts once.
+        ticket = next(r for r in self.source.records if r.key == "NAVL-105")
+        ticket.fix_versions.append("2027.Q1-b2")
+        original = self.source.tickets_for_versions
+        self.source.tickets_for_versions = lambda *args: original(*args) + [original(*args)[0]]
+        self.assertEqual(stats()[1]["Completed tickets"], "2")
+        ticket.state = "done"
+        self.assertEqual([stats()[1][label] for label in ("Completed tickets", "In progress")], ["3", "4"])
+
     def test_ticket_detail_spans_cis(self):
         t = self.call("get", "/tickets/PRG-10")
         self.assertEqual([(g["ci"], g["csc"]) for g in t["children"]],
@@ -174,6 +209,9 @@ class WorkTests(unittest.TestCase):
         page = self.c.get("/cis/NAV-SW/work?to=2027.Q1-b1")
         self.assertEqual(page.status_code, 200)                              # the page still renders
         self.assertIn("Couldn't get tickets", page.get_data(as_text=True))
+        work_page = page.get_data(as_text=True)
+        self.assertIn("Versions accounted for", work_page)
+        self.assertIn('class="ui-stat__value">—</div>', work_page)
         version = self.c.get(f"/versions/{self.vid('2027.Q1-b1')}")
         self.assertEqual(version.status_code, 200)
         self.assertIn("jira is down", version.get_data(as_text=True))
@@ -186,6 +224,7 @@ class WorkTests(unittest.TestCase):
         self.assertEqual((r.status_code, r.get_json()["error"]),
                          (400, "no ticket source configured (set CMTRACK_TICKET_SOURCES)"))
         self.assertIn("no ticket source configured", c.get("/cis/NAV-SW/work?to=2027.Q1-b1").get_data(as_text=True))
+        self.assertIn("Versions accounted for", c.get("/cis/NAV-SW/work?to=2027.Q1-b1").get_data(as_text=True))
 
     # ------------------------------------------------------------------ views
 
