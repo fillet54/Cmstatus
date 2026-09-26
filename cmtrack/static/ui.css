@@ -259,10 +259,6 @@ body.ui {
 .ui-btn--sm { height: var(--ui-control-h-sm); padding: 0 10px; font-size: 12px; }
 .ui-btn--icon { width: var(--ui-control-h); padding: 0; }
 .ui-btn--icon.ui-btn--sm { width: var(--ui-control-h-sm); }
-.ui-btn-group { display: inline-flex; }
-.ui-btn-group > .ui-btn { border-radius: 0; margin-left: -1px; }
-.ui-btn-group > .ui-btn:first-child { border-radius: var(--ui-radius) 0 0 var(--ui-radius); margin-left: 0; }
-.ui-btn-group > .ui-btn:last-child { border-radius: 0 var(--ui-radius) var(--ui-radius) 0; }
 
 /* ------------------------------------------------------------------ forms */
 
@@ -302,8 +298,7 @@ body.ui {
 .ui-table th { text-align: left; font-size: 12px; font-weight: 500; color: var(--ui-muted); padding: 8px 16px; white-space: nowrap; }
 .ui-table td { padding: 8px 16px; border-top: 1px solid var(--ui-subtle); vertical-align: middle; }
 .ui-table--dense th, .ui-table--dense td { padding: 5px 12px; white-space: nowrap; }
-.ui-table td.ui-wrap { white-space: normal; }
-.ui-table .ui-num, .ui-table .ui-end { text-align: right; }
+.ui-table .ui-end { text-align: right; }
 .ui-table tr.ui-row--child td { background: var(--ui-sunken); }
 .ui-table tr.ui-row--child td:first-child { padding-left: 32px; }
 .ui-table tr.ui-row--selected td { background: var(--ui-accent-soft); }
@@ -324,7 +319,6 @@ body.ui {
 .ui-audit li { display: contents; }
 .ui-audit .ui-time { color: var(--ui-muted); }
 .ui-audit__who { font-weight: 600; }
-.ui-stamp { font-family: var(--ui-font-mono); font-size: 11px; color: var(--ui-muted); }
 
 /* ticket line: key · summary (+reason) · state · versions */
 .ui-tickets { margin: 0; padding: 0; list-style: none; }
@@ -362,10 +356,6 @@ body.ui {
 .ui-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px 14px; align-items: end; }
 
 /* tree (IFC hierarchy) */
-.ui-tree, .ui-tree ul { list-style: none; margin: 0; padding: 0; }
-.ui-tree ul { margin-left: 18px; padding-left: 14px; border-left: 1px solid var(--ui-line); }
-.ui-tree__node { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 10px; border-radius: var(--ui-radius); }
-.ui-tree__node:hover { background: var(--ui-sunken); }
 
 /* ranked list (backlogs) */
 .ui-rank-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
@@ -382,8 +372,6 @@ body.ui {
 .ui-rank-item__summary { font-size: 15px; font-weight: 600; }
 .ui-rank-item__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; font-size: 12px; color: var(--ui-muted); }
 .ui-rank-item__actions { display: inline-flex; gap: 2px; }
-.ui-drop-line { height: 0; border-top: 2px solid var(--ui-accent); position: relative; list-style: none; }
-.ui-drop-line::before { content: ""; position: absolute; left: -5px; top: -6px; width: 10px; height: 10px; border-radius: 50%; background: var(--ui-accent); }
 .hide-done .ui-rank-item[data-state="done"] { display: none; }
 
 /* a placeholder surface (e.g. "select a release") and a column that stays in view */
@@ -404,7 +392,7 @@ body.ui {
 /* ------------------------------------------------------------------ print: keep markings, drop chrome */
 
 @media print {
-  .ui-header, .ui-toasts, .ui-no-print { display: none !important; }
+  .ui-header, .ui-toasts { display: none !important; }
   .ui-marking--top, .ui-marking--bottom { position: static; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body.ui { background: #FFFFFF; font-size: 11pt; }
   .ui-card { break-inside: avoid; }

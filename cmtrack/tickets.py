@@ -53,7 +53,7 @@ STATES = {
     "done":                 "Done",
     "error":                "Error",             # something is off in the source data; state_reason says what
 }
-DONE, ERROR = "done", "error"
+ERROR = "error"
 
 
 def normalize_state(state, reason=None):

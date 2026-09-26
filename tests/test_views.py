@@ -8,7 +8,6 @@ from cmtrack import create_app
 from cmtrack.demo import NAV_VERSIONS, seed
 from cmtrack.releases import StaticVersionSource
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 HX = {"HX-Request": "true"}
 
 

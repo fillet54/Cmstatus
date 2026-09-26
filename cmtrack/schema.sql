@@ -180,5 +180,6 @@ CREATE INDEX IF NOT EXISTS ix_entry_version    ON baseline_entry(version_id);
 CREATE INDEX IF NOT EXISTS ix_manifest_child   ON manifest_entry(child_version_id);
 CREATE INDEX IF NOT EXISTS ix_event_entity     ON event(entity, entity_id);
 CREATE INDEX IF NOT EXISTS ix_vparent_parent   ON version_parent(parent_id);
-
--- Indexes on columns that were added later live in db.py (INDEXES), after the migrations add the columns.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_release_source_key ON release(ci_id, source_key) WHERE source_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_version_source_key ON version(ci_id, source_key) WHERE source_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_baseline_seq       ON baseline(ifc_id, seq);

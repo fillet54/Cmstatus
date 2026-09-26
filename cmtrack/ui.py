@@ -159,9 +159,4 @@ def styleguide_samples():
             {"key": "PRG-15", "summary": "CR-1234: heading drift after cold start", "type": "Change Request",
              "state": "done", "rank": "p", "cis": ["NAV-SW"], "url": jira + "PRG-15"},
         ],
-        "audit": [
-            {"at": "2026-09-23 14:24:00", "who": "j.doe", "what": "built 2027.Q1-b2"},
-            {"at": "2026-09-23 14:02:00", "who": "j.doe", "what": "moved PRG-10 5 → 3 in Nav & Display"},
-            {"at": "2026-09-21T16:40:00+00:00", "who": "a.smith", "what": "approved HSCM-B for IFC-2.1"},
-        ],
     }

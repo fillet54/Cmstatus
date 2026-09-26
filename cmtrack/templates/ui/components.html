@@ -301,10 +301,6 @@
 {%- endif -%}
 {%- endmacro %}
 
-{% macro button_group(label=None) -%}
-<div class="ui-btn-group" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{{ caller() }}</div>
-{%- endmacro %}
-
 {#- ============================================================== forms #}
 
 {#- Wraps a control with its label, hint and error. Pass the control's id as `for_id`. #}
@@ -406,15 +402,6 @@
 <div class="ui-empty"><div>{{ message }}</div>{% if caller %}<div>{{ caller() }}</div>{% endif %}</div>
 {%- endmacro %}
 
-{#- entries: [{"at", "who", "what"}], newest first. `what` may be Markup. #}
-{% macro audit_list(entries) -%}
-<ol class="ui-audit">
-  {%- for e in entries %}
-  <li>{{ timestamp(e.at) }}<span><span class="ui-audit__who">{{ e.who }}</span> {{ e.what }}</span></li>
-  {%- endfor %}
-</ol>
-{%- endmacro %}
-
 {#- A dict as "key: value" pairs (event details); lists are joined, empty values skipped. #}
 {% macro kv(d) -%}
 <span class="ui-kv">
@@ -439,12 +426,6 @@
 </ol>
 {%- else -%}{{ empty(empty_text) }}{%- endif -%}
 {%- endmacro %}
-
-{#- One-line provenance: "2027.Q1-b2 built · j.doe · 2026-09-23 14:24Z" #}
-{% macro stamp(what, who=None, at=None) -%}
-<div class="ui-stamp">{{ what }}{% if who %} · {{ who }}{% endif %}{% if at %} · {{ at | utc }}{% endif %}</div>
-{%- endmacro %}
-
 {#- ============================================================== tickets and backlogs #}
 
 {#- A ticket key linking to its page, plus a ↗ link to the source (Jira) when `url` is known. #}
@@ -564,10 +545,6 @@
   {%- endif %}
 </li>
 {%- endmacro %}
-
-{#- Drop position marker while dragging. #}
-{% macro drop_line() -%}<li class="ui-drop-line" aria-hidden="true"></li>{%- endmacro %}
-
 {#- "Built from" parents of a version: [{"name", "href"?, "merge"?: True}] #}
 {% macro lineage(parents) -%}
 <div class="ui-row" style="--ui-gap: 6px;">
@@ -596,7 +573,6 @@
   </ol>
 </div>
 {%- endmacro %}
-
 
 {#- Timeline (graph.timeline): x is time, a lane per active line. Scrolls sideways inside its container and
     opens centred on today (static/timeline.js). Nodes carry `href`, `title`, `label`, `dot`, `current`

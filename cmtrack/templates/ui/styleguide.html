@@ -279,9 +279,8 @@
 {{ ui.button("Pull from Jira", variant="primary", icon="download", attrs={"hx-post": url, "hx-target": "#items"}) }}
 {{ ui.button("Remove", variant="danger", size="sm") }}
 {{ ui.icon_button("refresh", "Refresh from Jira") }}      {# the label is required: it is the aria-label #}
-{% call ui.button_group("Move") %}{{ ui.button("Up", size="sm") }}{{ ui.button("Down", size="sm") }}{% endcall %}
 {% endraw %}{% endset %}
-  {% call example("button · icon_button · button_group", code) %}
+  {% call example("button · icon_button", code) %}
     <div class="ui-stack" style="--ui-gap: 12px;">
       <div class="sg-demo">
         {{ ui.button("Open work items", variant="primary") }} {{ ui.button("Release notes") }}
@@ -291,7 +290,6 @@
       <div class="sg-demo">
         {{ ui.button("Pull from Jira", variant="primary", icon="download") }} {{ ui.button("Export", icon="download", size="sm") }}
         {{ ui.icon_button("refresh", "Refresh from Jira") }} {{ ui.icon_button("copy", "Copy link", variant="secondary") }}
-        {% call ui.button_group("Move") %}{{ ui.button("Top", size="sm", icon="arrow-top") }}{{ ui.button("Up", size="sm", icon="arrow-up") }}{{ ui.button("Down", size="sm", icon="arrow-down") }}{% endcall %}
       </div>
     </div>
   {% endcall %}
@@ -403,16 +401,6 @@
         {{ ui.dl([("Released version", "2026.Q4-b4"), ("Effective version", "2026.Q4.ER1"), ("Reason / CR", "CR-1234"), ("Released at", "2026-09-23 14:24Z")], cols=True) }}
       </div>
     {% endcall %}
-    {% set code %}{% raw %}
-{{ ui.audit_list([{"at": e.at, "who": e.user, "what": e.summary} for e in events]) }}
-{{ ui.stamp("2027.Q1-b2 built", "j.doe", v.built_at) }}
-{% endraw %}{% endset %}
-    {% call example("audit_list · stamp", code) %}
-      <div class="ui-stack">
-        {{ ui.audit_list(audit) }}
-        {{ ui.stamp("Last change · 2027.Q1-b2 built", "j.doe", "2026-09-23 14:24:00") }}
-      </div>
-    {% endcall %}
   </div>
 </section>
 
@@ -445,10 +433,9 @@
 </ol>
 {# keeps backlog.html's drag-and-drop contract: data-key/-rank/-state, [data-pos], [data-move] #}
 {% endraw %}{% endset %}
-  {% call example("rank_item · drop_line (backlog)", code) %}
+  {% call example("rank_item (backlog)", code) %}
     <ol class="ui-rank-list">
       {{ ui.rank_item(backlog[0], 1, href="#", remove_attrs={"data-demo": "remove"}) }}
-      {{ ui.drop_line() }}
       {% call ui.rank_item(backlog[1], 2, href="#", remove_attrs={"data-demo": "remove"}) %}{{ ui.state_bar(progress, width="120px") }}<span>3 of 6 CSC tickets done</span>{% endcall %}
       {{ ui.rank_item(backlog[2], 3, href="#", lifted=True) }}
       {{ ui.rank_item(backlog[3], 4, href="#", remove_attrs={"data-demo": "remove"}) }}

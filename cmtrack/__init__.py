@@ -5,7 +5,7 @@ import sqlite3
 from flask import Flask, jsonify, render_template, request
 
 from . import db, tickets, ui
-from .service import CMError, backfill_lineage
+from .service import CMError
 
 
 def create_app(config=None):
@@ -25,8 +25,6 @@ def create_app(config=None):
 
     conn = db.connect(app.config["DATABASE"])
     db.init_db(conn)
-    with conn:
-        backfill_lineage(conn)
     conn.close()
 
     ui.init_app(app)

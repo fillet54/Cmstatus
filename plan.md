@@ -7,8 +7,8 @@ phase boundary and have a working tool.
 **Priority scope (Phases 0–7):** one CI with CSCs whose quarterly releases and builds sync from Jira (or are
 entered by hand) → a CI overview → drill into releases and versions → the tickets implemented since the
 previous release → the shared backlog.
-**Later (Phases 8–11):** patch/emergency releases and merges, dashboard and events, IFCs and HSCM baselines,
-composites and the rest.
+**Later (Phases 8–11):** patch/emergency releases and merges, dashboard and events, IFCs and their HSCM builds
+(with the IFC timeline), composites and the rest.
 
 ---
 
@@ -16,8 +16,8 @@ composites and the rest.
 
 - **Type each table in its final shape.** Tables can arrive in later phases (`CREATE TABLE IF NOT EXISTS`
   makes that safe), but when you create a table, give it every column it ends up with (e.g. `release.parent_id`,
-  `release.source_key`, `version.lineage`, `ci.last_sync`). Then `db.MIGRATIONS` stays empty and your early databases never
-  need migrating. Only add a `MIGRATIONS` entry when you change a table that already holds data you care about.
+  `release.source_key`, `version.lineage`, `ci.last_sync`). There are no migrations: `schema.sql` is the whole
+  schema, indexes included, so a database from an older shape is deleted and reloaded.
 - **Stub, don't skip, cross-phase references.** A few functions return data from features that come later
   (`release_detail` returns `baselines_behind` and `unabsorbed`). Return `[]` for them until that phase,
   and leave a `# TODO phase N` comment so you know where to come back.
@@ -44,7 +44,7 @@ api() { m=$1; p=$2; shift 2; curl -s -X "$m" "localhost:5000/api$p" -H 'Content-
 | File | Type in |
 |---|---|
 | `cmtrack/schema.sql` | `ci` (in full: `release_source`, `source_params`, `require_tested`, `last_sync`), `csc`, `event` |
-| `cmtrack/db.py` | `connect`, `init_db` (with the empty `MIGRATIONS` / `DROPPED` loops and the `INDEXES` loop), `get_db`, `close_db` |
+| `cmtrack/db.py` | `connect`, `init_db` (runs `schema.sql`), `get_db`, `close_db` |
 | `cmtrack/service.py` | module docstring, `CMError` / `NotFound` / `Conflict`, helpers: `to_dict`, `to_dicts`, `now`, `log`, `_one`, `_by_ref`, `_date`, `_when` |
 | `cmtrack/api.py` | blueprint, `body`, `pick`, `tx`, `created`, `index` (`GET /api/`) |
 | `cmtrack/__init__.py` | `create_app` with `DATABASE` config, `CMError` and `IntegrityError` handlers (JSON only for now) |
@@ -83,8 +83,8 @@ to be the release, and correct dates after the fact.
 
 | File | Type in |
 |---|---|
-| `schema.sql` | `release` and `version` **in full** (including `parent_id`, `base_version_id`, `released_version_id`, `released_at`, `reason`, `source_key` / `source_state` / `pinned`, and `version.lineage`), plus `ix_version_release`; the two `ux_*_source_key` indexes go in `db.INDEXES` |
-| `service.py` | `RELEASED`, `VERSION_TRANSITIONS`; `get_release`, `get_version`, `find_version`, `find_release`, `list_releases`, `release_detail` (**stub** `baselines_behind` and `unabsorbed` as `[]`), `_next_seq`, `_insert_version`, `add_version`, `create_release` (**planned only**: patches are Phase 8), `SYNCED_*_FIELDS`, `PIN_ALIASES`, `_label`, `_pins`, `_note`, `update_release`, `update_version`, `release_version` (**skip** the composite/manifest block, Phase 11), `root_release`, `effective_version`. `ci_detail` now includes `releases`. |
+| `schema.sql` | `release` and `version` **in full** (including `parent_id`, `base_version_id`, `released_version_id`, `released_at`, `reason`, `source_key` / `source_state` / `pinned`, and `version.lineage`), plus `ix_version_release` and the two `ux_*_source_key` indexes |
+| `service.py` | `RELEASED`, `VERSION_TRANSITIONS`; `get_release`, `get_version`, `_of_ci`, `find_version`, `find_release`, `list_releases`, `release_detail` (**stub** `baselines_behind` and `unabsorbed` as `[]`), `_next_seq`, `_insert_version`, `add_version`, `create_release` (**planned only**: patches are Phase 8), `SYNCED_*_FIELDS`, `PIN_ALIASES`, `_label`, `_pins`, `_note`, `update_release`, `update_version`, `release_version` (**skip** the composite/manifest block, Phase 11), `root_release`, `effective_version`. `ci_detail` now includes `releases`. |
 | `api.py` | `POST /cis/<ci>/releases`, `GET /cis/<ci>/releases`, `GET/PATCH /releases/<id>`, `POST /releases/<id>/versions`, `GET/PATCH /versions/<id>`, `POST /versions/<id>/release` |
 | tests | `ManualFlowTests`: the release / build / ad hoc b4 / promote part, and `test_date_corrections` |
 
@@ -156,17 +156,19 @@ of versions.
 | File | Type in |
 |---|---|
 | `schema.sql` | `version_parent` + `ix_vparent_parent` |
-| `service.py` | lineage section: `release_head`, `rebuild_lineage`, `backfill_lineage`, `_closure`, `ancestor_ids`, `descendant_ids`, `version_parents`, `lineage`, `version_range`, `_topo_order`, `ci_versions`, `release_range`. **Skip** `set_version_parents` and `unabsorbed_fixes` (Phase 8). Add the `rebuild_lineage(...)` calls in `create_release`, `add_version`, `update_release`, `release_version`, `sync_ci`, the remaps and `detach_release`. |
-| `__init__.py` | call `backfill_lineage` at startup |
+| `cmtrack/graph.py` | `layout` (+ `_x`, `_y`, `_path`, `_free`) and `newest_first`; the timeline half is Phase 10 |
+| `service.py` | lineage section: `release_head`, `rebuild_lineage`, `_closure`, `ancestor_ids`, `descendant_ids`, `version_parents`, `lineage`, `version_range`, `_topo_order` (on `graph.newest_first`), `ci_versions`, `release_range`. **Skip** `set_version_parents` and `unabsorbed_fixes` (Phase 8). Add the `rebuild_lineage(...)` calls in `create_release`, `add_version`, `update_release`, `release_version`, `sync_ci`, the remaps and `detach_release`. |
 | `api.py` | `GET /versions/<id>/lineage`, `GET /cis/<ci>/versions?to=&from=` |
-| `templates/version.html` | the lineage card |
-| tests | `test_auto_lineage` (planned releases only), `SyncTests.test_detach_and_phantoms` |
+| `views.py` | `VERSION_DOTS`, `version_graph`, `ci_lineage` (`/cis/<ci>/lineage`) |
+| templates | the lineage card in `version.html`; `lineage.html` and the "Lineage" button in `ci.html`; `graph` in `ui/components.html` (+ `.ui-graph*` CSS) |
+| tests | `test_auto_lineage` (planned releases only), `SyncTests.test_detach_and_phantoms`, `GraphLayoutTests.test_lanes` |
 
 **Working when**
 - `GET /api/cis/NAV-SW/versions?to=2026.Q4-b4` → b1, b2, b3, b4 (rejected b3 stays in the chain).
 - `2027.Q1-b1`'s parent is `2026.Q4-b4` (the Q4 release); `?to=2027.Q1-b2&from=2026.Q4-b4` → Q1-b1, Q1-b2.
 - `release_range(Q1)` is `{from: 2026.Q4-b4, to: <Q1 head>}`: the "what's new in this release" range.
-- The version page shows "Built from" / "Built on by" links.
+- The version page shows "Built from" / "Built on by" links; `/cis/NAV-SW/lineage` draws every build as a
+  git-style graph, one lane per release line.
 
 ---
 
@@ -177,7 +179,7 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 
 | File | Type in |
 |---|---|
-| `cmtrack/tickets.py` | `STATES`, `DONE` / `ERROR`, `normalize_state`, `TicketRecord` (leave `cis` out until Phase 7 if you like), `TicketSource` (`tickets_for_versions`, `get_tickets`, `get_children`), `StaticSource`, `pick_source` |
+| `cmtrack/tickets.py` | `STATES`, `ERROR`, `normalize_state`, `TicketRecord` (leave `cis` out until Phase 7 if you like), `TicketSource` (`tickets_for_versions`, `get_tickets`, `get_children`), `StaticSource`, `pick_source` |
 | `service.py` | tickets section: `_ask`, `_progress`, `_Resolver`, `_group_by_csc`, `work_report`, `ticket_detail` |
 | `__init__.py` | `TICKET_SOURCES` config, falling back to `CMTRACK_TICKET_SOURCES` |
 | `api.py` | `ticket_source`, `versions_arg`, `GET /ticket-states`, `GET /cis/<ci>/work`, `GET /tickets/<key>` |
@@ -209,7 +211,7 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 | `service.py` | `"teams"` in `_JSON_COLS`; `_ask`'s `NotImplementedError` branch; backlogs section: `get_backlog` … `backlog_view` |
 | `api.py` | `backlog_source` + the backlog endpoints (CRUD, items, `move`, `pull`, `rebalance`) |
 | `views.py` | `backlogs`, `create_backlog`, `_backlog_fragment`, `backlog`, `_backlog_action` and the pull / add / remove / rebalance actions; the `ci` view gains `backlogs` |
-| templates | `backlogs.html`, `backlog.html`, `_backlog_items.html`, `static/backlog.js` (drag and drop); `rank_item`, `drop_line`, `checkbox`, `segmented` in `ui/components.html`; the Backlogs card in `ci.html`; Backlogs in `UI_NAV` |
+| templates | `backlogs.html`, `backlog.html`, `_backlog_items.html`, `static/backlog.js` (drag and drop); `rank_item`, `checkbox`, `segmented` in `ui/components.html`; the Backlogs card in `ci.html`; Backlogs in `UI_NAV` |
 | `demo.py` | the backlog part of `seed`, plus `cis` on the top-level demo tickets |
 | tests | `BacklogTests` |
 
@@ -255,23 +257,31 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 | templates | `dashboard.html`, `_recent_events.html`, `events.html`, `_event_rows.html`; Events in the nav |
 
 **Working when:** `/` shows counts, open patch/emergency releases, upcoming releases and recent activity (refreshing
-every 30s); `/events` filters by entity and loads more as you scroll.
+every 30s); `/events` filters by entity and loads more as you scroll. (The IFC timeline joins the dashboard in
+Phase 10.)
 
 ---
 
-## Phase 10: IFC capabilities and HSCM baselines
+## Phase 10: IFCs and their HSCM builds
+
+**Goal:** IFCs that spawn from one another, each with a straight sequence of HSCM builds (Build 1, 2, … then HSC1,
+HSC1.1, …) ending in a final one; all of it on a timeline.
 
 | File | Type in |
 |---|---|
-| `schema.sql` | `ifc`, `baseline`, `baseline_entry` + `ix_entry_version` |
-| `service.py` | IFCs section, baselines section, `_external_version`, `import_hscm`; the real `behind_effective` |
-| `api.py` | IFC and baseline endpoints, including the HSCM CSV import |
-| `views.py` | `with_staleness`, `ifcs`, `ifc`, `baseline`, `baseline_diff`; the stale card in `dashboard`; "Fielded in" in `ci` |
-| templates | `ifcs.html`, `ifc.html`, `baseline.html`, `_entries.html`, `_diff.html`; the baselines-behind alert in `_release.html`; IFCs in the nav |
-| tests | the IFC / HSCM / clone / approve / diff parts of `test_full_flow` |
+| `schema.sql` | `ifc` (`spawned_from_id`, `final_id`), `baseline` (`seq`, `derived_from_id`, `supersedes_id`), `baseline_entry` + `ix_entry_version`, `ux_baseline_seq` |
+| `service.py` | IFCs section (`get_ifc`, `_spawn_point`, `create_ifc`, `update_ifc`, `_spawn_ancestors`, `list_ifcs`, `ifc_detail`); HSCM builds section (`current_baseline`, `_latest_build`, `baseline_detail`, `baseline_lineage`, `_next_build`, `create_baseline`, the entry edits, `refresh_baseline`, `delete_baseline`, `_approve` / `_approval_time` / `approve_baseline`, `finalize_ifc`, `reopen_ifc`, `diff_baselines`), `_external_version`, `hscm_rows`, `import_hscm`; the real `behind_effective` |
+| `api.py` | IFC and baseline endpoints, including final / reopen and the HSCM import (JSON or CSV, with `date`) |
+| `graph.py` | the timeline half: `ZOOMS`, `short_label`, `timeline` |
+| `views.py` | `with_staleness`, `BASELINE_DOTS`, `ifc_timeline`, `ifc_timeline_fragment`, `spawn_options`, `ifcs`, `ifc`, `baseline`, `version_options` (+ its fragment), `baseline_diff`, the IFC and baseline form posts; the stale card and the timeline in `dashboard`; "Fielded in" in `ci` |
+| templates | `ifcs.html`, `ifc.html`, `baseline.html`, `_entries.html`, `_draft_entries.html`, `_version_options.html`, `_diff.html`, `_ifc_timeline.html`; `timeline` in `ui/components.html` (+ `.ui-tl*` CSS) and `static/timeline.js`; the baselines-behind alert in `_release.html`; IFCs in the nav |
+| `cmtrack/history.py` | generate years of IFC history and load it (`--db` / `--url`) |
+| tests | the IFC part of `test_full_flow`; `test_baselines.py` |
 
-**Working when:** import an HSCM CSV (unknown CIs become placeholders), clone it, change an entry, approve it, and
-diff the two. Ship an emergency and the dashboard and baseline page flag the entry as "behind".
+**Working when:** start IFC-1, import an HSCM CSV as Build 1 (unknown CIs become placeholders), start Build 2,
+change an entry, approve it, diff the two, mark it final; spawn IFC-2 from it. Ship an emergency and the dashboard
+and baseline page flag the entry as "behind". `python -m cmtrack.history load --db cmtrack.db --reset` fills the
+timeline with years of IFCs: zoom from years to weeks, and it opens on today.
 
 ---
 
@@ -287,5 +297,5 @@ diff the two. Ship an emergency and the dashboard and baseline page flag the ent
 
 - CSRF protection and login before exposing the UI beyond your own machine (the backlog, release and version
   forms change data).
-- IFC ↔ CI membership (`ifc_ci`) and parent-IFC rollups, discussed earlier but not built.
+- IFC ↔ CI membership (`ifc_ci`), so a build can be checked for a version of every CI its IFC comprises.
 - A cross-CI "tickets in error" view: it needs a source query, since tickets aren't stored.

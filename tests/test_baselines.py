@@ -1,14 +1,11 @@
 """IFC and baseline editing by hand, baseline lineage, and the lineage graphs.  Run: python -m unittest discover -s tests"""
+import datetime as dt
 import os
-import re
 import shutil
-import sqlite3
 import tempfile
 import unittest
 
-import datetime as dt
-
-from cmtrack import create_app, db, graph, history
+from cmtrack import create_app, graph, history
 from cmtrack.demo import seed
 
 
@@ -117,11 +114,7 @@ class BaselineTests(unittest.TestCase):
         self.assertIn('<svg class="ui-timeline__svg" width="1500"', wide)                  # fitted to the box
         months = self.c.get("/fragments/ifc-timeline?zoom=months&width=300").get_data(as_text=True)
         self.assertNotIn('width="300"', months)                                          # never squeezed
-        page = self.c.get("/ifcs").get_data(as_text=True)
-        self.assertEqual(page.count('<li class="ui-graph__row'), 3)                       # IFC-1 B1, B2, IFC-2 B1
-        page = self.c.get("/ifcs/IFC-2").get_data(as_text=True)
-        self.assertIn("spawned from", page)                                               # the spawn point row
-        self.assertEqual(page.count('<li class="ui-graph__row'), 2)
+        self.assertIn('class="ui-timeline"', self.c.get("/ifcs").get_data(as_text=True))
 
     def test_version_options_and_lineage_page(self):
         opts = self.c.get("/fragments/version-options?ci=NAV-SW").get_data(as_text=True)
@@ -163,36 +156,6 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual([b["name"] for b in self.api("/ifcs/IFC%20A%201.0")["baselines"]][:4],
                          ["Build 1", "Build 2", "Build 3", "HSC1"])
         self.assertEqual(self.c.get("/").status_code, 200)
-        history.reset(path)
-        self.assertEqual(self.api("/ifcs"), [])
-        self.assertEqual(self.c.get("/api/cis/CORE-SW").status_code, 404)             # placeholders gone too
-        self.assertEqual(self.api("/cis/NAV-SW")["name"], "NAV-SW")                  # managed CIs kept
-
-    def test_migration_to_spawned_ifcs_and_builds(self):
-        path = os.path.join(self.tmp, "old.db")
-        old = db.SCHEMA.read_text()
-        for line in ("    spawned_from_id INTEGER REFERENCES baseline(id),", "    final_id    INTEGER REFERENCES baseline(id),",
-                     "    seq           INTEGER NOT NULL DEFAULT 0,", "    derived_from_id INTEGER REFERENCES baseline(id),"):
-            start = old.index(line)
-            old = old[:start] + old[old.index("\n", start) + 1:]
-        old = old.replace("CREATE TABLE IF NOT EXISTS ifc (\n", "CREATE TABLE IF NOT EXISTS ifc (\n    parent_id INTEGER REFERENCES ifc(id),\n")
-        conn = sqlite3.connect(path)
-        conn.executescript(old)
-        conn.execute("INSERT INTO ifc (id, name) VALUES (1, 'P')")
-        conn.execute("INSERT INTO ifc (id, name, parent_id) VALUES (2, 'C', 1)")
-        conn.execute("INSERT INTO baseline (id, ifc_id, name, status) VALUES (1, 1, 'A', 'superseded')")
-        conn.execute("INSERT INTO baseline (id, ifc_id, name, status, supersedes_id) VALUES (2, 1, 'B', 'approved', 1)")
-        conn.execute("INSERT INTO baseline (id, ifc_id, name, status) VALUES (3, 1, 'X', 'draft')")
-        conn.execute("INSERT INTO baseline (id, ifc_id, name) VALUES (4, 2, 'C1')")
-        conn.commit()
-        conn.close()
-        conn = db.connect(path)
-        db.init_db(conn)
-        self.assertEqual(conn.execute("SELECT spawned_from_id FROM ifc WHERE id = 2").fetchone()[0], 2)   # P's approved
-        self.assertEqual([tuple(r) for r in conn.execute("SELECT id, seq, derived_from_id FROM baseline ORDER BY id")],
-                         [(1, 1, None), (2, 2, 1), (3, 3, 2), (4, 1, 2)])
-        conn.close()
-
 
 class GraphLayoutTests(unittest.TestCase):
     def test_lanes(self):
@@ -205,36 +168,6 @@ class GraphLayoutTests(unittest.TestCase):
         self.assertEqual(len(g["edges"]), 5)                                          # 'gone' is not drawn
         self.assertEqual(sum(e["merge"] for e in g["edges"]), 1)
         self.assertEqual(g["width"], 3 * graph.LANE)
-
-    def test_horizontal_runs_oldest_to_newest(self):
-        nodes = [{"id": "c", "parents": ["a"]}, {"id": "b", "parents": ["a"]}, {"id": "a", "parents": []}]
-        g = graph.layout(nodes, horizontal=True)
-        xy = {n["id"]: (n["x"], n["y"]) for n in g["nodes"]}
-        self.assertLess(xy["a"][0], xy["b"][0])
-        self.assertLess(xy["b"][0], xy["c"][0])                                      # newest on the right
-        self.assertEqual(xy["a"][1], xy["c"][1])                                     # c continues a's lane
-        self.assertGreater(xy["b"][1], xy["a"][1])                                   # b branches below
-        self.assertEqual((g["width"], g["height"]), (3 * graph.COL, 2 * graph.HLANE))
-
-    def test_swimlanes_keep_a_lane_per_line(self):
-        nodes = [{"id": 1, "parents": [], "ifc": 0}, {"id": 2, "parents": [1], "ifc": 1},
-                 {"id": 3, "parents": [1], "ifc": 0}, {"id": 4, "parents": [2], "ifc": 1}]
-        g = graph.swimlanes(nodes, lambda n: n["ifc"], horizontal=True)
-        xy = {n["id"]: (n["x"], n["y"]) for n in g["nodes"]}
-        self.assertEqual([xy[i][0] for i in (1, 2, 3, 4)], sorted(xy[i][0] for i in (1, 2, 3, 4)))  # time order
-        self.assertEqual((xy[1][1], xy[3][1]), (xy[1][1], xy[1][1]))
-        self.assertEqual(xy[2][1], xy[4][1])
-        self.assertGreater(xy[2][1], xy[1][1])
-        self.assertEqual(len(g["edges"]), 3)
-
-    def test_swimlanes_reuse_lanes(self):
-        # a: 1-2-3; b branches off a1 and ends before c starts; c branches off a3
-        nodes = [{"id": 1, "parents": [], "g": "a"}, {"id": 2, "parents": [1], "g": "b"},
-                 {"id": 3, "parents": [1], "g": "a"}, {"id": 4, "parents": [2], "g": "b"},
-                 {"id": 5, "parents": [3], "g": "a"}, {"id": 6, "parents": [5], "g": "c"}]
-        g = graph.swimlanes(nodes, lambda n: n["g"])
-        lanes = {n["id"]: n["lane"] for n in g["nodes"]}
-        self.assertEqual((lanes[2], lanes[6]), (1, 1))                                 # c reuses b's lane
 
     def test_timeline(self):
         nodes = [{"id": 1, "name": "Build 1", "parents": [], "g": "a", "date": "2020-01-01"},

@@ -10,7 +10,7 @@ import io
 import json
 import sqlite3
 
-from . import rank, releases as rsrc, tickets
+from . import graph, rank, releases as rsrc, tickets
 
 RELEASED = ("released", "external")          # version states a baseline may reference
 VERSION_TRANSITIONS = {
@@ -231,20 +231,20 @@ def get_version(conn, version_id):
     return _one(conn, "SELECT * FROM version WHERE id = ?", (version_id,), f"version {version_id}")
 
 
-def find_version(conn, ci, ref):
-    """Version of ``ci`` by id or name."""
+def _of_ci(conn, table, ci, ref):
+    """A release or version of ``ci`` by id or name."""
     ref = str(ref)
     col = "id" if ref.isdigit() else "name"
-    return _one(conn, f"SELECT * FROM version WHERE ci_id = ? AND {col} = ?", (ci["id"], ref),
-                f"version {ref!r} of {ci['name']}")
+    return _one(conn, f"SELECT * FROM {table} WHERE ci_id = ? AND {col} = ?", (ci["id"], ref),
+                f"{table} {ref!r} of {ci['name']}")
+
+
+def find_version(conn, ci, ref):
+    return _of_ci(conn, "version", ci, ref)
 
 
 def find_release(conn, ci, ref):
-    """Release of ``ci`` by id or name."""
-    ref = str(ref)
-    col = "id" if ref.isdigit() else "name"
-    return _one(conn, f"SELECT * FROM release WHERE ci_id = ? AND {col} = ?", (ci["id"], ref),
-                f"release {ref!r} of {ci['name']}")
+    return _of_ci(conn, "release", ci, ref)
 
 
 def list_releases(conn, ci_ref):
@@ -703,13 +703,6 @@ def rebuild_lineage(conn, ci_id):
     conn.executemany("INSERT OR IGNORE INTO version_parent (version_id, parent_id) VALUES (?, ?)", edges)
 
 
-def backfill_lineage(conn):
-    """Build lineage for databases created before the version DAG existed."""
-    if conn.execute("SELECT 1 FROM version_parent LIMIT 1").fetchone() is None:
-        for (ci_id,) in conn.execute("SELECT DISTINCT ci_id FROM version").fetchall():
-            rebuild_lineage(conn, ci_id)
-
-
 def _closure(conn, version_id, direction):
     """Ids of ``version_id`` and all its ancestors (direction='up') or descendants ('down')."""
     near, far = ("version_id", "parent_id") if direction == "up" else ("parent_id", "version_id")
@@ -787,23 +780,11 @@ def version_range(conn, ci_ref, to, frm=None):
 
 def _topo_order(ids, edges):
     """Parents before children; ties broken by id (creation order)."""
-    waiting = {i: 0 for i in ids}
-    children = {}
+    parents = {}
     for child, parent in edges:
-        if parent in waiting and child in waiting:
-            waiting[child] += 1
-            children.setdefault(parent, []).append(child)
-    ready = sorted(i for i, n in waiting.items() if n == 0)
-    order = []
-    while ready:
-        i = ready.pop(0)
-        order.append(i)
-        for c in children.get(i, []):
-            waiting[c] -= 1
-            if waiting[c] == 0:
-                ready.append(c)
-        ready.sort()
-    return order + sorted(set(ids) - set(order))   # anything left is on a cycle
+        parents.setdefault(child, []).append(parent)
+    nodes = [{"id": i, "parents": parents.get(i, [])} for i in ids]
+    return [n["id"] for n in reversed(graph.newest_first(nodes, key=lambda n: n["id"]))]
 
 
 def ci_versions(conn, ci_ref):
@@ -1372,7 +1353,6 @@ def baseline_detail(conn, baseline_id):
     out = to_dict(b)
     out["ifc"] = ifc["name"]
     out["final"] = ifc["final_id"] == b["id"]
-    out["latest"] = _latest_build(conn, ifc["id"])["id"] == b["id"]
     out["supersedes"] = get_baseline(conn, b["supersedes_id"])["name"] if b["supersedes_id"] else None
     base = get_baseline(conn, b["derived_from_id"]) if b["derived_from_id"] else None
     out["derived_from"] = {"id": base["id"], "name": base["name"], "ifc": _ifc_name(conn, base["ifc_id"])} if base else None
@@ -1383,16 +1363,12 @@ def baseline_detail(conn, baseline_id):
     return out
 
 
-def baseline_lineage(conn, ifc_id=None):
-    """Baselines (all IFCs, or one), oldest first, each with the baseline it was built from: the build before it,
-    or for an IFC's first build, the HSCM the IFC was spawned from."""
-    rows = to_dicts(conn.execute(
-        "SELECT b.id, b.ifc_id, i.name AS ifc, b.seq, b.name, b.status, b.source, b.source_ref, b.created_at, "
-        "b.approved_at, b.derived_from_id, b.supersedes_id, i.final_id = b.id AS final, "
-        "(SELECT COUNT(*) FROM baseline_entry e WHERE e.baseline_id = b.id) AS entries "
-        "FROM baseline b JOIN ifc i ON i.id = b.ifc_id " + ("WHERE b.ifc_id = ? " if ifc_id else "") +
-        "ORDER BY b.id", (ifc_id,) if ifc_id else ()))
-    return rows
+def baseline_lineage(conn):
+    """Every IFC's HSCMs, oldest first, each with the baseline it was built from: the build before it, or for
+    an IFC's first build, the HSCM the IFC was spawned from."""
+    return to_dicts(conn.execute(
+        "SELECT b.id, b.ifc_id, i.name AS ifc, b.name, b.status, b.created_at, b.approved_at, b.derived_from_id, "
+        "i.final_id = b.id AS final FROM baseline b JOIN ifc i ON i.id = b.ifc_id ORDER BY b.id"))
 
 
 def _resolve_entries(conn, entries):

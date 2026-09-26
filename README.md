@@ -6,7 +6,7 @@ Python 3.10+, Flask, SQLite. No other dependencies.
 ```
 python -m cmtrack                      # dev server on :5000, DB in ./cmtrack.db
 python -m unittest discover -s tests   # end-to-end scenario + views
-python -m cmtrack.history load data/ifc_history.json --db cmtrack.db [--reset]   # years of IFC/HSCM history
+python -m cmtrack.history load --db cmtrack.db [--reset]   # generate years of IFC/HSCM history and load it
 python -m cmtrack.demo --db demo.db    # load a demo scenario, then:
 CMTRACK_DB=demo.db CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source \
   CMTRACK_RELEASE_SOURCES=jira=cmtrack.demo:demo_release_source python -m cmtrack
@@ -230,7 +230,7 @@ POST /backlogs/<b>/pull            POST /backlogs/<b>/rebalance
 GET  /events?entity=&entity_id=
 ```
 
-Schema additions to existing DBs are applied by `db.MIGRATIONS` at startup.
+`schema.sql` is the whole schema; there are no migrations. After a schema change, delete the database and reload it.
 
 ## Web UI (`/`)
 

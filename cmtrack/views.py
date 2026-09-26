@@ -17,8 +17,8 @@ from .db import get_db
 bp = Blueprint("ui", __name__)
 
 EVENT_PAGE = 50
-ENTITY_ENDPOINTS = {"ci": "ui.ci", "release": "ui.release", "version": "ui.version",
-                    "baseline": "ui.baseline", "ifc": "ui.ifc", "backlog": "ui.backlog"}
+ENTITY_PAGES = {"ci": ("ui.ci", "ref"), "release": ("ui.release", "rid"), "version": ("ui.version", "vid"),
+                "baseline": ("ui.baseline", "bid"), "ifc": ("ui.ifc", "ref"), "backlog": ("ui.backlog", "ref")}
 
 
 def is_fragment():
@@ -32,10 +32,9 @@ def page(template, fragment, **ctx):
 
 @bp.app_template_global()
 def entity_url(entity, entity_id):
-    endpoint = ENTITY_ENDPOINTS.get(entity)
-    if endpoint is None or entity_id is None:
+    if entity not in ENTITY_PAGES or entity_id is None:
         return None
-    arg = {"ci": "ref", "ifc": "ref", "backlog": "ref", "release": "rid", "version": "vid", "baseline": "bid"}[entity]
+    endpoint, arg = ENTITY_PAGES[entity]
     return url_for(endpoint, **{arg: entity_id})
 
 
@@ -260,21 +259,6 @@ BASELINE_DOTS = {"draft": "hollow", "superseded": "muted"}
 VERSION_DOTS = {"planned": "hollow", "rejected": "danger"}
 
 
-def _hscm_node(b, **extra):
-    status = "final" if b["final"] else b["status"]
-    return {**b, "parents": [b["derived_from_id"]] if b["derived_from_id"] else [],
-            "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved",
-            "tag": "final" if b["final"] else None, "href": url_for("ui.baseline", bid=b["id"]),
-            "title": f"{b['ifc']} {b['name']} ({status})", **extra}
-
-
-def ifc_graph(conn):
-    """Every IFC's HSCM builds, a lane per IFC while it's active (lanes are reused once an IFC is done), with each
-    IFC's Build 1 branching off the HSCM it was spawned from. Each IFC's current (latest approved) build is marked."""
-    nodes = [_hscm_node(b, caption=b["ifc"] if b["seq"] == 1 else None) for b in svc.baseline_lineage(conn)]
-    return graph.swimlanes(nodes, lambda n: n["ifc_id"])
-
-
 def ifc_timeline(conn, zoom="months", width=None):
     """Every IFC's HSCMs on a time axis (graph.timeline): a lane per active IFC, spawns branching off the HSCM
     they came from. In-progress IFCs' current HSCMs are highlighted; final ones are ringed. ``width`` is the
@@ -282,10 +266,10 @@ def ifc_timeline(conn, zoom="months", width=None):
     nodes = []
     for b in svc.baseline_lineage(conn):
         when = b["approved_at"] or b["created_at"]
-        status = "final" if b["final"] else b["status"]
-        nodes.append({**_hscm_node(b), "date": when, "current": b["status"] == "approved" and not b["final"],
-                      "title": f"{b['ifc']} {b['name']} · {status} · {str(when)[:10]}",
-                      "group_href": url_for("ui.ifc", ref=b["ifc"])})
+        nodes.append({**b, "date": when, "parents": [b["derived_from_id"]] if b["derived_from_id"] else [],
+                      "dot": BASELINE_DOTS.get(b["status"]), "current": b["status"] == "approved" and not b["final"],
+                      "href": url_for("ui.baseline", bid=b["id"]), "group_href": url_for("ui.ifc", ref=b["ifc"]),
+                      "title": f"{b['ifc']} {b['name']} · {'final' if b['final'] else b['status']} · {str(when)[:10]}"})
     zoom = zoom if zoom in graph.ZOOMS else "months"
     t = graph.timeline(nodes, lambda n: n["ifc_id"], dt.date.today(), graph.ZOOMS[zoom],
                        caption=lambda n: n["ifc"].removeprefix("IFC "), fit_width=width if width and width > 0 else None)
@@ -297,17 +281,6 @@ def ifc_timeline_fragment():
     """The timeline at ?zoom=, fitted to ?width= (the zoom buttons and static/timeline.js send it)."""
     a = request.args
     return render_template("_ifc_timeline.html", t=ifc_timeline(get_db(), a.get("zoom", "months"), a.get("width", type=int)))
-
-
-def ifc_builds_graph(conn, ifc):
-    """One IFC's builds (newest first), with the HSCM it was spawned from at the bottom."""
-    rows = svc.baseline_lineage(conn, ifc["id"])
-    point = ifc["spawned_from"]
-    nodes = [_hscm_node(b) for b in rows]
-    if point:
-        p = next(b for b in svc.baseline_lineage(conn) if b["id"] == point["id"])
-        nodes.insert(0, _hscm_node(p, dot="muted", current=False, parents=[], spawn=True))
-    return graph.swimlanes(nodes, lambda n: "spawn" if n.get("spawn") else "ifc")
 
 
 def version_graph(conn, ci_id):
@@ -355,7 +328,7 @@ def ifcs():
     for r in rows:
         r["current"] = svc.to_dict(svc.current_baseline(conn, r["id"]))
         r["final"] = svc.to_dict(svc.get_baseline(conn, r["final_id"])) if r["final_id"] else None
-    return render_template("ifcs.html", ifcs=rows, g=ifc_graph(conn), spawn_points=spawn_options(conn))
+    return render_template("ifcs.html", ifcs=rows, t=ifc_timeline(conn), spawn_points=spawn_options(conn))
 
 
 @bp.get("/ifcs/<ref>")
@@ -365,7 +338,7 @@ def ifc(ref):
     current = detail["current_hscm"]
     entries = with_staleness(conn, current["entries"]) if current else []
     return render_template("ifc.html", ifc=detail, current=current, entries=entries,
-                           builds=ifc_builds_graph(conn, detail), spawn_points=spawn_options(conn, detail["id"]))
+                           spawn_points=spawn_options(conn, detail["id"]))
 
 
 @bp.get("/baselines/<int:bid>")
@@ -381,24 +354,16 @@ def baseline(bid):
     return render_template("baseline.html", b=b, entries=with_staleness(conn, b["entries"]), others=others,
                            compare=request.args.get("compare", type=int) or b["supersedes_id"] or b["derived_from_id"],
                            warnings=json.loads(imported["detail"]).get("warnings", []) if imported else [],
-                           choices=entry_choices(conn, b["entries"]) if draft else {},
+                           choices={e["ci"]: version_options(conn, e["ci"]) for e in b["entries"]} if draft else {},
                            cis=[(c["name"], c["name"]) for c in svc.list_cis(conn)] if draft else [])
 
 
-def entry_choices(conn, entries):
-    """For each CI in a draft, the versions it could list: newest first, rejected ones left out."""
-    return {e["ci"]: version_options(conn, e["ci"]) for e in entries}
-
-
 def version_options(conn, ci_ref):
+    """The versions a draft baseline can list for a CI: released ones first, newest first, rejected ones left out."""
     ci = svc.get_ci(conn, ci_ref)
-    return [(v["id"], f"{v['name']} ({ui_status(v['status'])})") for v in conn.execute(
-        "SELECT id, name, status FROM version WHERE ci_id = ? AND status != 'rejected' "
-        "ORDER BY status NOT IN ('released', 'external'), id DESC", (ci["id"],))]
-
-
-def ui_status(status):
-    return ui.VERSION_STATUSES.get(status, status).lower()
+    return [(v["id"], f"{v['name']} ({ui.VERSION_STATUSES.get(v['status'], v['status']).lower()})")
+            for v in conn.execute("SELECT id, name, status FROM version WHERE ci_id = ? AND status != 'rejected' "
+                                  "ORDER BY status NOT IN ('released', 'external'), id DESC", (ci["id"],))]
 
 
 @bp.get("/fragments/version-options")
@@ -486,11 +451,9 @@ def _backlog_fragment(conn, ref, message=None, error=None):
 @bp.get("/backlogs/<ref>")
 def backlog(ref):
     conn = get_db()
-    if is_fragment():
-        return _backlog_fragment(conn, ref), 200, {"Vary": "HX-Request"}
     b = svc.backlog_summary(conn, ref)
     view, source_error = live(svc.backlog_view, conn, ticket_source(b["source"]), ref)
-    return render_template("backlog.html", b=view or b, source_error=source_error, message=None, error=None)
+    return page("backlog.html", "_backlog_items.html", b=view or b, source_error=source_error, message=None, error=None)
 
 
 def _backlog_action(ref, action):

@@ -11,7 +11,6 @@ from cmtrack import create_app
 from cmtrack.demo import DEMO_TICKETS, seed
 from cmtrack.tickets import STATES, StaticSource, TicketRecord, load_sources, normalize_state
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class WorkTests(unittest.TestCase):

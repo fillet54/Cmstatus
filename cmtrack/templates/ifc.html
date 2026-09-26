@@ -18,21 +18,17 @@
 <div class="ui-split">
   <div class="ui-stack">
     {% call ui.card(flush=True) %}
-      {% call ui.card_header("HSCM builds", "newest first · each starts from the one before") %}{{ ui.badge(ifc.baselines | length) }}{% endcall %}
-      {% if builds.nodes %}
-        {% call(n) ui.graph(builds, label="HSCM builds of " ~ ifc.name) %}
-          <span class="ui-graph__main">
-            {% if n.spawn %}<span class="ui-muted">spawned from</span> {{ ui.chip(n.ifc) }}{% endif %}
-            <a href="{{ n.href }}"><b>{{ n.name }}</b></a>
-            {% if not n.spawn %}{{ ui.baseline_status(n.status) }}{% if n.final %}{{ ui.badge("final", "success") }}{% endif %}{% endif %}
-            {% if n.source != "manual" and not n.spawn %}{{ ui.badge(n.source) }}{% endif %}
-            {% if n.source_ref %}<span class="ui-mono ui-muted" style="font-size: 12px;">{{ n.source_ref }}</span>{% endif %}
-          </span>
-          <span class="ui-graph__meta">{{ n.entries }} entries · {{ ui.timestamp(n.approved_at or n.created_at) }}</span>
-        {% endcall %}
-      {% else %}
-        {% call ui.card_body() %}{{ ui.empty("No builds yet. Start Build 1 or import an HSCM.") }}{% endcall %}
-      {% endif %}
+      {% call ui.card_header("HSCM builds", "newest first · each starts from the one before; Build 1 from the spawn point") %}{{ ui.badge(ifc.baselines | length) }}{% endcall %}
+      {% call ui.table(["Build", "Status", "Source", "Approved"], dense=True) %}
+        {% for b in ifc.baselines | reverse %}
+        <tr>
+          <td><a href="{{ url_for('ui.baseline', bid=b.id) }}"><b>{{ b.name }}</b></a></td>
+          <td>{{ ui.baseline_status(b.status) }}{% if b.id == ifc.final_id %} {{ ui.badge("final", "success") }}{% endif %}</td>
+          <td>{{ ui.badge(b.source) }}{% if b.source_ref %} <span class="ui-mono ui-muted" style="font-size: 12px;">{{ b.source_ref }}</span>{% endif %}</td>
+          <td>{{ ui.timestamp(b.approved_at) }}</td>
+        </tr>
+        {% else %}{{ ui.empty_row("No builds yet. Start Build 1 or import an HSCM.", 4) }}{% endfor %}
+      {% endcall %}
     {% endcall %}
 
     {% call ui.card(flush=True) %}

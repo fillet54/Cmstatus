@@ -10,7 +10,6 @@ from cmtrack.demo import DEMO_TICKETS, seed
 from cmtrack.rank import RankError, between, spread, validate
 from cmtrack.tickets import StaticSource, TicketSource
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 B = "/backlogs/Nav & Display"
 
 
@@ -161,7 +160,7 @@ class BacklogTests(unittest.TestCase):
         page = self.c.get(B).get_data(as_text=True)
         self.assertIn('id="backlog-list"', page)
         self.assertIn('draggable="true" data-key="PRG-20"', page)
-        self.assertIn("/api/backlogs/Nav%20&amp;%20Display/items/__KEY__/move", page)
+        self.assertIn("/api/backlogs/Nav%20%26%20Display/items/__KEY__/move", page)
         hx = {"HX-Request": "true"}
         frag = self.c.get(B, headers=hx).get_data(as_text=True)
         self.assertNotIn("<html", frag)

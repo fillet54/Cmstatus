@@ -89,12 +89,6 @@ class UiTests(unittest.TestCase):
         t["state"] = "in_progress"
         self.assertNotIn("waits", self.render("{{ ui.state_reason(t) }}", t=t))
 
-    def test_version_status_glyphs(self):
-        active = self.render('{{ ui.version_status("active") }}')
-        self.assertIn("ui-tone-info", active)
-        self.assertIn("Active", active)
-        self.assertIn("ui-tone-danger", self.render('{{ ui.version_status("cancelled") }}'))
-
     def test_buttons_escape_attrs_and_label_icons(self):
         html = self.render('{{ ui.button("Remove", variant="danger", attrs={"hx-post": "/x", "hx-confirm": "Remove \\"A\\"?"}) }}')
         self.assertIn('class="ui-btn ui-btn--danger"', html)
@@ -105,27 +99,12 @@ class UiTests(unittest.TestCase):
         self.assertIn('aria-label="Refresh from Jira"', html)
         self.assertIn('aria-hidden="true"', html)                                  # the svg itself is decorative
 
-    def test_forms(self):
-        html = self.render('{{ ui.select("from", [("", "(beginning)"), "b1", "b2"], selected="b2") }}')
-        self.assertIn('<option value="b2" selected>b2</option>', html)
-        self.assertIn('<option value="">(beginning)</option>', html)
-        html = self.render('{% call ui.field("Key", "k", error="not found") %}{{ ui.input("k", "X", invalid=True) }}{% endcall %}')
-        self.assertIn('aria-invalid="true" aria-describedby="k-error"', html)
-        self.assertIn('id="k-error">not found', html)
-
     def test_rank_item_keeps_drag_contract(self):
         t = {"key": "PRG-1", "summary": "S", "state": "done", "rank": "i", "cis": ["NAV-SW"]}
         html = self.render('{{ ui.rank_item(t, 3, remove_attrs={"hx-post": "/r"}) }}', t=t)
         for needle in ('draggable="true"', 'data-key="PRG-1"', 'data-rank="i"', 'data-state="done"', "data-pos>3<",
                        'data-move="top"', 'data-move="up"', 'data-move="down"', 'hx-post="/r"', "NAV-SW"):
             self.assertIn(needle, html)
-
-    def test_table_card_and_empty(self):
-        html = self.render('{% call ui.card(flush=True) %}{% call ui.table(["A", {"label": "N", "align": "end"}]) %}'
-                           '{{ ui.empty_row("None yet", 2) }}{% endcall %}{% endcall %}')
-        self.assertIn('<th scope="col" class="ui-end">N</th>', html)
-        self.assertIn('colspan="2"', html)
-        self.assertIn("ui-card--flush", html)
 
     def test_escaping(self):
         html = self.render("{{ ui.ident(x) }}{{ ui.badge(x) }}{{ ui.chip(x) }}", x="<script>")

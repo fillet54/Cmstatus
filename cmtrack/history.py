@@ -1,8 +1,8 @@
 """Years of IFC / HSCM history for trying the IFC views at scale.
 
-    python -m cmtrack.history generate [-o data/ifc_history.json] [--seed 7]
-    python -m cmtrack.history load data/ifc_history.json --db cmtrack.db [--reset]
-    python -m cmtrack.history load data/ifc_history.json --url http://127.0.0.1:5000
+    python -m cmtrack.history load --db cmtrack.db [--reset]       # generate and load
+    python -m cmtrack.history load --url http://127.0.0.1:5000
+    python -m cmtrack.history generate -o history.json [--seed 7]   # write it out instead (load history.json ...)
 
 IFCs are a letter and a dotted version (IFC A 1.0, IFC A 1.0.2.1). A first child spawns from its parent
 (1.0.2 -> 1.0.2.1) and each later sibling from the sibling before it (1.0.2.1 -> 1.0.2.2), from the source's
@@ -12,8 +12,7 @@ before their HSCs; longer ones only have HSCs. HSC1 means complete; HSC1.1, HSC1
 ``generate`` writes plain data (CIs, IFCs, and dated HSCM events with their full CI -> version lists);
 ``load`` replays it through the HTTP API in date order, dating each HSCM by its document (``date``), then marks
 the IFCs that are done final. ``--db`` runs the same calls in-process against a database file (a running
-server sees the rows at once); ``--reset`` first deletes every IFC and HSCM there, with the external
-versions and placeholder CIs that only they used.
+server sees the rows at once); ``--reset`` deletes that file first.
 """
 import argparse
 import datetime as dt
@@ -172,28 +171,6 @@ class InProcess:
         return r.get_json()
 
 
-def reset(db):
-    """Delete every IFC and HSCM, and the external versions and placeholder CIs only they used."""
-    from .db import connect, init_db
-    conn = connect(db)
-    init_db(conn)
-    with conn:
-        conn.execute("UPDATE ifc SET spawned_from_id = NULL, final_id = NULL")
-        conn.execute("DELETE FROM baseline_entry")
-        conn.execute("UPDATE baseline SET derived_from_id = NULL, supersedes_id = NULL")
-        conn.execute("DELETE FROM baseline")
-        conn.execute("DELETE FROM ifc")
-        ext = "SELECT id FROM release WHERE kind = 'external' AND id NOT IN (SELECT release_id FROM version WHERE id IN " \
-              "(SELECT child_version_id FROM manifest_entry))"
-        conn.execute(f"UPDATE release SET released_version_id = NULL WHERE id IN ({ext})")
-        conn.execute(f"DELETE FROM version WHERE release_id IN ({ext})")
-        conn.execute("DELETE FROM release WHERE kind = 'external' AND id NOT IN (SELECT release_id FROM version)")
-        conn.execute("DELETE FROM ci WHERE managed = 0 AND id NOT IN (SELECT ci_id FROM release) "
-                     "AND id NOT IN (SELECT ci_id FROM csc) AND id NOT IN (SELECT ci_id FROM backlog_ci)")
-        conn.execute("INSERT INTO event (entity, action, detail) VALUES ('ifc', 'reset', '{\"by\": \"cmtrack.history\"}')")
-    conn.close()
-
-
 def load(data, call, out=print):
     types = {c["name"]: c["type"] for c in data["cis"]}
     descriptions = {i["name"]: i for i in data["ifcs"]}
@@ -220,14 +197,15 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m cmtrack.history", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     g = sub.add_parser("generate", help="write the history as JSON")
-    g.add_argument("-o", "--out", default="data/ifc_history.json")
+    g.add_argument("-o", "--out", default="ifc_history.json")
     g.add_argument("--seed", type=int, default=7)
     lo = sub.add_parser("load", help="load a history file into an instance")
-    lo.add_argument("file")
+    lo.add_argument("file", nargs="?", help="a generated history (default: generate one now)")
+    lo.add_argument("--seed", type=int, default=7)
     where = lo.add_mutually_exclusive_group(required=True)
     where.add_argument("--url", help="a running instance, e.g. http://127.0.0.1:5000")
     where.add_argument("--db", help="a database file, loaded in-process")
-    lo.add_argument("--reset", action="store_true", help="first delete every IFC and HSCM (needs --db)")
+    lo.add_argument("--reset", action="store_true", help="first delete the database file (needs --db)")
     a = ap.parse_args(argv)
 
     if a.cmd == "generate":
@@ -240,10 +218,13 @@ def main(argv=None):
         return
     if a.reset and not a.db:
         ap.error("--reset needs --db")
-    with open(a.file) as f:
-        data = json.load(f)
-    if a.reset:
-        reset(a.db)
+    if a.file:
+        with open(a.file) as f:
+            data = json.load(f)
+    else:
+        data = generate(a.seed)
+    if a.reset and os.path.exists(a.db):
+        os.remove(a.db)
     load(data, InProcess(a.db) if a.db else Http(a.url))
 
 
