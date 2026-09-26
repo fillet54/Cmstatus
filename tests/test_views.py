@@ -66,6 +66,15 @@ class ViewTests(unittest.TestCase):
         self.assertIn("added", diff)
         self.assertIn("SUITE", diff)
 
+    def test_old_work_links_redirect_to_the_release(self):
+        r = self.c.get("/cis/NAV-SW/work?from=2026.Q4-b4&to=2027.Q1-b2")
+        rid = next(x["id"] for x in self.api("/cis/NAV-SW/releases") if x["name"] == "2027.Q1")
+        self.assertEqual(r.status_code, 302)
+        self.assertTrue(r.headers["Location"].startswith(f"/releases/{rid}?"))
+        self.assertIn("from=2026.Q4-b4", r.headers["Location"])
+        shipped = next(x["id"] for x in self.api("/cis/NAV-SW/releases") if x["name"] == "2026.Q4")
+        self.assertTrue(self.c.get("/cis/NAV-SW/work").headers["Location"].startswith(f"/releases/{shipped}"))
+
     def test_release_table_sorting(self):
         rows = lambda html: re.findall(r'hx-boost="false" onclick="event.preventDefault\(\)">([^<]+)</a>', html)
         page = self.get("/cis/NAV-SW")

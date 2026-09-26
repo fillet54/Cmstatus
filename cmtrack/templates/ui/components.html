@@ -260,15 +260,6 @@
 </div>
 {%- endmacro %}
 
-{#- Counts per state; only states that have tickets unless all=True. #}
-{% macro state_counts(progress, all=False) -%}
-<div class="ui-statecounts">
-  {%- for s, label in ui_states.items() if all or progress[s] %}
-  <div><span>{{ label }}</span><b class="{{ 'ui-tone-danger' if s == 'error' else 'ui-tone-warning' if s == 'blocked' else '' }}">{{ progress[s] }}</b></div>
-  {%- endfor %}
-</div>
-{%- endmacro %}
-
 {#- ============================================================== alerts #}
 
 {#- tone: info | success | warning | danger. caller = the message. #}

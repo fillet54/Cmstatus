@@ -10,6 +10,7 @@ import unittest
 
 from cmtrack import create_app
 from cmtrack.demo import DEMO_TICKETS, seed
+from cmtrack.service import filter_report
 from cmtrack.tickets import STATES, StaticSource, TicketRecord, load_sources, normalize_state, rollup
 
 
@@ -244,6 +245,12 @@ class WorkTests(unittest.TestCase):
         page = self.c.get(release_url + "?from=2026.Q4-b4&to=2027.Q1-b2").get_data(as_text=True)
         self.assertIn("<html", page)
         self.assertIn("NAVL-120", page)                          # merged emergency fix is in the range
+        filtered = self.c.get(release_url + "?from=2026.Q4-b4&to=2027.Q1-b2&csc=nav-maps&type=Feature").get_data(as_text=True)
+        self.assertIn("NAVX-205", filtered)                      # nav-maps' Feature tickets...
+        self.assertNotIn("NAVL-120", filtered)                   # ...not nav-core's, not the change request
+        self.assertIn('<option value="nav-maps" selected>', filtered)
+        self.assertIn('<option value="Change Request">', filtered)                    # types offered: what's there
+        self.assertIn("Clear filters", filtered)
         frag = self.c.get(release_url + "?section=work&from=2026.Q4.ER1&to=2027.Q1-b2",
                           headers={"HX-Request": "true"}).get_data(as_text=True)
         self.assertNotIn("<html", frag)
@@ -277,6 +284,31 @@ class WorkTests(unittest.TestCase):
         version = self.c.get(f"/versions/{self.vid('2027.Q1-b1')}").get_data(as_text=True)
         self.assertIn("Built from", version)
         self.assertIn("NAVL-105", version)
+
+
+class FilterTests(unittest.TestCase):
+    """filter_report narrows a work report by CSC, parent type and state group, and redoes its counts."""
+    def setUp(self):
+        t = lambda key, state: {"key": key, "state": state}
+        self.report = {"items": [
+            {"parent": {"key": "PRG-10", "type": "Feature"}, "cscs": [
+                {"csc": "nav-core", "tickets": [t("A-1", "peer_review"), t("A-2", "blocked")]},
+                {"csc": "nav-maps", "tickets": [t("B-1", "in_progress")]}]},
+            {"parent": {"key": "PRG-15", "type": "Discrepancy"}, "cscs": [{"csc": "nav-core", "tickets": [t("A-3", "done")]}]},
+            {"parent": None, "cscs": [{"csc": "nav-core", "tickets": [t("A-4", "done")]}]}]}
+
+    def test_filters(self):
+        f = filter_report(self.report, csc="nav-maps")
+        self.assertEqual(([i["parent"]["key"] for i in f["items"]], f["progress"]["total"]), (["PRG-10"], 1))
+        self.assertEqual(f["items"][0]["progress"]["in_progress"], 1)                   # per-parent counts redone
+        f = filter_report(self.report, type="Discrepancy")
+        self.assertEqual(([i["parent"]["key"] for i in f["items"]], f["parents"]), (["PRG-15"], 1))
+        f = filter_report(self.report, state="open")
+        self.assertEqual(f["progress"]["total"], 3)                                     # done ones drop out
+        self.assertEqual(len(f["items"]), 1)
+        f = filter_report(self.report, csc="nav-core", state="blocked")
+        self.assertEqual([t["key"] for g in f["items"][0]["cscs"] for t in g["tickets"]], ["A-2"])
+        self.assertEqual(filter_report(self.report, csc="nope")["items"], [])
 
 
 class TicketUnitTests(unittest.TestCase):

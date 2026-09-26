@@ -1735,6 +1735,29 @@ def work_report(conn, source, ci_ref, to=None, frm=None, versions=None):
     return report
 
 
+STATE_FILTERS = {"open": lambda s: s not in ("done", "cancelled"), "blocked": lambda s: s == "blocked",
+                 "done": lambda s: s == "done"}
+
+
+def filter_report(report, csc=None, type=None, state=None):
+    """A work report narrowed to one CSC's tickets, one parent type (e.g. Feature / Discrepancy) and/or a state
+    group (STATE_FILTERS); parents left with no tickets drop out, and every count is redone for what's left."""
+    keep = STATE_FILTERS.get(state)
+    items, rows = [], []
+    for item in report["items"]:
+        parent = item["parent"]
+        if type and (not parent or parent.get("type") != type):
+            continue
+        groups = [{**g, "tickets": [t for t in g["tickets"] if not keep or keep(t["state"])]}
+                  for g in item["cscs"] if not csc or g["csc"] == csc]
+        groups = [g for g in groups if g["tickets"]]
+        tickets_ = [t for g in groups for t in g["tickets"]]
+        if tickets_:
+            items.append({**item, "cscs": groups, "progress": _progress(tickets_)})
+            rows += tickets_
+    return {**report, "items": items, "progress": _progress(rows), "parents": sum(1 for i in items if i["parent"])}
+
+
 def ticket_detail(conn, source, key):
     """A ticket from the source, its parent, and the CSC tickets under it grouped by CI/CSC."""
     found = _ask(source, "get_tickets", [key])

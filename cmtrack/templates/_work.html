@@ -33,6 +33,22 @@
       <span class="ui-mono ui-muted" style="padding-bottom: 14px;">..</span>
       {{ pick_end("To (inclusive)", "to", "work-to", to, ends["to"], "Choose where the range ends", "choose…") }}
     </div>
+    <div class="ui-row ui-work-filters" style="--ui-gap: 12px; align-items: flex-end;">
+      {% call ui.field("CSC", "work-csc") %}
+        {{ ui.select("csc", [("", "All CSCs")] + filter_options.csc, selected=filters.csc or "", id="work-csc", mono=True) }}
+      {% endcall %}
+      {% call ui.field("Type", "work-type") %}
+        {{ ui.select("type", [("", "All types")] + filter_options.type, selected=filters.type or "", id="work-type") }}
+      {% endcall %}
+      {% call ui.field("State", "work-state") %}
+        {{ ui.select("state", [("", "All states"), ("open", "Open (not done)"), ("blocked", "Blocked"), ("done", "Done")],
+                     selected=filters.state or "", id="work-state") }}
+      {% endcall %}
+      {% if filters.csc or filters.type or filters.state %}
+        {% set keep = {} %}{% for k, v in (("from", frm), ("to", to)) if v %}{% set _ = keep.update({k: v}) %}{% endfor %}
+        {{ ui.button("Clear filters", size="sm", variant="ghost", icon="x", href=url_for('ui.release', rid=r.id, **keep)) }}
+      {% endif %}
+    </div>
   </form>
   {% endcall %}
 {% endcall %}

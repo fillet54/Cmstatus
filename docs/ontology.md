@@ -133,7 +133,7 @@ classDiagram
     `external` means we only know it from an HSCM.
   - **Released version**: the one version a release was `releasedAs`, fixed once set. Promotion is gated
     by the CI's `requireTested`.
-  - **Unplanned version** (`planned = 0`): added by hand on a CI whose releases are synced. The README
+  - **Unplanned version** (`planned = 0`): added by hand on a CI whose releases are synced. The reference
     calls this a *variance*; see the note under Gaps.
 
 **Lineage** (`builtFrom`) — `cmt:builtFrom`, table `version_parent`

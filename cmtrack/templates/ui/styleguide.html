@@ -222,12 +222,10 @@
   {% endcall %}
   {% set code %}{% raw %}
 {{ ui.state_bar(report.progress, size="lg") }}
-{{ ui.state_counts(report.progress) }}
 {% endraw %}{% endset %}
-  {% call example("state_bar · state_counts", code) %}
+  {% call example("state_bar", code) %}
     <div class="ui-stack" style="--ui-gap: 12px; max-width: 420px;">
       {{ ui.state_bar(progress, size="lg") }}
-      {{ ui.state_counts(progress) }}
     </div>
   {% endcall %}
 </section>
@@ -462,7 +460,6 @@
       {% endcall %}
       {% call ui.card_section("Work since 2026.Q4-b4") %}
         {{ ui.state_bar(progress, size="lg") }}
-        {{ ui.state_counts(progress) }}
         {% call ui.alert("danger") %}{{ ui.ident("NAVX-221", plain=True) }} closed as Done but its sub-task NAVX-222 is still open (fix in Jira){% endcall %}
       {% endcall %}
       {% call ui.card_section() %}<div class="ui-row">{{ ui.button("Open work items", variant="primary") }}{{ ui.button("Release notes (draft)") }}</div>{% endcall %}

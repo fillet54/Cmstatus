@@ -239,10 +239,10 @@ def release(rid):
     work_range = svc.release_range(conn, rid)
     ctx = dict(r=r, built_from=built_from(conn, r), work_range=work_range,
                options=edit_options(conn, r), ci_row=svc.get_ci(conn, r["ci_id"]))
-    if is_fragment() and request.args.get("section") != "work":
+    if is_fragment() and request.args.get("section") != "work":      # the CI page's release panel
         return page("release.html", "_release.html", **ctx)
     ctx.update(release_work_context(conn, ctx["ci_row"], work_range))
-    return page("release.html", "_work.html" if request.args.get("section") == "work" else "_release.html", **ctx)
+    return page("release.html", "_work.html", **ctx)                 # the page, or its tickets section
 
 
 @bp.get("/versions/<int:vid>")
@@ -310,7 +310,9 @@ def work(ref):
 
 
 def release_work_context(conn, ci, work_range):
-    """Comparison choices, selected versions and live tickets for a release page."""
+    """Comparison choices, selected versions and live tickets for a release page: from/to (default: the release's
+    own range; a lone ?from= keeps its end), the CSC / type / state filters, and the range's timeline."""
+    a = request.args
     releases = [r for r in reversed(svc.list_releases(conn, ci["id"])) if r["kind"] != "external"]
     hscms = conn.execute("SELECT b.name, i.name AS ifc, v.name AS version FROM baseline_entry e "
                          "JOIN baseline b ON b.id = e.baseline_id JOIN ifc i ON i.id = b.ifc_id "
@@ -319,10 +321,10 @@ def release_work_context(conn, ci, work_range):
                {"group": "Versions", "options": [v["name"] for v in reversed(svc.ci_versions(conn, ci["id"]))]},
                {"group": "HSCMs (the version they list)",
                 "options": [(f"hscm:{h['ifc']}/{h['name']}", f"{h['ifc']} · {h['name']} → {h['version']}") for h in hscms]}]
-    if "to" in request.args:
-        frm, to = request.args.get("from") or None, request.args.get("to") or None
-    elif "from" in request.args:
-        frm, to = request.args.get("from") or None, work_range["to"] if work_range else None
+    if "to" in a:
+        frm, to = a.get("from") or None, a.get("to") or None
+    elif "from" in a:
+        frm, to = a.get("from") or None, work_range["to"] if work_range else None
     else:
         frm, to = (work_range["from"], work_range["to"]) if work_range else (None, None)
     ends, problems = {}, []
@@ -335,11 +337,17 @@ def release_work_context(conn, ci, work_range):
     head, base = ends["to"], ends["from"]
     report, source_error = (live(svc.work_report, conn, ticket_source(), ci["id"], head["version"]["name"],
                                  base["version"]["name"] if base else None) if head else (None, None))
+    filters = {k: a.get(k) or None for k in ("csc", "type", "state")}
+    types = sorted({i["parent"]["type"] for i in report["items"] if i["parent"] and i["parent"].get("type")}) if report else []
+    if report and any(filters.values()):
+        report = svc.filter_report(report, **filters)
     version_count = None
     if head:
         version_count = len(report["versions"]) if report else len(svc.version_range(
             conn, ci["id"], head["version"]["name"], base["version"]["name"] if base else None))
+    cscs = [r["name"] for r in conn.execute("SELECT name FROM csc WHERE ci_id = ? ORDER BY name", (ci["id"],))]
     return dict(ci=ci, choices=choices, frm=frm, to=to, ends=ends, problems=problems, open_all=True,
+                filters=filters, filter_options={"csc": cscs, "type": types},
                 report=report, source_error=source_error, version_count=version_count,
                 lineage=range_timeline(conn, ci, ends))
 

@@ -229,9 +229,6 @@ body.ui {
 .ui-statebar__done { background: var(--ui-state-done); }
 .ui-statebar__cancelled { background: var(--ui-line-strong); }
 .ui-statebar__error { background: var(--ui-state-error); }
-.ui-statecounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; font-size: 12px; }
-.ui-statecounts > div { display: flex; justify-content: space-between; gap: 8px; }
-.ui-statecounts b { font-weight: 600; }
 
 /* ------------------------------------------------------------------ alerts */
 
@@ -466,7 +463,6 @@ body.ui {
 .ui-tl__node.is-current .ui-tl__label { fill: var(--ui-accent-strong); font-weight: 700; }
 .ui-tl__halo { fill: var(--ui-accent-soft); stroke: var(--ui-accent); stroke-width: 1.5; }
 .ui-tl__legend { font-size: 12px; }
-.ui-tl__legend-muted { color: var(--ui-faint); }
 .ui-tl__legend-hl { color: var(--ui-accent); text-shadow: 0 0 0 var(--ui-accent-soft); }
 
 /* Sortable table headers (ui.table with header attrs) */
