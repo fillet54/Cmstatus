@@ -134,12 +134,12 @@ def styleguide_samples():
                v("2026.Q4-b3", "2026.Q4", "rejected", dot="danger")]
     return {
         "graph_sample": graph.layout(lineage),
-        "strip_sample": graph.swimlanes([
-            {"id": 1, "name": "Build 1", "href": "#", "parents": [], "dot": "muted", "caption": "IFC-1", "lane": 0},
-            {"id": 2, "name": "Build 2", "href": "#", "parents": [1], "current": True, "tag": "final", "lane": 0},
-            {"id": 3, "name": "Build 1", "href": "#", "parents": [2], "current": True, "caption": "IFC-2", "lane": 1},
-            {"id": 4, "name": "Build 2", "href": "#", "parents": [3], "dot": "hollow", "lane": 1}],
-            lambda n: n["lane"], horizontal=True),
+        "timeline_sample": graph.timeline([
+            {"id": 1, "name": "Build 1", "date": "2024-01-10", "parents": [], "ifc": "A 1.0", "dot": "muted"},
+            {"id": 2, "name": "HSC1", "date": "2024-04-02", "parents": [1], "ifc": "A 1.0", "final": True},
+            {"id": 3, "name": "HSC1", "date": "2024-06-20", "parents": [2], "ifc": "A 1.0.1", "current": True},
+            {"id": 4, "name": "HSC1.1", "date": "2024-09-15", "parents": [3], "ifc": "A 1.0.1", "dot": "hollow"}],
+            lambda n: n["ifc"], dt.date(2024, 10, 1), 0.6, caption=lambda n: n["ifc"]),
         "progress": progress,
         "tickets": [
             ticket("NAVL-105", "Blend terrain-referenced fixes into the filter", "peer_review", ["2027.Q1-b1"],

@@ -312,8 +312,9 @@ def create_baseline(conn, ref):
 @bp.post("/ifcs/<ref>/hscm")
 @tx
 def import_hscm(conn, ref):
-    """JSON {name, source_ref?, approve?, rows: [{ci, version, type?}]}
-    or text/csv with columns ci,version[,type] and ?name=&source_ref=&approve= query args."""
+    """JSON {name?, source_ref?, approve?, date?, rows: [{ci, version, type?}]}
+    or text/csv with columns ci,version[,type] and ?name=&source_ref=&approve=&date= query args.
+    date: the document's date, recorded as when it was created (and approved, with approve)."""
     if request.mimetype == "text/csv":
         rows = svc.hscm_rows(request.get_data(as_text=True))
         opts = request.args
@@ -322,7 +323,8 @@ def import_hscm(conn, ref):
         opts = body()
         rows = opts.get("rows", [])
         approve = bool(opts.get("approve", True))
-    return created(svc.import_hscm(conn, ref, opts.get("name"), rows, opts.get("source_ref"), approve))
+    return created(svc.import_hscm(conn, ref, opts.get("name"), rows, opts.get("source_ref"), approve,
+                                   opts.get("date")))
 
 
 @bp.get("/baselines/<int:bid>")
@@ -364,7 +366,8 @@ def delete_baseline(conn, bid):
 @bp.post("/baselines/<int:bid>/approve")
 @tx
 def approve_baseline(conn, bid):
-    return jsonify(svc.approve_baseline(conn, bid))
+    """{approved_at?}: backdate the approval"""
+    return jsonify(svc.approve_baseline(conn, bid, body().get("approved_at")))
 
 
 @bp.get("/baselines/<int:a>/diff/<int:b>")

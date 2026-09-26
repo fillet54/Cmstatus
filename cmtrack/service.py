@@ -1502,16 +1502,26 @@ def delete_baseline(conn, baseline_id):
     return {"ifc": _ifc_name(conn, b["ifc_id"]), "name": b["name"]}
 
 
-def _approve(conn, b):
+def _approve(conn, b, at=None):
     prev = current_baseline(conn, b["ifc_id"])
     conn.execute("UPDATE baseline SET status = 'superseded' WHERE ifc_id = ? AND status = 'approved' AND id != ?",
                  (b["ifc_id"], b["id"]))
     conn.execute("UPDATE baseline SET status = 'approved', approved_at = ?, supersedes_id = ? WHERE id = ?",
-                 (now(), prev["id"] if prev and prev["id"] != b["id"] else None, b["id"]))
-    log(conn, "baseline", b["id"], "approved", supersedes=prev["name"] if prev else None)
+                 (at or now(), prev["id"] if prev and prev["id"] != b["id"] else None, b["id"]))
+    log(conn, "baseline", b["id"], "approved", supersedes=prev["name"] if prev else None, **({"at": at} if at else {}))
 
 
-def approve_baseline(conn, baseline_id):
+def _approval_time(conn, b, approved_at):
+    """A backdated approval: in the past, and not before the IFC's current HSCM was approved."""
+    at = _when(approved_at, "approved_at")
+    prev = current_baseline(conn, b["ifc_id"])
+    if prev and prev["id"] != b["id"] and prev["approved_at"] and at < prev["approved_at"]:
+        raise CMError(f"approved_at {at} is before {prev['name']} was approved ({prev['approved_at']})")
+    return at
+
+
+def approve_baseline(conn, baseline_id, approved_at=None):
+    """Approve a draft build; ``approved_at`` backdates it (e.g. recording an HSCM signed off earlier)."""
     b = get_baseline(conn, baseline_id)
     if b["status"] != "draft":
         raise CMError(f"baseline {b['name']} is {b['status']}")
@@ -1521,7 +1531,7 @@ def approve_baseline(conn, baseline_id):
                  for e in entries if e["status"] not in RELEASED]
     if problems:
         raise CMError(f"cannot approve {b['name']}", problems)
-    _approve(conn, b)
+    _approve(conn, b, _approval_time(conn, b, approved_at) if approved_at else None)
     return baseline_detail(conn, b["id"])
 
 
@@ -1577,8 +1587,9 @@ def hscm_rows(text):
     return list(csv.DictReader(io.StringIO(text.strip())))
 
 
-def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
-    """Record a scraped HSCM as the IFC's next build (``name`` defaults to "Build N").
+def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True, date=None):
+    """Record a scraped HSCM as the IFC's next build (``name`` defaults to "Build N"). ``date`` is the document's
+    date: when it was created, and approved if ``approve``.
 
     rows: [{ci, version, type?}]. Unknown CIs become placeholder CIs (managed=0);
     unknown versions become 'external' versions. The HSCM document is the authority,
@@ -1587,6 +1598,9 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
     ifc = get_ifc(conn, ifc_ref)
     seq, base = _next_build(conn, ifc)
     name = name or f"Build {seq}"
+    at = None
+    if date:
+        at = _approval_time(conn, {"id": None, "ifc_id": ifc["id"]}, date) if approve else _when(date, "date")
     warnings, resolved, created_cis = [], {}, []
     for i, row in enumerate(rows, 1):
         ci_name = str(row.get("ci") or "").strip()
@@ -1612,15 +1626,16 @@ def import_hscm(conn, ifc_ref, name, rows, source_ref=None, approve=True):
 
     try:
         cur = conn.execute(
-            "INSERT INTO baseline (ifc_id, seq, name, derived_from_id, source, source_ref) "
-            "VALUES (?, ?, ?, ?, 'scraped', ?)", (ifc["id"], seq, name, base["id"] if base else None, source_ref))
+            "INSERT INTO baseline (ifc_id, seq, name, derived_from_id, source, source_ref, created_at) "
+            "VALUES (?, ?, ?, ?, 'scraped', ?, COALESCE(?, datetime('now')))",
+            (ifc["id"], seq, name, base["id"] if base else None, source_ref, at))
     except sqlite3.IntegrityError:
         raise Conflict(f"baseline {name!r} already exists for {ifc['name']}") from None
     _write_entries(conn, cur.lastrowid, resolved)
     log(conn, "baseline", cur.lastrowid, "imported", ifc=ifc["name"], name=name, build=seq,
         source_ref=source_ref, placeholders=created_cis, warnings=warnings)
     if approve:
-        _approve(conn, get_baseline(conn, cur.lastrowid))
+        _approve(conn, get_baseline(conn, cur.lastrowid), at)
     return {"baseline": baseline_detail(conn, cur.lastrowid), "placeholders_created": created_cis,
             "warnings": warnings}
 

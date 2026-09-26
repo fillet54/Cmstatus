@@ -1,11 +1,14 @@
 """IFC and baseline editing by hand, baseline lineage, and the lineage graphs.  Run: python -m unittest discover -s tests"""
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
 import unittest
 
-from cmtrack import create_app, db, graph
+import datetime as dt
+
+from cmtrack import create_app, db, graph, history
 from cmtrack.demo import seed
 
 
@@ -99,14 +102,21 @@ class BaselineTests(unittest.TestCase):
 
     def test_lineage_views(self):
         page = self.c.get("/").get_data(as_text=True)
-        self.assertEqual(page.count('class="ui-strip"'), 1)                               # one graph for all IFCs
-        current = self.baseline("IFC-1", "Build 2")["id"]
-        self.assertIn(f'<a href="/baselines/{current}" class="ui-strip__node is-current" aria-current="true">', page)
-        self.assertEqual(page.count("is-current"), 1)                                     # IFC-2 has only a draft
-        self.assertIn(">final</text>", page)
-        for name in ("IFC-1", "IFC-2"):
-            self.assertIn(f'ui-strip__caption', page)
-            self.assertIn(f">{name}</text>", page)
+        self.assertEqual(page.count('class="ui-timeline"'), 1)                            # one timeline for all IFCs
+        self.assertIn(">B1<", page)                                                       # short labels
+        self.assertIn(">B2<", page)
+        self.assertEqual(page.count("is-current"), 0)       # IFC-1 is final (ringed, not highlighted), IFC-2 a draft
+        self.assertIn("ui-graph__ring", page)
+        self.assertIn(">IFC-2</text>", page)                                              # lane captions
+        for zoom in ("years", "quarters", "months", "weeks"):
+            frag = self.c.get(f"/fragments/ifc-timeline?zoom={zoom}").get_data(as_text=True)
+            self.assertIn('id="ifc-timeline"', frag)
+            self.assertNotIn("<html", frag)
+        self.assertIn('class="ui-timeline is-dense"', self.c.get("/fragments/ifc-timeline?zoom=years").get_data(as_text=True))
+        wide = self.c.get("/fragments/ifc-timeline?zoom=years&width=1500").get_data(as_text=True)
+        self.assertIn('<svg class="ui-timeline__svg" width="1500"', wide)                  # fitted to the box
+        months = self.c.get("/fragments/ifc-timeline?zoom=months&width=300").get_data(as_text=True)
+        self.assertNotIn('width="300"', months)                                          # never squeezed
         page = self.c.get("/ifcs").get_data(as_text=True)
         self.assertEqual(page.count('<li class="ui-graph__row'), 3)                       # IFC-1 B1, B2, IFC-2 B1
         page = self.c.get("/ifcs/IFC-2").get_data(as_text=True)
@@ -122,6 +132,41 @@ class BaselineTests(unittest.TestCase):
         self.assertIn("ui-graph__merge", page)                                        # Q1-b1 merges ER1
         rows = page.split('class="ui-graph__rows"')[1]
         self.assertLess(rows.index("2027.Q2-b3"), rows.index("2026.Q4-b1"))           # newest first
+
+    def test_backdating(self):
+        api = lambda m, p, d=None: getattr(self.c, m)("/api" + p, json=d)
+        api("post", "/ifcs", {"name": "IFC-9"})
+        rows = [{"ci": "NAV-SW", "version": "2026.Q4-b4"}]
+        r = api("post", "/ifcs/IFC-9/hscm", {"rows": rows, "date": "2021-05-01"})
+        self.assertEqual(r.get_json()["baseline"]["approved_at"], "2021-05-01T00:00:00+00:00")
+        r = api("post", "/ifcs/IFC-9/hscm", {"rows": rows, "date": "2021-06-01", "approve": False})
+        b2 = r.get_json()["baseline"]
+        self.assertTrue(b2["created_at"].startswith("2021-06-01"))
+        self.assertEqual(api("post", f"/baselines/{b2['id']}/approve", {"approved_at": "2021-04-01"}).status_code, 400)
+        future = (dt.date.today() + dt.timedelta(days=30)).isoformat()
+        self.assertEqual(api("post", f"/baselines/{b2['id']}/approve", {"approved_at": future}).status_code, 400)
+        self.assertEqual(api("post", f"/baselines/{b2['id']}/approve", {"approved_at": "2021-07-02"}).get_json()
+                         ["approved_at"], "2021-07-02T00:00:00+00:00")
+
+    def test_history_generate_and_load(self):
+        data = history.generate(seed=3, today=dt.date(2024, 1, 1))
+        self.assertTrue(all(e["at"] <= "2024-01-01" for e in data["events"]))
+        names = {i["name"] for i in data["ifcs"]}
+        for i in data["ifcs"]:
+            if i["spawned_from"]:
+                self.assertIn(i["spawned_from"]["ifc"], names)
+        path = os.path.join(self.tmp, "t.db")
+        history.load(data, history.InProcess(path), out=lambda *_: None)
+        ifc = self.api("/ifcs/IFC%20A%201.0.2.1")
+        self.assertEqual(ifc["spawned_from"]["ifc"], "IFC A 1.0.2")
+        self.assertEqual([b["name"] for b in ifc["baselines"]][:1], ["HSC1"])        # long versions: HSCs only
+        self.assertEqual([b["name"] for b in self.api("/ifcs/IFC%20A%201.0")["baselines"]][:4],
+                         ["Build 1", "Build 2", "Build 3", "HSC1"])
+        self.assertEqual(self.c.get("/").status_code, 200)
+        history.reset(path)
+        self.assertEqual(self.api("/ifcs"), [])
+        self.assertEqual(self.c.get("/api/cis/CORE-SW").status_code, 404)             # placeholders gone too
+        self.assertEqual(self.api("/cis/NAV-SW")["name"], "NAV-SW")                  # managed CIs kept
 
     def test_migration_to_spawned_ifcs_and_builds(self):
         path = os.path.join(self.tmp, "old.db")
@@ -181,6 +226,34 @@ class GraphLayoutTests(unittest.TestCase):
         self.assertEqual(xy[2][1], xy[4][1])
         self.assertGreater(xy[2][1], xy[1][1])
         self.assertEqual(len(g["edges"]), 3)
+
+    def test_swimlanes_reuse_lanes(self):
+        # a: 1-2-3; b branches off a1 and ends before c starts; c branches off a3
+        nodes = [{"id": 1, "parents": [], "g": "a"}, {"id": 2, "parents": [1], "g": "b"},
+                 {"id": 3, "parents": [1], "g": "a"}, {"id": 4, "parents": [2], "g": "b"},
+                 {"id": 5, "parents": [3], "g": "a"}, {"id": 6, "parents": [5], "g": "c"}]
+        g = graph.swimlanes(nodes, lambda n: n["g"])
+        lanes = {n["id"]: n["lane"] for n in g["nodes"]}
+        self.assertEqual((lanes[2], lanes[6]), (1, 1))                                 # c reuses b's lane
+
+    def test_timeline(self):
+        nodes = [{"id": 1, "name": "Build 1", "parents": [], "g": "a", "date": "2020-01-01"},
+                 {"id": 2, "name": "HSC1", "parents": [1], "g": "a", "date": "2020-03-01"},
+                 {"id": 3, "name": "HSC1", "parents": [2], "g": "b", "date": "2020-04-01"},
+                 {"id": 4, "name": "HSC1.1", "parents": [3], "g": "b", "date": "2020-06-01"},
+                 {"id": 5, "name": "HSC1.1", "parents": [2], "g": "a", "date": "2021-05-01"},
+                 {"id": 6, "name": "HSC1", "parents": [5], "g": "c", "date": "2021-06-01"}]
+        t = graph.timeline(nodes, lambda n: n["g"], dt.date(2021, 7, 1), 1.0, caption=lambda n: n["g"].upper())
+        at = {n["id"]: n for n in t["nodes"]}
+        self.assertEqual([at[i]["label"] for i in (1, 2, 4)], ["B1", "H1", "H1.1"])
+        self.assertEqual(at[2]["x"] - at[1]["x"], 60)                                   # 60 days at 1 px/day
+        self.assertEqual((at[1]["lane"], at[3]["lane"], at[6]["lane"]), (0, 1, 1))     # c reuses b's lane
+        self.assertEqual(t["today_x"] - at[6]["x"], 30)
+        self.assertEqual([c["text"] for c in t["captions"]], ["A", "B", "C"])
+        self.assertEqual(len(t["edges"]), 5)
+        self.assertIn("2021", [k["label"] for k in t["ticks"] if k["major"]])
+        self.assertEqual(graph.short_label("Build 12"), "B12")
+        self.assertEqual(graph.short_label("Delta drop"), "Delta d")
 
     def test_newest_first_keeps_children_above_parents(self):
         nodes = [{"id": 1, "parents": [], "t": 3}, {"id": 2, "parents": [1], "t": 1}, {"id": 3, "parents": [], "t": 2}]

@@ -168,11 +168,11 @@
     </div>
   {% endcall %}
 
-{% set code %}{% raw %}{# g = graph.swimlanes(nodes, lane, horizontal=True): nodes carry name, href, title?, dot?, current?, caption?, tag? #}
-{{ ui.graph_strip(g, label="IFC lineage") }}
+{% set code %}{% raw %}{# t = graph.timeline(nodes, group, today, px_per_day, caption=..., fit_width=...) #}
+{{ ui.timeline(t, label="IFC timeline", refit=url_for(...), target="#ifc-timeline") }}
 {% endraw %}{% endset %}
-  {% call example("graph_strip (horizontal lineage)", code) %}
-    {% call ui.card() %}{% call ui.card_body() %}{{ ui.graph_strip(strip_sample, label="Sample baseline lineage") }}{% endcall %}{% endcall %}
+  {% call example("timeline", code) %}
+    {{ ui.timeline(timeline_sample, label="Sample IFC timeline") }}
   {% endcall %}
 </section>
 

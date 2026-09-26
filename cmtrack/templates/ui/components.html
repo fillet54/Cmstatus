@@ -597,27 +597,37 @@
 </div>
 {%- endmacro %}
 
-{#- Horizontal lineage strip (graph.layout / graph.swimlanes with horizontal=True): oldest left, newest right,
-    each node a link labelled with its name. Nodes carry `name`, `href`, `title`, `dot` / `current` as for
-    ui.graph, and optionally `caption` (shown above, e.g. the lane's name at its first node) and `tag` (below). #}
-{% macro graph_strip(g, label) -%}
-{%- set top, h = 16, g.height + 16 + 30 %}
-<div class="ui-strip" role="group" aria-label="{{ label }}">
-  <svg class="ui-strip__svg" width="{{ g.width }}" height="{{ h }}" viewBox="0 0 {{ g.width }} {{ h }}">
-    <g transform="translate(0 {{ top }})">
-    {%- for e in g.edges %}<path class="ui-graph__l{{ e.color }}{% if e.merge %} ui-graph__merge{% endif %}" d="{{ e.d }}" aria-hidden="true"/>{% endfor %}
-    {%- for n in g.nodes %}
-    <a href="{{ n.href }}" class="ui-strip__node{% if n.current %} is-current{% endif %}"{% if n.current %} aria-current="true"{% endif %}>
-      <title>{{ n.title or n.name }}</title>
-      {%- if n.current %}<rect class="ui-strip__hl" x="{{ n.x - g.row // 2 + 4 }}" y="{{ n.y - 13 }}" width="{{ g.row - 8 }}" height="{{ 44 if not n.tag else 56 }}" rx="6"/>{% endif %}
-      {%- if n.caption %}<text class="ui-strip__caption ui-graph__l{{ n.color }}" x="{{ n.x }}" y="{{ n.y - 16 }}" text-anchor="middle">{{ n.caption | truncate(14, True, "…", 0) }}</text>{% endif %}
-      {%- if n.current %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="8"/>{% endif %}
-      <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="5"/>
-      <text class="ui-strip__label" x="{{ n.x }}" y="{{ n.y + 22 }}" text-anchor="middle">{{ n.name | truncate(14, True, "…", 0) }}</text>
-      {%- if n.tag %}<text class="ui-strip__tag" x="{{ n.x }}" y="{{ n.y + 35 }}" text-anchor="middle">{{ n.tag }}</text>{% endif %}
+
+{#- Timeline (graph.timeline): x is time, a lane per active line. Scrolls sideways inside its container and
+    opens centred on today (static/timeline.js). Nodes carry `href`, `title`, `label`, `dot`, `current`
+    (highlighted), `final` (ringed). With `refit` (a URL that takes ?width=) and `target`, a timeline narrower
+    than its box is fetched again at that width and swapped into `target`, so it always fills the box. #}
+{% macro timeline(t, label, refit=None, target=None) -%}
+<div class="ui-timeline{% if t.dense %} is-dense{% endif %}" data-center="{{ t.today_x }}" role="group" aria-label="{{ label }}" tabindex="0"
+     {%- if refit %} data-refit="{{ refit }}" data-refit-target="{{ target }}"{% endif %}>
+  <svg class="ui-timeline__svg" width="{{ t.width }}" height="{{ t.height }}" viewBox="0 0 {{ t.width }} {{ t.height }}">
+    <g class="ui-tl__axis" aria-hidden="true">
+      {%- for k in t.ticks %}
+      {%- if k.major %}<line class="ui-tl__grid" x1="{{ k.x }}" x2="{{ k.x }}" y1="4" y2="{{ t.height }}"/><text class="ui-tl__year" x="{{ k.x + 4 }}" y="13">{{ k.label }}</text>
+      {%- else %}<line class="ui-tl__tick" x1="{{ k.x }}" x2="{{ k.x }}" y1="18" y2="28"/>{% if not t.dense %}<text class="ui-tl__minor" x="{{ k.x + 3 }}" y="27">{{ k.label }}</text>{% endif %}{% endif %}
+      {%- endfor %}
+      <line class="ui-tl__base" x1="0" x2="{{ t.width }}" y1="30" y2="30"/>
+      <line class="ui-tl__today" x1="{{ t.today_x }}" x2="{{ t.today_x }}" y1="30" y2="{{ t.height }}"/>
+      <text class="ui-tl__today-label" x="{{ t.today_x + 4 }}" y="{{ t.height - 5 }}">Today</text>
+    </g>
+    {%- for e in t.edges %}<path class="ui-graph__l{{ e.color }}{% if e.merge %} ui-graph__merge{% endif %}" d="{{ e.d }}" aria-hidden="true"/>{% endfor %}
+    {%- for c in t.captions %}
+    <a href="{{ c.href }}" class="ui-tl__caption-link"><text class="ui-tl__caption ui-graph__l{{ c.color }}" x="{{ c.x }}" y="{{ c.y }}">{{ c.text }}</text></a>
+    {%- endfor %}
+    {%- for n in t.nodes %}
+    <a href="{{ n.href }}" class="ui-tl__node{% if n.current %} is-current{% endif %}"{% if n.current %} aria-current="true"{% endif %}>
+      <title>{{ n.title }}</title>
+      {%- if n.current %}<circle class="ui-tl__halo" cx="{{ n.x }}" cy="{{ n.y }}" r="9"/>{% endif %}
+      {%- if n.final %}<circle class="ui-graph__ring ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="7"/>{% endif %}
+      <circle class="ui-graph__dot ui-graph__dot--{{ n.dot or 'solid' }} ui-graph__l{{ n.color }}" cx="{{ n.x }}" cy="{{ n.y }}" r="4"/>
+      <text class="ui-tl__label" x="{{ n.x + 7 }}" y="{{ n.y + 3.5 }}">{{ n.label }}</text>
     </a>
     {%- endfor %}
-    </g>
   </svg>
 </div>
 {%- endmacro %}

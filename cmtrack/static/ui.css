@@ -429,7 +429,7 @@ body.ui {
 .ui-graph__l2 { color: var(--ui-review); }
 .ui-graph__l3 { color: var(--ui-warning); }
 .ui-graph__l4 { color: var(--ui-verify); }
-.ui-graph__l5 { color: var(--ui-danger); }
+.ui-graph__l5 { color: #A2477A; }   /* magenta: not the danger red, so no lane reads as an error */
 .ui-graph__rows { list-style: none; margin: 0; padding: 0; }
 .ui-graph__row { display: flex; align-items: center; gap: 10px; height: var(--ui-graph-row); min-width: 0;
                  padding: 0 12px 0 calc(var(--ui-graph-w) + 24px); border-bottom: 1px solid var(--ui-line-soft); }
@@ -440,16 +440,29 @@ body.ui {
 .ui-graph__row > .ui-graph__meta { display: flex; align-items: center; gap: 8px; flex: none; color: var(--ui-muted); font-size: 12px; }
 @media (max-width: 640px) { .ui-graph__row > .ui-graph__meta { display: none; } }
 
-/* Horizontal lineage strip (ui.graph_strip): scrolls sideways inside its container, never the page */
-.ui-strip { overflow-x: auto; overflow-y: hidden; padding: 4px 0; direction: rtl; }   /* rtl: starts scrolled to the newest end */
-.ui-strip__svg { display: block; overflow: visible; direction: ltr; margin-right: auto; }   /* short strips stay left */
-.ui-strip__svg path { fill: none; stroke: currentColor; stroke-width: 2; }
-.ui-strip__svg .ui-graph__merge { stroke-dasharray: 4 3; }
-.ui-strip__label { font: 500 11px var(--ui-font-mono); fill: var(--ui-muted); paint-order: stroke; stroke: var(--ui-surface); stroke-width: 3px; }
-.ui-strip__node:hover .ui-strip__label, .ui-strip__node:focus-visible .ui-strip__label { fill: var(--ui-ink); text-decoration: underline; }
-.ui-strip__node:focus-visible { outline: none; }
-.ui-strip__node:focus-visible .ui-graph__dot { stroke: var(--ui-focus); stroke-width: 3; }
-.ui-strip__hl { fill: var(--ui-accent-soft); stroke: var(--ui-accent); stroke-width: 1; }
-.ui-strip__node.is-current .ui-strip__label { fill: var(--ui-accent-strong); font-weight: 700; stroke: var(--ui-accent-soft); }
-.ui-strip__caption { font: 700 11px var(--ui-font-sans); fill: currentColor; paint-order: stroke; stroke: var(--ui-surface); stroke-width: 3px; }
-.ui-strip__tag { font: 600 10px var(--ui-font-sans); fill: var(--ui-success-ink); text-transform: uppercase; letter-spacing: .04em; }
+/* Timeline (ui.timeline): time on x, a lane per active line; scrolls sideways, starts centred on today */
+.ui-timeline { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--ui-line-soft); border-radius: var(--ui-radius);
+               background: var(--ui-sunken); }
+.ui-timeline:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.ui-timeline__svg { display: block; }
+.ui-timeline__svg path { fill: none; stroke: currentColor; stroke-width: 1.75; }
+.ui-timeline__svg .ui-graph__merge { stroke-dasharray: 4 3; }
+.ui-tl__grid { stroke: var(--ui-line); stroke-width: 1; }
+.ui-tl__tick { stroke: var(--ui-line-strong); stroke-width: 1; }
+.ui-tl__base { stroke: var(--ui-line); stroke-width: 1; }
+.ui-tl__year { font: 600 11px var(--ui-font-sans); fill: var(--ui-ink); }
+.ui-tl__minor { font: 500 9px var(--ui-font-sans); fill: var(--ui-faint); }
+.ui-tl__today { stroke: var(--ui-danger); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.ui-tl__today-label { font: 700 10px var(--ui-font-sans); fill: var(--ui-danger); text-transform: uppercase; letter-spacing: .04em; }
+.ui-tl__caption { font: 700 10px var(--ui-font-sans); fill: currentColor; paint-order: stroke; stroke: var(--ui-sunken); stroke-width: 3px; }
+.ui-tl__caption-link:hover .ui-tl__caption { text-decoration: underline; }
+.ui-tl__label { font: 500 10px var(--ui-font-mono); fill: var(--ui-muted); paint-order: stroke; stroke: var(--ui-sunken); stroke-width: 3px; }
+.ui-timeline.is-dense .ui-tl__label, .ui-timeline.is-dense .ui-tl__caption { display: none; }
+.ui-tl__node:hover .ui-tl__label, .ui-tl__node:focus-visible .ui-tl__label { fill: var(--ui-ink); }
+.ui-tl__node:focus-visible { outline: none; }
+.ui-tl__node:focus-visible .ui-graph__dot { stroke: var(--ui-focus); stroke-width: 3; }
+.ui-tl__node.is-current .ui-tl__label { fill: var(--ui-accent-strong); font-weight: 700; }
+.ui-tl__halo { fill: var(--ui-accent-soft); stroke: var(--ui-accent); stroke-width: 1.5; }
+.ui-tl__legend { font-size: 12px; }
+.ui-tl__legend-muted { color: var(--ui-faint); }
+.ui-tl__legend-hl { color: var(--ui-accent); text-shadow: 0 0 0 var(--ui-accent-soft); }

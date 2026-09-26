@@ -16,12 +16,12 @@
   {% endif %}
 {% endcall %}
 
-{% if ifc_lineage.nodes %}
-{% call ui.card(flush=True) %}
-  {% call ui.card_header("IFC lineage", "each IFC's HSCM builds, oldest to newest · each IFC's current build is highlighted") %}
+{% if t.nodes %}
+{% call ui.card() %}
+  {% call ui.card_header("IFC timeline", "every IFC's HSCMs by date · a new IFC branches off the HSCM it spawned from") %}
     {{ ui.button("Capabilities", href=url_for('ui.ifcs'), size="sm", variant="ghost") }}
   {% endcall %}
-  {% call ui.card_body() %}{{ ui.graph_strip(ifc_lineage, label="IFC and HSCM lineage") }}{% endcall %}
+  {% call ui.card_body() %}{% include "_ifc_timeline.html" %}{% endcall %}
 {% endcall %}
 {% endif %}
 
@@ -78,3 +78,4 @@
   {% endcall %}
 </div>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='timeline.js') }}"></script>{% endblock %}

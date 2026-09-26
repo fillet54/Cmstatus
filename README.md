@@ -6,6 +6,7 @@ Python 3.10+, Flask, SQLite. No other dependencies.
 ```
 python -m cmtrack                      # dev server on :5000, DB in ./cmtrack.db
 python -m unittest discover -s tests   # end-to-end scenario + views
+python -m cmtrack.history load data/ifc_history.json --db cmtrack.db [--reset]   # years of IFC/HSCM history
 python -m cmtrack.demo --db demo.db    # load a demo scenario, then:
 CMTRACK_DB=demo.db CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source \
   CMTRACK_RELEASE_SOURCES=jira=cmtrack.demo:demo_release_source python -m cmtrack
@@ -207,10 +208,10 @@ GET  /versions/<id>/where-used     composites + baselines, transitively
 POST /ifcs                         {name, spawned_from?: baseline id, description?}
 GET  /ifcs/<ifc>                   spawned_from, ancestors, spawned, builds, final, draft, current HSCM
 POST /ifcs/<ifc>/final             mark the latest (approved) build final    DELETE /ifcs/<ifc>/final  reopen
-POST /ifcs/<ifc>/hscm              JSON {name, rows:[{ci, version, type?}], source_ref?, approve?}
-                                   or text/csv (ci,version[,type]) with ?name=&source_ref=
+POST /ifcs/<ifc>/hscm              JSON {name?, rows:[{ci, version, type?}], source_ref?, approve?, date?}
+                                   or text/csv (ci,version[,type]) with ?name=&source_ref=&date=
 POST /ifcs/<ifc>/baselines         {name?, entries?}  → the next build, a draft ("Build N"; starts from the previous build)
-PUT  /baselines/<id>/entries   POST /baselines/<id>/approve
+PUT  /baselines/<id>/entries   POST /baselines/<id>/approve {approved_at?: backdate}
 PUT  /baselines/<id>/entries/<ci> {version}   DELETE /baselines/<id>/entries/<ci>   (drafts)
 POST /baselines/<id>/refresh      move entries behind their effective version up to it (drafts)
 DELETE /baselines/<id>            discard a draft build
@@ -239,7 +240,8 @@ requests and the full page otherwise (boosted navigation and history restores al
 every URL works as a plain link.
 
 ```
-/                     dashboard: counts, IFC lineage (every IFC's builds in its own lane, current ones highlighted),
+/                     dashboard: counts, IFC timeline (HSCMs by date, a lane per active IFC, spawns branching off;
+                      zoom years/quarters/months/weeks, opens on today, always at least full width),
                       open patch/emergency releases, upcoming releases,
                       HSCM entries behind their effective version, recent activity (polls every 30s)
 /cis                  CI list; search + type/managed filters re-render the rows via htmx
@@ -288,7 +290,7 @@ Macros: shell (`marking_banner`, `app_header`), structure (`page_header`, `bread
 `state_counts`), feedback (`alert`, `empty`), actions (`button`, `icon_button`, `button_group`, `icon`), forms
 (`field`, `input`, `select`, `checkbox`, `search_box`, `segmented`, `tabs`), data (`table`, `empty_row`, `dl`,
 `audit_list`, `stamp`, `disclosure`), release sources (`source_state`, `pinned`), tickets and backlogs (`ticket_ref`, `ticket_line`, `group_label`, `rank_item`, `drop_line`,
-`lineage`, `graph`, `graph_strip`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
+`lineage`, `graph`, `timeline`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
 
 Every status is a glyph and a word as well as a colour. Identifiers are monospace, times always UTC (`utc` filter:
 `2026-09-23 14:24Z`), focus is always visible. Config in `cmtrack/ui.py`: `CMTRACK_MARKING` (+
@@ -297,8 +299,9 @@ Every status is a glyph and a word as well as a colour. Identifiers are monospac
 Forms post plain HTML (boosted by htmx, `hx-push-url="false"`) and redirect back; the layout's `htmx-config`
 swaps 4xx/5xx responses too, so a failed post shows the error page instead of silently doing nothing.
 
-Pages extend `ui/layout.html`, import the macros and add no page-specific CSS. The only page script is
-`static/backlog.js` (backlog drag and drop).
+Pages extend `ui/layout.html`, import the macros and add no page-specific CSS. The only page scripts are
+`static/backlog.js` (backlog drag and drop) and `static/timeline.js` (centres a timeline on today, and re-fetches
+one that is narrower than its box at the box's width).
 
 ## Not yet built (next iterations)
 - Jira: the `TicketSource` for your Jira client; discrepancy/feature trace; a cross-CI "tickets in error" view

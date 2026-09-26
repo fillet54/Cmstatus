@@ -6,6 +6,7 @@ built from the macros in ui/components.html. Forms post here: backlog forms get 
 back (drag-and-drop ranking in static/backlog.js calls the JSON API, POST /api/backlogs/<b>/items/<key>/move);
 release and version forms (sync, add, correct, remap, detach) redirect back to the page they came from.
 """
+import datetime as dt
 import json
 
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
@@ -130,7 +131,7 @@ def dashboard():
                   for e in with_staleness(conn, svc.baseline_entries(conn, b["id"])) if e["effective"]]
     return render_template("dashboard.html", counts=counts, open_children=open_children, upcoming=upcoming,
                            stale=stale, events=svc.to_dicts(svc.list_events(conn, limit=10)),
-                           ifc_lineage=ifc_graph(conn, horizontal=True))
+                           t=ifc_timeline(conn, request.args.get("zoom", "months")))
 
 
 @bp.get("/fragments/recent-events")
@@ -267,13 +268,35 @@ def _hscm_node(b, **extra):
             "title": f"{b['ifc']} {b['name']} ({status})", **extra}
 
 
-def ifc_graph(conn, horizontal=False):
-    """Every IFC's HSCM builds, one lane per IFC (in creation order), with each IFC's Build 1 branching off the
-    HSCM it was spawned from. Each IFC's current (latest approved) build is marked."""
-    rows = svc.baseline_lineage(conn)
-    lanes = {i["id"]: n for n, i in enumerate(svc.list_ifcs(conn))}
-    nodes = [_hscm_node(b, caption=b["ifc"] if b["seq"] == 1 else None) for b in rows]
-    return graph.swimlanes(nodes, lambda n: lanes[n["ifc_id"]], horizontal=horizontal)
+def ifc_graph(conn):
+    """Every IFC's HSCM builds, a lane per IFC while it's active (lanes are reused once an IFC is done), with each
+    IFC's Build 1 branching off the HSCM it was spawned from. Each IFC's current (latest approved) build is marked."""
+    nodes = [_hscm_node(b, caption=b["ifc"] if b["seq"] == 1 else None) for b in svc.baseline_lineage(conn)]
+    return graph.swimlanes(nodes, lambda n: n["ifc_id"])
+
+
+def ifc_timeline(conn, zoom="months", width=None):
+    """Every IFC's HSCMs on a time axis (graph.timeline): a lane per active IFC, spawns branching off the HSCM
+    they came from. In-progress IFCs' current HSCMs are highlighted; final ones are ringed. ``width`` is the
+    timeline's box in the browser: a zoom too small to fill it is stretched to fit."""
+    nodes = []
+    for b in svc.baseline_lineage(conn):
+        when = b["approved_at"] or b["created_at"]
+        status = "final" if b["final"] else b["status"]
+        nodes.append({**_hscm_node(b), "date": when, "current": b["status"] == "approved" and not b["final"],
+                      "title": f"{b['ifc']} {b['name']} · {status} · {str(when)[:10]}",
+                      "group_href": url_for("ui.ifc", ref=b["ifc"])})
+    zoom = zoom if zoom in graph.ZOOMS else "months"
+    t = graph.timeline(nodes, lambda n: n["ifc_id"], dt.date.today(), graph.ZOOMS[zoom],
+                       caption=lambda n: n["ifc"].removeprefix("IFC "), fit_width=width if width and width > 0 else None)
+    return {**t, "zoom": zoom}
+
+
+@bp.get("/fragments/ifc-timeline")
+def ifc_timeline_fragment():
+    """The timeline at ?zoom=, fitted to ?width= (the zoom buttons and static/timeline.js send it)."""
+    a = request.args
+    return render_template("_ifc_timeline.html", t=ifc_timeline(get_db(), a.get("zoom", "months"), a.get("width", type=int)))
 
 
 def ifc_builds_graph(conn, ifc):
@@ -284,7 +307,7 @@ def ifc_builds_graph(conn, ifc):
     if point:
         p = next(b for b in svc.baseline_lineage(conn) if b["id"] == point["id"])
         nodes.insert(0, _hscm_node(p, dot="muted", current=False, parents=[], spawn=True))
-    return graph.swimlanes(nodes, lambda n: 1 if n.get("spawn") else 0)
+    return graph.swimlanes(nodes, lambda n: "spawn" if n.get("spawn") else "ifc")
 
 
 def version_graph(conn, ci_id):
