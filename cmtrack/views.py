@@ -241,7 +241,7 @@ def release(rid):
                options=edit_options(conn, r), ci_row=svc.get_ci(conn, r["ci_id"]))
     if is_fragment() and request.args.get("section") != "work":      # the CI page's release panel
         return page("release.html", "_release.html", **ctx)
-    ctx.update(release_work_context(conn, ctx["ci_row"], work_range))
+    ctx.update(release_work_context(conn, ctx["ci_row"], work_range), standalone=True)
     return page("release.html", "_work.html", **ctx)                 # the page, or its tickets section
 
 

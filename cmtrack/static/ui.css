@@ -310,7 +310,7 @@ body.ui {
 .ui-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 13px; }
 .ui-dl dt { color: var(--ui-muted); }
 .ui-dl dd { margin: 0; }
-.ui-dl--cols { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
+.ui-dl--cols { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 16px; }   /* as many columns as fit */
 .ui-dl--cols > div > dt { font-size: 12px; }
 
 .ui-empty { padding: 28px 16px; text-align: center; color: var(--ui-muted); font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -496,3 +496,14 @@ body.ui {
 .ui-pick__show .ui-spinner + [data-pick-edit] { margin-left: 0; }
 .ui-tl__note { font: 600 9.5px var(--ui-font-sans); fill: var(--ui-accent-strong); paint-order: stroke; stroke: var(--ui-sunken); stroke-width: 3px; }
 .ui-timeline.is-dense .ui-tl__note { display: none; }
+
+/* Dialogs (ui.dialog, a native <dialog> opened with showModal) */
+.ui-dialog { width: min(560px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-lg);
+             background: var(--ui-surface); color: var(--ui-ink); box-shadow: var(--ui-shadow-lift); }
+.ui-dialog::backdrop { background: rgba(27, 31, 36, 0.35); }
+.ui-dialog__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 10px 16px;
+                   border-bottom: 1px solid var(--ui-line-soft); }
+.ui-dialog__title { margin: 0; font-size: 15px; font-weight: 600; }
+.ui-dialog__body { padding: 16px; }
+.ui-dialog__body + .ui-dialog__body { border-top: 1px solid var(--ui-line-soft); }
+.ui-dialog__danger { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ui-line-soft); }

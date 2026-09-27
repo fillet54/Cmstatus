@@ -239,7 +239,8 @@ every URL works as a plain link.
 /cis                  CI list; search + type/managed filters re-render the rows via htmx
 /cis/<ci>             releases grouped by family (click one to load its panel), "Needs attention" (remap, detach,
                       cancel), sync / preview sync, last sync summary, add a release by hand, where fielded, CSCs
-/releases/<id>        release details, versions, baselines behind, unabsorbed fixes, and tickets for what's new in
+/releases/<id>        top to bottom: work status for the range, the From/To comparison and filters, the release's
+                      details (Edit / Add a build / Correct date open dialogs), then the versions and tickets for what's new in
                       this release. From/to selectors compare any version, release, or HSCM; the selected versions
                       appear on a timeline, and parent tickets expand to CSC ticket rows in aligned columns.
                       Filters (?csc=, ?type= e.g. Feature / Discrepancy, ?state=open|blocked|done) narrow the tickets
@@ -283,7 +284,7 @@ snippet, plus a CI overview page built only from macros.
 Macros: shell (`marking_banner`, `app_header`), structure (`page_header`, `breadcrumbs`, `card`, `card_header`, `card_body`,
 `card_section`, `card_footer`, `stats`/`stat`, `section_label`), identifiers (`ident`, `chip`, `badge`, `kbd`,
 `timestamp`), status (`version_status`, `version_glyph`, `release_kind`, `baseline_status`, `state_pill`,
-`state_glyph`, `state_reason`, `state_bar`), feedback (`alert`, `empty`), actions (`button`, `icon_button`, `icon`),
+`state_glyph`, `state_reason`, `state_bar`), feedback (`alert`, `empty`), actions (`button`, `icon_button`, `icon`, `dialog` / `dialog_button`),
 forms (`field`, `input`, `select` (optgroups; `data-picker` for the fuzzy picker), `checkbox`, `search_box`,
 `segmented`, `tabs`), data (`table` (sortable headers), `empty_row`, `dl`, `kv`, `activity`, `disclosure`), release
 sources (`source_state`, `pinned`), tickets and backlogs (`ticket_ref`, `version_chip`, `ticket_line`,

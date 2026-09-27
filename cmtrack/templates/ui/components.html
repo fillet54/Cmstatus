@@ -481,6 +481,23 @@
 </details>
 {%- endmacro %}
 
+{#- A modal dialog (native <dialog>): open it with dialog_button(id, ...); the × closes it without submitting.
+    Body is the caller (usually a form that posts and redirects back). #}
+{% macro dialog(id, title) -%}
+<dialog class="ui-dialog" id="{{ id }}" aria-labelledby="{{ id }}-title">
+  <div class="ui-dialog__head">
+    <h2 class="ui-dialog__title" id="{{ id }}-title">{{ title }}</h2>
+    <form method="dialog"><button class="ui-btn ui-btn--icon ui-btn--ghost ui-btn--sm" type="submit" aria-label="Close" title="Close">{{ icon("x", 14) }}</button></form>
+  </div>
+  <div class="ui-dialog__body">{{ caller() }}</div>
+</dialog>
+{%- endmacro %}
+
+{#- A button that opens ui.dialog `id`. #}
+{% macro dialog_button(id, label, icon=None, variant="secondary") -%}
+{{ button(label, variant=variant, size="sm", icon=icon, attrs={"onclick": "document.getElementById('" ~ id ~ "').showModal()", "aria-haspopup": "dialog"}) }}
+{%- endmacro %}
+
 {#- A collapsible section (edit forms, details). Body is the caller; `pad` gives it card padding. #}
 {% macro disclosure(title, subtitle=None, open=False, pad=True, cls="", attrs=None) -%}
 <details class="ui-disclosure {{ cls }}"{% if open %} open{% endif %}{{ (attrs or {}) | xmlattr }}>

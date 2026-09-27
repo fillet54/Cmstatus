@@ -341,6 +341,26 @@
       {% call ui.disclosure("Add a build") %}<span class="ui-muted">collapsed by default</span>{% endcall %}
     {% endcall %}
   {% endcall %}
+  {% set code %}{% raw %}
+{{ ui.dialog_button("edit-release-7", "Edit", icon="edit") }}
+{% call ui.dialog("edit-release-7", "Edit 2027.Q1") %}
+  <form method="post" action="...">...</form>      {# posts and redirects back; the × closes without saving #}
+{% endcall %}
+{% endraw %}{% endset %}
+  {% call example("dialog · dialog_button (edit and add forms)", code) %}
+    <div class="sg-demo">
+      {{ ui.dialog_button("sg-dialog", "Edit", icon="edit") }}
+      {% call ui.dialog("sg-dialog", "Edit 2027.Q1") %}
+        <form class="ui-stack" style="--ui-gap: 12px;" method="dialog">
+          <div class="ui-form-grid">
+            {% call ui.field("Name", "sg-d-name") %}{{ ui.input("name", "2027.Q1", id="sg-d-name", mono=True) }}{% endcall %}
+            {% call ui.field("Target date", "sg-d-date") %}{{ ui.input("target_date", "2027-03-15", type="date", id="sg-d-date") }}{% endcall %}
+          </div>
+          <div class="ui-row">{{ ui.button("Save", variant="primary", type="submit") }}</div>
+        </form>
+      {% endcall %}
+    </div>
+  {% endcall %}
 </section>
 
 {# ------------------------------------------------------------------------------------------ data #}

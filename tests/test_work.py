@@ -117,7 +117,11 @@ class WorkTests(unittest.TestCase):
 
     def test_release_page_ticket_and_version_status(self):
         default = self.c.get(f"/releases/{self.rid('2027.Q1')}").get_data(as_text=True)
-        self.assertIn("Tickets and comparisons", default)
+        order = [default.index(m) for m in ('work status for the selected range', 'name="section" value="work"',
+                                            '>Release details<', 'ui-work-report')]
+        self.assertEqual(order, sorted(order))                  # stats, comparison, release details, tickets
+        self.assertIn('id="edit-release-', default)             # edit and add a build are dialogs
+        self.assertIn('id="add-build-', default)
         self.assertIn("NAVL-105", default)
         self.assertIn('id="release-work-content"', default)
         self.assertIn('hx-target="#release-work-content"', default)

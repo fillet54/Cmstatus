@@ -1,5 +1,7 @@
-{#- Range picker + report on the release page; swapped into #release-work when the range changes. Each end shows what it is (IFC/HSCM,
-    release, version); its edit button opens the fuzzy picker (static/picker.js) over the hidden select. -#}
+{#- The release page below its header, swapped into #release-work-content when the range or a filter changes: the
+    work status for the range, the range picker and filters, the release's details (_release.html), the versions
+    in range and the tickets. Each end of the range shows what it is (IFC/HSCM, release, version); its edit button
+    opens the fuzzy picker (static/picker.js) over the hidden select. -#}
 {% import "ui/components.html" as ui %}
 {% macro pick_end(label, name, id, value, end, empty_text, first) -%}
 {% call ui.field(label, id) %}
@@ -23,6 +25,23 @@
 </div>
 {% endcall %}
 {%- endmacro %}
+{% set counts = report.progress if report else none %}
+{% set missing_hint = "ticket source unavailable" if source_error else "choose a range" %}
+{% call ui.stats(ci.name ~ " work status for the selected range") %}
+  {{ ui.stat("Completed tickets", counts.done if counts else "—", "CSC tickets in this range" if counts else missing_hint, tone="success" if counts and counts.done else None) }}
+  {{ ui.stat("In progress", counts.in_analysis + counts.in_progress + counts.peer_review + counts.verification + counts.blocked if counts else "—", (counts.blocked ~ " blocked included") if counts and counts.blocked else "includes analysis, review and verification" if counts else missing_hint) }}
+  {{ ui.stat("Not started", counts.analysis_required + counts.ready_for_work if counts else "—", "analysis required or ready for work" if counts else missing_hint) }}
+  {{ ui.stat("Versions accounted for", version_count if version_count is not none else "—", "in the selected range" if version_count is not none else "choose a range") }}
+{% endcall %}
+{% if counts and (counts.error or counts.cancelled) %}
+  <div class="ui-muted" style="font-size: 12px;">
+    {% if counts.error %}{{ counts.error }} ticket{{ "s" if counts.error != 1 else "" }} in error{% endif %}
+    {% if counts.error and counts.cancelled %} and {% endif %}
+    {% if counts.cancelled %}{{ counts.cancelled }} cancelled ticket{{ "s" if counts.cancelled != 1 else "" }}{% endif %}
+    excluded from these three ticket counts.
+  </div>
+{% endif %}
+
 {% call ui.card() %}
   {% call ui.card_body() %}
   <form class="ui-stack" style="--ui-gap: 12px;" action="{{ url_for('ui.release', rid=r.id) }}"
@@ -55,22 +74,7 @@
 
 {% for p in problems %}{% call ui.alert("warning") %}{{ p }}{% endcall %}{% endfor %}
 
-{% set counts = report.progress if report else none %}
-{% set missing_hint = "ticket source unavailable" if source_error else "choose a range" %}
-{% call ui.stats(ci.name ~ " work status for the selected range") %}
-  {{ ui.stat("Completed tickets", counts.done if counts else "—", "CSC tickets in this range" if counts else missing_hint, tone="success" if counts and counts.done else None) }}
-  {{ ui.stat("In progress", counts.in_analysis + counts.in_progress + counts.peer_review + counts.verification + counts.blocked if counts else "—", (counts.blocked ~ " blocked included") if counts and counts.blocked else "includes analysis, review and verification" if counts else missing_hint) }}
-  {{ ui.stat("Not started", counts.analysis_required + counts.ready_for_work if counts else "—", "analysis required or ready for work" if counts else missing_hint) }}
-  {{ ui.stat("Versions accounted for", version_count if version_count is not none else "—", "in the selected range" if version_count is not none else "choose a range") }}
-{% endcall %}
-{% if counts and (counts.error or counts.cancelled) %}
-  <div class="ui-muted" style="font-size: 12px;">
-    {% if counts.error %}{{ counts.error }} ticket{{ "s" if counts.error != 1 else "" }} in error{% endif %}
-    {% if counts.error and counts.cancelled %} and {% endif %}
-    {% if counts.cancelled %}{{ counts.cancelled }} cancelled ticket{{ "s" if counts.cancelled != 1 else "" }}{% endif %}
-    excluded from these three ticket counts.
-  </div>
-{% endif %}
+{% if standalone %}{% include "_release.html" %}{% endif %}
 
 {% if lineage %}
 {% call ui.card() %}
