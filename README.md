@@ -106,7 +106,14 @@ By hand on the server: `python -m cmtrack.backup` (uses `CMTRACK_DB` and the set
 
 ## Connecting your own Jira
 
-Implement a `TicketSource` (and optionally a `ReleaseSource`) around your Jira client and name it in the
+Start from [`cmtrack/jira_tickets.py`](cmtrack/jira_tickets.py), a working Jira ticket source. It has a REST
+client (standard library only), a registry that lets you name custom fields ("Parent Ticket") instead of
+`customfield_12345`, and helpers that pull plain values out of the API's responses. It's set up for top-level
+feature and discrepancy projects plus CSCI projects whose tickets point at their parent through a custom field.
+Configure it in code or with `CMTRACK_TICKET_SOURCES=jira=cmtrack.jira_tickets:from_env` (settings in the module
+docstring), then change `record()` and `state()` to suit your rules.
+
+Or implement a `TicketSource` (and optionally a `ReleaseSource`) around your own Jira client and name it in the
 variables above. The docstrings at the top of [`cmtrack/tickets.py`](cmtrack/tickets.py) and
 [`cmtrack/releases.py`](cmtrack/releases.py) are the templates; [docs/reference.md](docs/reference.md#work-items-tickets)
 covers what cmtrack expects of them.

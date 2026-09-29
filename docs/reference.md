@@ -69,7 +69,10 @@ CSCI a (Jira project, affected product) pair belongs to, and the grouping. Paren
 show; the CSC tickets under them are how each CSC team did the work, so each team can split or implement
 it differently.
 
-Implement `cmtrack.tickets.TicketSource` around your Jira client, returning `TicketRecord`s:
+`cmtrack/jira_tickets.py` is a working starting point for Jira: `JiraTicketSource` over top-level feature and
+discrepancy projects plus CSCI projects linked through a custom field, with named custom fields (`Fields`) and
+value extraction (`plain`). Or implement `cmtrack.tickets.TicketSource` around your own Jira client, returning
+`TicketRecord`s:
 
 - `tickets_for_versions(ci, cscs, versions)`: CSC tickets of those CSCs whose fix versions include any of `versions`;
 - `get_tickets(keys)`: tickets by key (ticket pages, and the parents of a report's CSC tickets);
