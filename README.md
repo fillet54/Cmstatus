@@ -11,7 +11,7 @@ fields in its HSCMs.
 - **IFCs** spawn from one another; each has a sequence of HSCM builds (Build 1, 2, … then HSC1, HSC1.1, …).
   Timelines show all of it by date.
 
-Python 3.10+, Flask and SQLite. Nothing else to install or run: no database server, no build step.
+Python 3.10+, Flask, requests (for Jira) and SQLite. Nothing else to install or run: no database server, no build step.
 
 ## Try it
 
@@ -107,7 +107,7 @@ By hand on the server: `python -m cmtrack.backup` (uses `CMTRACK_DB` and the set
 ## Connecting your own Jira
 
 Start from [`cmtrack/jira_tickets.py`](cmtrack/jira_tickets.py), a working Jira ticket source. It has a REST
-client (standard library only), a registry that lets you name custom fields ("Parent Ticket") instead of
+client (on `requests`), a registry that lets you name custom fields ("Parent Ticket") instead of
 `customfield_12345`, and helpers that pull plain values out of the API's responses. It's set up for top-level
 feature and discrepancy projects plus CSCI projects whose tickets point at their parent through a custom field.
 Configure it in code or with `CMTRACK_TICKET_SOURCES=jira=cmtrack.jira_tickets:from_env` (settings in the module

@@ -16,15 +16,13 @@ A store is any object with these methods (``conn`` is cmtrack's connection; ``b`
 Jira has no transactions or unique constraints: two moves at once can leave a shared rank, and anyone can type
 into the field. The service sorts ties by key, puts invalid values last and offers a rebalance.
 """
-import base64
-import json
 import os
 import re
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import quote
+
+import requests
 
 
 class StoreError(RuntimeError):
@@ -98,23 +96,27 @@ class JiraRankStore:
 
 
 class JiraRestClient:
-    """find/set over Jira's REST API v2 (Server / Data Center), standard library only.
-    Auth: a personal access token (Bearer), or a user and password / API token (Basic)."""
+    """find/set over Jira's REST API v2 (Server / Data Center), with ``requests``. Auth: a personal access token
+    (Bearer), or a user and password / API token (Basic). ``verify``: a CA bundle path, or False; or pass your
+    own ``session``."""
 
-    def __init__(self, url, token=None, user=None, password=None, page_size=100):
+    def __init__(self, url, token=None, user=None, password=None, page_size=100, verify=True, session=None):
         if not (token or user):
             raise ValueError("JiraRestClient needs a token, or a user and password")
         self.url, self.page_size = url.rstrip("/"), page_size
-        self.auth = f"Bearer {token}" if token else "Basic " + base64.b64encode(f"{user}:{password or ''}".encode()).decode()
+        self.session = session or requests.Session()
+        if session is None:
+            self.session.verify = verify
+        if token:
+            self.session.headers["Authorization"] = f"Bearer {token}"
+        else:
+            self.session.auth = (user, password or "")
 
     def _request(self, method, path, payload):
-        req = urllib.request.Request(self.url + path, json.dumps(payload).encode(), method=method, headers={
-            "Authorization": self.auth, "Content-Type": "application/json", "Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return json.loads(r.read() or "null")
-        except urllib.error.HTTPError as e:
-            raise StoreError(f"{method} {path} -> HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from None
+        r = self.session.request(method, self.url + path, json=payload, timeout=30)
+        if not r.ok:
+            raise StoreError(f"{method} {path} -> HTTP {r.status_code}: {r.text[:300]}")
+        return r.json() if r.content else None
 
     def find(self, field, scope=None):
         jql = f"cf[{field.split('_')[1]}] is not EMPTY" + (f" AND ({scope})" if scope else "")
@@ -127,7 +129,7 @@ class JiraRestClient:
                 return out
 
     def set(self, key, field, value):
-        self._request("PUT", f"/rest/api/2/issue/{urllib.parse.quote(key)}", {"fields": {field: value}})
+        self._request("PUT", f"/rest/api/2/issue/{quote(key)}", {"fields": {field: value}})
 
 
 class MemoryJira:

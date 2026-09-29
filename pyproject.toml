@@ -9,7 +9,7 @@ description = "Configuration tracking for CSCIs, releases, versions, IFCs and HS
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Phillip Gomez" }]
-dependencies = ["flask"]
+dependencies = ["flask", "requests"]
 
 [project.scripts]
 cmtrack = "cmtrack.__main__:main"

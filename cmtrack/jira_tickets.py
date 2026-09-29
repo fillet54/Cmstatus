@@ -7,7 +7,7 @@ projects whose tickets point at their feature/discrepancy through a custom field
 
 Three layers, each usable on its own:
 
-    JiraClient      REST API v2 (Server / Data Center), standard library only: paged ``search(jql, fields)`` and
+    JiraClient      REST API v2 (Server / Data Center) over ``requests``: paged ``search(jql, fields)`` and
                     ``fields()`` (the field list, for turning names into ids).
     Fields          register the fields you use by a short name and their Jira *name* ("Parent Ticket") or id;
                     ids are looked up once, so code and config never carry customfield numbers. ``jql(name)`` gives
@@ -34,13 +34,11 @@ CMTRACK_JIRA_TOKEN (or CMTRACK_JIRA_USER + CMTRACK_JIRA_PASSWORD) and CMTRACK_JI
      "fields": {"parent": "Parent Ticket", "affected_product": "Affected Product", "cis": "Affected CIs"},
      "status_map": {"Awaiting CCB": "blocked"}}
 """
-import base64
 import json
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Iterable, List, Optional
+
+import requests
 
 from .tickets import TicketRecord, TicketSource, normalize_state
 
@@ -54,24 +52,28 @@ class JiraError(RuntimeError):
 # ----------------------------------------------------------------------------- REST client
 
 class JiraClient:
-    """The two calls a ticket source needs, over Jira's REST API v2. Auth: a personal access token (Bearer), or a
-    user and password / API token (Basic)."""
+    """The two calls a ticket source needs, over Jira's REST API v2, with ``requests``. Auth: a personal access
+    token (Bearer), or a user and password / API token (Basic). ``verify`` is passed to requests (a CA bundle
+    path, or False); give your own ``session`` for proxies, client certificates and the like."""
 
-    def __init__(self, url, token=None, user=None, password=None, page_size=100, timeout=60):
+    def __init__(self, url, token=None, user=None, password=None, page_size=100, timeout=60, verify=True, session=None):
         if not (token or user):
             raise ValueError("JiraClient needs a token, or a user and password")
         self.url, self.page_size, self.timeout = url.rstrip("/"), page_size, timeout
-        self.auth = f"Bearer {token}" if token else "Basic " + base64.b64encode(f"{user}:{password or ''}".encode()).decode()
+        self.session = session or requests.Session()
+        if session is None:
+            self.session.verify = verify
+        self.session.headers.update({"Accept": "application/json"})
+        if token:
+            self.session.headers["Authorization"] = f"Bearer {token}"
+        else:
+            self.session.auth = (user, password or "")
 
     def _request(self, method, path, payload=None):
-        req = urllib.request.Request(self.url + path, json.dumps(payload).encode() if payload is not None else None,
-                                     method=method, headers={"Authorization": self.auth, "Accept": "application/json",
-                                                             "Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                return json.loads(r.read() or "null")
-        except urllib.error.HTTPError as e:
-            raise JiraError(f"{method} {path} -> HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from None
+        r = self.session.request(method, self.url + path, json=payload, timeout=self.timeout)
+        if not r.ok:
+            raise JiraError(f"{method} {path} -> HTTP {r.status_code}: {r.text[:300]}")
+        return r.json() if r.content else None
 
     def search(self, jql, fields):
         """Every issue matching ``jql`` (all pages), with just ``fields``."""

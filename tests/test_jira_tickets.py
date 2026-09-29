@@ -42,7 +42,7 @@ ISSUES = [
 
 
 class FakeJira(BaseHTTPRequestHandler):
-    searches = []
+    searches, headers = [], []
 
     def log_message(self, *a):
         pass
@@ -60,6 +60,7 @@ class FakeJira(BaseHTTPRequestHandler):
     def do_POST(self):
         q = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         FakeJira.searches.append(q)
+        FakeJira.headers.append(dict(self.headers))
         if "bad" in q["jql"]:
             self.send_response(400)
             self.end_headers()
@@ -124,6 +125,16 @@ class JiraTicketSourceTests(unittest.TestCase):
         self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1") ORDER BY key')  # exact match: not PRG-10's
         self.assertEqual([r.key for r in self.source.top_level_tickets({}, [{"name": "NAV-SW"}])], ["PRG-1"])
         self.assertEqual([r.key for r in self.source.query(["NAVX"])], ["NAVX-1", "NAVX-2"])
+
+    def test_own_session_and_auth(self):
+        import requests
+        session = requests.Session()
+        session.headers["X-Team"] = "cm"
+        client = JiraClient(self.client.url, user="svc", password="pw", session=session)
+        JiraTicketSource(client, ["PRG"], fields={"parent": "Parent Ticket"}).query(["PRG"])
+        sent = FakeJira.headers[-1]
+        self.assertEqual(sent["X-Team"], "cm")                                            # your session is used
+        self.assertEqual(sent["Authorization"], "Basic c3ZjOnB3")                        # svc:pw
 
     def test_errors(self):
         with self.assertRaises(JiraError) as e:

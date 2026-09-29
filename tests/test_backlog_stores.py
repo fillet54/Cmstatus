@@ -65,6 +65,11 @@ class JiraBacklogTests(test_backlog.BacklogTests):
         self.assertEqual(page.status_code, 200)                           # the page shows it, doesn't crash
         self.assertIn("jira is down", page.get_data(as_text=True))
 
+    def test_jira_unreachable(self):
+        from cmtrack.backlog.stores import JiraRestClient
+        self.app.config["BACKLOG_STORES"]["jira"] = JiraRankStore(JiraRestClient("http://127.0.0.1:9", token="t"))
+        self.assertIn("backlog store", self.call("get", B, status=502)["error"])        # connection refused -> 502
+
     def test_store_params(self):
         self.call("post", "/backlogs", {"name": "X", "store": "jira"}, 400)                          # no field
         self.call("post", "/backlogs", {"name": "X", "store": "jira", "store_params": {"rank_field": "Rank"}}, 400)
