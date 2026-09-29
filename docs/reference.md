@@ -71,7 +71,8 @@ it differently.
 
 `cmtrack/jira_tickets.py` is a working starting point for Jira: `JiraTicketSource` over top-level feature and
 discrepancy projects plus CSCI projects linked through a custom field, with named custom fields (`Fields`) and
-value extraction (`plain`). Or implement `cmtrack.tickets.TicketSource` around your own Jira client, returning
+value extraction (`plain`), and states from a registered state rule plus a rollup of each top-level ticket's CSC
+tickets (`status_rule`, `work_rollup`, the example `analysis_rule`). Or implement `cmtrack.tickets.TicketSource` around your own Jira client, returning
 `TicketRecord`s:
 
 - `tickets_for_versions(ci, cscs, versions)`: CSC tickets of those CSCs whose fix versions include any of `versions`;

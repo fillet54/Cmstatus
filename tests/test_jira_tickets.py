@@ -10,16 +10,19 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from cmtrack import create_app
-from cmtrack.jira_tickets import Fields, JiraClient, JiraError, JiraTicketSource, plain
+from cmtrack.jira_tickets import Fields, JiraClient, JiraError, JiraTicketSource, analysis_rule, from_env, plain
 
 FIELDS = [{"id": "summary", "name": "Summary", "schema": {"type": "string"}},
           {"id": "customfield_10500", "name": "Parent Ticket", "schema": {"type": "string"}},
           {"id": "customfield_10600", "name": "Affected Product", "schema": {"type": "option"}},
-          {"id": "customfield_10700", "name": "Affected CIs", "schema": {"type": "array"}}]
+          {"id": "customfield_10700", "name": "Affected CIs", "schema": {"type": "array"}},
+          {"id": "customfield_10800", "name": "Analysis State", "schema": {"type": "option"}}]
 
 
-def issue(key, type, status, category="indeterminate", parent=None, product=None, fix=(), cis=None):
-    return {"key": key, "fields": {
+def issue(key, type, status, category="indeterminate", parent=None, product=None, fix=(), cis=None, analysis=None,
+          labels=()):
+    return {"key": key, "fields": {"labels": list(labels),
+        "customfield_10800": {"value": analysis} if analysis else None,
         "summary": f"{key} summary", "issuetype": {"name": type}, "project": {"key": key.split("-")[0], "name": "x"},
         "status": {"name": status, "statusCategory": {"key": category}} if status else None,
         "fixVersions": [{"name": v} for v in fix], "assignee": {"name": "jdoe", "displayName": "J. Doe"},
@@ -42,7 +45,7 @@ ISSUES = [
 
 
 class FakeJira(BaseHTTPRequestHandler):
-    searches, headers = [], []
+    searches, headers, issues = [], [], ISSUES
 
     def log_message(self, *a):
         pass
@@ -66,14 +69,14 @@ class FakeJira(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"errorMessages": ["bad JQL"]}')
             return
-        page = ISSUES[q["startAt"]:q["startAt"] + q["maxResults"]]
-        self._send({"total": len(ISSUES), "issues": [{"key": i["key"], "fields": {f: i["fields"].get(f) for f in q["fields"]}}
+        page = FakeJira.issues[q["startAt"]:q["startAt"] + q["maxResults"]]
+        self._send({"total": len(FakeJira.issues), "issues": [{"key": i["key"], "fields": {f: i["fields"].get(f) for f in q["fields"]}}
                                                      for i in page]})
 
 
 class JiraTicketSourceTests(unittest.TestCase):
     def setUp(self):
-        FakeJira.searches = []
+        FakeJira.searches, FakeJira.issues = [], ISSUES
         self.server = HTTPServer(("127.0.0.1", 0), FakeJira)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.client = JiraClient(f"http://127.0.0.1:{self.server.server_port}", token="t", page_size=3)
@@ -99,15 +102,19 @@ class JiraTicketSourceTests(unittest.TestCase):
 
     def test_records_and_states(self):
         by = {r.key: r for r in self.source.get_tickets([i["key"] for i in ISSUES] + ["NOPE-1"])}
-        self.assertEqual(len(FakeJira.searches), 4)                                        # 10 issues, pages of 3
-        self.assertTrue(FakeJira.searches[0]["jql"].startswith('key in ('))
+        keyed = [q for q in FakeJira.searches if q["jql"].startswith("key in (")]
+        self.assertEqual(len(keyed), 4)                                                    # 10 issues, pages of 3
+        self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1" OR cf[10500] ~ "PRG-10" OR cf[10500] ~ '
+                                                       '"PRG-2" OR cf[10500] ~ "PRG-3") ORDER BY key')      # + one rollup query
         self.assertIn("customfield_10500", FakeJira.searches[0]["fields"])
         self.assertNotIn("NOPE-1", by)
         r = by["NAVL-1"]
         self.assertEqual((r.parent_key, r.project, r.affected_product, r.fix_versions, r.state, r.status, r.assignee),
                          ("PRG-1", "NAVL", "core", ["2027.Q1-b1"], "peer_review", "In Review", "J. Doe"))
-        self.assertEqual((by["PRG-1"].project, by["PRG-1"].parent_key, by["PRG-1"].cis, by["PRG-1"].state),
-                         (None, None, ["NAV-SW"], "in_progress"))
+        self.assertEqual((by["PRG-1"].project, by["PRG-1"].parent_key, by["PRG-1"].cis), (None, None, ["NAV-SW"]))
+        # rolled up: its CSC tickets are in work, and one of them is in error, which wins
+        self.assertEqual((by["PRG-1"].state, by["PRG-1"].state_reason), ("error", "NAVL-3: closed without a fix version"))
+        self.assertEqual(by["PRG-10"].state, "done")                                       # its only CSC ticket is done
         self.assertTrue(by["PRG-1"].url.endswith("/browse/PRG-1"))
         self.assertEqual(by["NAVX-1"].state, "blocked")                                     # status_map from config
         self.assertEqual((by["NAVL-2"].state, by["NAVL-2"].state_reason), ("error", "no parent ticket in 'Parent Ticket'"))
@@ -161,6 +168,86 @@ class JiraTicketSourceTests(unittest.TestCase):
             self.assertEqual(t["summary"], "PRG-1 summary")
             call("post", "/backlogs", {"name": "Nav", "cis": ["NAV-SW"]})
             self.assertEqual(call("post", "/backlogs/Nav/pull")["added"], ["PRG-1"])       # open, affects NAV-SW
+        finally:
+            shutil.rmtree(tmp)
+
+
+RULE_ISSUES = [
+    issue("PRG-40", "Feature", "Open", "new", analysis="Ready for Work"),                # nothing started yet
+    issue("NAVL-40", "Story", "Done", "done", parent="PRG-40", product="core", labels=["Analysis"]),
+    issue("PRG-41", "Feature", "Open", "new", analysis="Ready for Work"),                # one CSC ticket in work
+    issue("NAVL-41", "Story", "Done", "done", parent="PRG-41", product="core", labels=["analysis"]),
+    issue("NAVL-42", "Story", "In Work", parent="PRG-41", product="core"),
+    issue("NAVX-42", "Story", "Open", "new", parent="PRG-41", product="maps"),
+    issue("PRG-43", "Feature", "Open", "new", analysis="In Analysis"),
+    issue("NAVL-43", "Story", "In Progress", parent="PRG-43", product="core", labels=["Analysis"]),
+    issue("PRG-44", "Feature", "Closed", "done", analysis="Ready for Work"),             # Jira closed it
+    issue("PRG-45", "Feature", "Open", "new", analysis="Waiting"),                       # not a known value
+    issue("PRG-46", "Feature", "Open", "new"),                                            # no analysis state: status
+]
+
+
+class StateRuleTests(unittest.TestCase):
+    def setUp(self):
+        FakeJira.searches, FakeJira.issues = [], RULE_ISSUES
+        self.server = HTTPServer(("127.0.0.1", 0), FakeJira)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        self.fields = {"parent": "Parent Ticket", "affected_product": "Affected Product", "analysis_state": "Analysis State"}
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        FakeJira.issues = ISSUES
+
+    def states(self, source):
+        return {r.key: r.state for r in source.get_tickets([i["key"] for i in RULE_ISSUES])}
+
+    def test_analysis_rule_and_rollup(self):
+        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule)
+        got = self.states(source)
+        self.assertEqual({k: got[k] for k in ("NAVL-40", "NAVL-41", "NAVL-42", "NAVX-42", "NAVL-43")},
+                         {"NAVL-40": "ready_for_work", "NAVL-41": "ready_for_work",   # analysis done (no fix version needed)
+                          "NAVL-42": "in_progress", "NAVX-42": "analysis_required", "NAVL-43": "in_analysis"})
+        self.assertEqual(got["PRG-40"], "ready_for_work")        # the Analysis State field; nothing in work yet
+        self.assertEqual(got["PRG-41"], "in_progress")           # one CSC ticket in work: rolled up to in progress
+        self.assertEqual(got["PRG-43"], "in_analysis")           # analysis tickets don't count as work
+        self.assertEqual(got["PRG-44"], "done")                  # closed in Jira wins over the field
+        self.assertEqual(got["PRG-45"], "error")
+        self.assertEqual(got["PRG-46"], "analysis_required")     # no field: the Jira status
+        self.assertIn("Waiting", next(r for r in source.get_tickets(["PRG-45"])).state_reason)
+
+    def test_registering_rules(self):
+        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields)
+        got = self.states(source)                                 # defaults: status rule, work rollup
+        self.assertEqual(got["PRG-46"], "analysis_required")
+        self.assertEqual(got["PRG-40"], "error")                  # its analysis ticket reads as closed without a fix version
+        source.state_rule = lambda t: ("blocked", "CCB") if t.has_label("analysis") else None   # None: status_rule
+        got = self.states(source)
+        self.assertEqual((got["NAVL-41"], got["NAVL-42"]), ("blocked", "in_progress"))
+        source.rollup = None                                      # no rollup: parents keep their own state
+        self.assertEqual(self.states(source)["PRG-41"], "analysis_required")
+        source.rollup = lambda t, own, children: ("verification", f"{len(children)} children")
+        rec = next(r for r in source.get_tickets(["PRG-41"]))
+        self.assertEqual((rec.state, rec.state_reason), ("verification", "3 children"))
+
+    def test_rules_from_config(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmp, "jira.json")
+            with open(path, "w") as f:
+                json.dump({"top_projects": ["PRG"], "fields": self.fields,
+                           "state_rule": "cmtrack.jira_tickets:analysis_rule"}, f)
+            env = {"CMTRACK_JIRA_URL": self.url, "CMTRACK_JIRA_TOKEN": "t", "CMTRACK_JIRA_CONFIG": path}
+            old = {k: os.environ.get(k) for k in env}
+            os.environ.update(env)
+            try:
+                source = from_env()
+            finally:
+                for k, v in old.items():
+                    os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+            self.assertIs(source.state_rule, analysis_rule)
+            self.assertEqual(self.states(source)["PRG-41"], "in_progress")
         finally:
             shutil.rmtree(tmp)
 
