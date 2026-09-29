@@ -431,7 +431,7 @@
 <ol id="backlog-list" class="ui-rank-list">
   {% for t in b["items"] %}
   {{ bl.rank_item(t, loop.index, href=url_for("ui.ticket", key=t.key),
-                  remove_attrs={"hx-post": url_for("backlog.remove", ref=b.name, key=t.key),
+                  remove_attrs={"hx-post": url_for("backlog.act", ref=b.name, action="remove", key=t.key),
                                 "hx-target": "#backlog-items", "hx-confirm": "Remove " ~ t.key ~ "?"}) }}
   {% endfor %}
 </ol>

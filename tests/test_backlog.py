@@ -160,6 +160,7 @@ class BacklogTests(unittest.TestCase):
         page = self.c.get(B).get_data(as_text=True)
         self.assertIn('id="backlog-list"', page)
         self.assertIn('draggable="true" data-key="PRG-20"', page)
+        self.assertIn("/remove?key=PRG-20", page)                                       # the remove button's URL
         self.assertRegex(page, r"/api/backlogs/Nav%20(%26|&amp;)%20Display/items/__KEY__/move")   # & kept or escaped,
                                                                                             # depending on Werkzeug
         hx = {"HX-Request": "true"}
@@ -169,7 +170,7 @@ class BacklogTests(unittest.TestCase):
         self.assertIn("Added PRG-23 at the top", r)
         self.assertLess(r.index('data-key="PRG-23"'), r.index('data-key="PRG-20"'))
         self.assertIn("already in", self.c.post(B + "/add", data={"key": "PRG-23"}, headers=hx).get_data(as_text=True))
-        self.assertIn("Removed PRG-23", self.c.post(B + "/items/PRG-23/remove", headers=hx).get_data(as_text=True))
+        self.assertIn("Removed PRG-23", self.c.post(B + "/remove", data={"key": "PRG-23"}, headers=hx).get_data(as_text=True))
         self.assertIn("Nothing new", self.c.post(B + "/pull", headers=hx).get_data(as_text=True))
         self.assertIn("Re-spaced 7 ranks", self.c.post(B + "/rebalance", headers=hx).get_data(as_text=True))
         # create through the form: htmx gets a redirect header, plain posts a 303

@@ -1,7 +1,8 @@
 # Shared backlogs (`cmtrack/backlog/`)
 
-Everything about backlogs lives in this folder: about 1,250 lines across 13 files. To type it in on another
-system, read the files in the order below. Each step runs on its own.
+Everything about backlogs lives in this folder: about 1,050 lines (51 KB) across 13 files, or about 760 lines
+(41 KB) without blank lines, comments and docstrings. To type it in on another system, read the files in the
+order below. Each step runs on its own.
 
 A backlog is a ranked list of **top-level ticket keys** shared by a set of teams and related to CIs. Jira can't
 hold one ordering across several teams' projects, so the order lives here: each item is just a key plus a
@@ -24,12 +25,12 @@ and then clears the old store, so you can start in SQLite and move to Jira later
 
 | # | File | Lines | What it is |
 |---|---|---|---|
-| 1 | `rank.py` | 68 | Lexorank: `between(lo, hi)` gives a string that sorts strictly between two others (`None` = open end); `spread(n)` gives n evenly spaced ranks; `validate`. No dependencies. Its tests are `RankTests` in `tests/test_backlog.py`, so type those next. |
+| 1 | `rank.py` | 72 | Lexorank: `between(lo, hi)` gives a string that sorts strictly between two others (`None` = open end); `spread(n)` gives n evenly spaced ranks; `valid` / `validate`. No dependencies. Its tests are `RankTests` in `tests/test_backlog.py`, so type those next. |
 | 2 | `schema.sql` | 34 | Tables `backlog` (name, description, teams JSON, source, store, store_params), `backlog_ci` (backlog ↔ ci) and `backlog_item` (the sqlite store's items: backlog, ticket_key, rank, added_at; `UNIQUE(backlog_id, rank)`). |
-| 3 | `stores.py` | 253 | The rank stores. `RankStore` is the interface (items, add, remove, set_rank, set_ranks, check_params). `SqliteStore` keeps items in `backlog_item`. `JiraRankStore` keeps them in a custom field through a `JiraFieldClient`, which needs only two calls, `find(field, scope)` and `set(key, field, value)`. `JiraRestClient` implements them over Jira's REST API v2 using only the standard library; `MemoryJira` is an in-memory stand-in for tests and demos. |
-| 4 | `service.py` | 353 | Domain logic, the same for every store: `list_backlogs`, `create_backlog`, `update_backlog` (including moving to another store), `backlog_summary`, `add_backlog_item`, `remove_backlog_item`, `move_backlog_item` (the drag-and-drop callback), `rebalance_backlog`, `pull_backlog`, `backlog_view`. Items are sorted by (rank, key); invalid ranks sort last and are reported. |
-| 5 | `routes.py` | 203 | One blueprint: the JSON API under `/api/backlogs…` and the pages under `/backlogs…` (the route list is in its docstring). |
-| 6 | `__init__.py` | 45 | `init_db(conn)` runs `schema.sql` (and adds the store columns to older databases); `init_app(app)` loads the stores and registers the blueprint. |
+| 3 | `stores.py` | 156 | The rank stores: any object with `check_params`, `items`, `add`, `remove`, `set_rank`, `set_ranks` (listed in the docstring). `SqliteStore` keeps items in `backlog_item`. `JiraRankStore` keeps them in a custom field through a client that needs only two calls, `find(field, scope)` and `set(key, field, value)`. `JiraRestClient` implements them over Jira's REST API v2 using only the standard library; `MemoryJira` is an in-memory stand-in for tests and demos. For a SQLite-only port, stop after `SqliteStore` (about 30 lines). |
+| 4 | `service.py` | 282 | Domain logic, the same for every store (it reads the configured stores from the Flask app config): `list_backlogs`, `create_backlog`, `update_backlog` (including moving to another store), `backlog_summary`, `add_backlog_item`, `remove_backlog_item`, `move_backlog_item` (the drag-and-drop callback), `rebalance_backlog`, `pull_backlog`, `backlog_view`. Items are sorted by (rank, key); invalid ranks sort last and are reported. |
+| 5 | `routes.py` | 186 | One blueprint: the JSON API under `/api/backlogs…` and the pages under `/backlogs…` (the route list is in its docstring). The page's four actions (pull, add, remove, rebalance) are small functions in one `ACTIONS` table behind a single `POST /backlogs/<b>/<action>`. A page-only port needs just the move endpoint from the JSON API. |
+| 6 | `__init__.py` | 38 | `init_db(conn)` runs `schema.sql`; `init_app(app)` loads the stores and registers the blueprint. |
 | 7 | `templates/backlog/_macros.html` | 36 | `rank_item` (one draggable row) and `backlog_css()`. |
 | 8 | `templates/backlog/list.html` | 53 | `/backlogs`: the table of backlogs (with where each keeps its order) and the "New backlog" form (store choice, Jira rank field). |
 | 9 | `templates/backlog/page.html` | 38 | `/backlogs/<b>`: the header, the add-by-key form and `#backlog-items` (which carries the move URL). |

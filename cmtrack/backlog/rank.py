@@ -16,9 +16,13 @@ class RankError(ValueError):
 
 
 def validate(rank: str) -> str:
-    if not rank or any(c not in _INDEX for c in rank) or rank.endswith("0"):
+    if not valid(rank):
         raise RankError(f"invalid rank {rank!r}: use digits 0-9a-z, not ending in 0")
     return rank
+
+
+def valid(rank) -> bool:
+    return isinstance(rank, str) and bool(rank) and all(c in _INDEX for c in rank) and not rank.endswith("0")
 
 
 def between(lo: str = None, hi: str = None) -> str:

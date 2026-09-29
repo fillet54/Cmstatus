@@ -46,7 +46,7 @@ class JiraBacklogTests(test_backlog.BacklogTests):
         self.assertEqual(self.order()[-1], "PRG-18")                      # invalid sorts last
         self.assertEqual(self.order()[1:3], ["PRG-10", "PRG-12"])         # tie broken by key
         self.assertTrue(any("PRG-18 has no valid rank" in w for w in view["warnings"]))
-        self.assertTrue(any("shared by more than one item" in w for w in view["warnings"]))
+        self.assertTrue(any("share a rank" in w for w in view["warnings"]))
         err = self.call("post", B + "/items/PRG-21/move", {"after": "PRG-10", "before": "PRG-12"}, 409)
         self.assertIn("share a rank", err["error"])
         self.call("post", B + "/items/PRG-21/move", {"after": "PRG-18"}, 400)   # neighbour without a rank

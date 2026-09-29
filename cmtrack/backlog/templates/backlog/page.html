@@ -6,16 +6,16 @@
 {% block content %}
 {% call ui.page_header(b.name, b.description, crumbs=[("Backlogs", url_for('backlog.backlogs')), (b.name, None)],
                        meta=(["Shared by " ~ b.teams | join(", ")] if b.teams else []) + (["CIs " ~ b.cis | join(", ")] if b.cis else [])
-                            + (["Order kept in " ~ b.store_label] if b.store != "sqlite" else [])) %}
+                            + (["Order kept in Jira field " ~ b.store_params.rank_field] if b.store_params.rank_field else [])) %}
   {{ ui.button("Pull from source", variant="primary", icon="download",
-               attrs={"hx-post": url_for('backlog.pull', ref=b.name), "hx-target": "#backlog-items", "hx-indicator": "#backlog-busy",
+               attrs={"hx-post": url_for('backlog.act', ref=b.name, action='pull'), "hx-target": "#backlog-items", "hx-indicator": "#backlog-busy",
                       "title": "Append the top-level tickets the source offers for this backlog"}) }}
 {% endcall %}
 
 {% call ui.card() %}
   {% call ui.card_body() %}
   <div class="ui-row" style="--ui-gap: 12px;">
-    <form class="ui-row" style="--ui-gap: 6px;" hx-post="{{ url_for('backlog.add', ref=b.name) }}" hx-target="#backlog-items"
+    <form class="ui-row" style="--ui-gap: 6px;" hx-post="{{ url_for('backlog.act', ref=b.name, action='add') }}" hx-target="#backlog-items"
           hx-indicator="#backlog-busy" hx-on::after-request="if (event.detail.successful) this.reset()">
       {{ ui.input("key", placeholder="Ticket key, e.g. PRG-24", mono=True, required=True, attrs={"aria-label": "Ticket key", "autocomplete": "off"}) }}
       {{ ui.select("position", [("bottom", "at bottom"), ("top", "at top")], attrs={"aria-label": "Position"}) }}

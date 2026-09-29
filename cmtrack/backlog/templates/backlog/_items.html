@@ -12,14 +12,14 @@
   <span class="ui-muted" style="font-size: 12px;">{% for s, label in ui_states.items() if b.progress[s] %}{{ b.progress[s] }} {{ label | lower }}{{ " · " if not loop.last }}{% endfor %}</span>
   {% if b.needs_rebalance %}
   <span class="ui-spacer"></span>
-  {{ ui.button("Rebalance ranks", size="sm", variant="ghost", attrs={"hx-post": url_for('backlog.rebalance', ref=b.name), "hx-target": "#backlog-items",
+  {{ ui.button("Rebalance ranks", size="sm", variant="ghost", attrs={"hx-post": url_for('backlog.act', ref=b.name, action='rebalance'), "hx-target": "#backlog-items",
                "title": "Re-space every rank evenly (ranks are " ~ b.max_rank_length ~ " characters at most; also repairs shared or invalid ranks)"}) }}
   {% endif %}
 </div>
 <ol id="backlog-list" class="ui-rank-list" aria-label="Backlog in rank order">
   {% for t in b['items'] %}
   {{ bl.rank_item(t, t.position, href=url_for('ui.ticket', key=t.key), link_cis=True,
-                  remove_attrs={"hx-post": url_for('backlog.remove', ref=b.name, key=t.key), "hx-target": "#backlog-items",
+                  remove_attrs={"hx-post": url_for('backlog.act', ref=b.name, action='remove', key=t.key), "hx-target": "#backlog-items",
                                 "hx-confirm": "Remove " ~ t.key ~ " from " ~ b.name ~ "? (The ticket itself is not touched.)"}) }}
   {% endfor %}
 </ol>
