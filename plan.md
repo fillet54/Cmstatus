@@ -204,15 +204,16 @@ read live from the ticket source. Start against the in-memory `StaticSource`, th
 
 **Goal:** a ranked backlog of top-level tickets shared by several teams, reordered by drag and drop.
 
+Everything is in `cmtrack/backlog/`; its `README.md` lists the files in typing order and what each needs from the core.
+
 | File | Type in |
 |---|---|
-| `cmtrack/rank.py` | all of it, **then its tests first** (`RankTests` in `tests/test_backlog.py`) before anything uses it |
-| `schema.sql` | `backlog`, `backlog_ci`, `backlog_item` |
+| `backlog/rank.py` | all of it, **then its tests first** (`RankTests` in `tests/test_backlog.py`) before anything uses it |
+| `backlog/schema.sql`, `backlog/__init__.py` | the three tables; `init_db` / `init_app`, called from `create_app` |
 | `tickets.py` | `TicketRecord.cis`; `TicketSource.top_level_tickets`; `StaticSource.top_level_tickets` |
-| `service.py` | `"teams"` in `_JSON_COLS`; `_ask`'s `NotImplementedError` branch; backlogs section: `get_backlog` … `backlog_view` |
-| `api.py` | `backlog_source` + the backlog endpoints (CRUD, items, `move`, `pull`, `rebalance`) |
-| `views.py` | `backlogs`, `create_backlog`, `_backlog_fragment`, `backlog`, `_backlog_action` and the pull / add / remove / rebalance actions; the `ci` view gains `backlogs` |
-| templates | `backlogs.html`, `backlog.html`, `_backlog_items.html`, `static/backlog.js` (drag and drop); `rank_item`, `checkbox`, `segmented` in `ui/components.html`; the Backlogs card in `ci.html`; Backlogs in `UI_NAV` |
+| `service.py` | `_ask`'s `NotImplementedError` branch (the rest of the backlog logic is `backlog/service.py`) |
+| `backlog/service.py`, `backlog/routes.py` | domain logic; one blueprint with the JSON API and the pages |
+| `backlog/templates/backlog/`, `backlog/static/` | `list.html`, `page.html`, `_items.html`, `_macros.html` (`rank_item`), `_ci_card.html` (included by `ci.html`); `backlog.js`, `backlog.css`. Also `checkbox`, `segmented` in `ui/components.html`, and Backlogs in `UI_NAV` |
 | `demo.py` | the backlog part of `seed`, plus `cis` on the top-level demo tickets |
 | tests | `BacklogTests` |
 

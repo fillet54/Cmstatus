@@ -15,7 +15,8 @@ dependencies = ["flask"]
 cmtrack = "cmtrack.__main__:main"
 
 [tool.setuptools]
-packages = ["cmtrack"]
+packages = ["cmtrack", "cmtrack.backlog"]
 
 [tool.setuptools.package-data]
 cmtrack = ["schema.sql", "static/*", "templates/*.html", "templates/ui/*.html"]
+"cmtrack.backlog" = ["README.md", "schema.sql", "static/*", "templates/backlog/*.html"]

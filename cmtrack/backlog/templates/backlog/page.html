@@ -1,19 +1,20 @@
 {% extends "ui/layout.html" %}
 {% import "ui/components.html" as ui %}
+{% import "backlog/_macros.html" as bl %}
 {% set nav_current = "backlogs" %}
 {% block title %}{{ b.name }}{% endblock %}
 {% block content %}
-{% call ui.page_header(b.name, b.description, crumbs=[("Backlogs", url_for('ui.backlogs')), (b.name, None)],
+{% call ui.page_header(b.name, b.description, crumbs=[("Backlogs", url_for('backlog.backlogs')), (b.name, None)],
                        meta=(["Shared by " ~ b.teams | join(", ")] if b.teams else []) + (["CIs " ~ b.cis | join(", ")] if b.cis else [])) %}
   {{ ui.button("Pull from source", variant="primary", icon="download",
-               attrs={"hx-post": url_for('ui.backlog_pull', ref=b.name), "hx-target": "#backlog-items", "hx-indicator": "#backlog-busy",
+               attrs={"hx-post": url_for('backlog.pull', ref=b.name), "hx-target": "#backlog-items", "hx-indicator": "#backlog-busy",
                       "title": "Append the top-level tickets the source offers for this backlog"}) }}
 {% endcall %}
 
 {% call ui.card() %}
   {% call ui.card_body() %}
   <div class="ui-row" style="--ui-gap: 12px;">
-    <form class="ui-row" style="--ui-gap: 6px;" hx-post="{{ url_for('ui.backlog_add', ref=b.name) }}" hx-target="#backlog-items"
+    <form class="ui-row" style="--ui-gap: 6px;" hx-post="{{ url_for('backlog.add', ref=b.name) }}" hx-target="#backlog-items"
           hx-indicator="#backlog-busy" hx-on::after-request="if (event.detail.successful) this.reset()">
       {{ ui.input("key", placeholder="Ticket key, e.g. PRG-24", mono=True, required=True, attrs={"aria-label": "Ticket key", "autocomplete": "off"}) }}
       {{ ui.select("position", [("bottom", "at bottom"), ("top", "at top")], attrs={"aria-label": "Position"}) }}
@@ -27,9 +28,10 @@
 {% endcall %}
 
 <div id="backlog-items" class="ui-stack" style="--ui-gap: 12px;"
-     data-move-url="{{ url_for('api.move_backlog_item', ref=b.name, key='__KEY__') }}"
-     data-reload-url="{{ url_for('ui.backlog', ref=b.name) }}">
-  {% include "_backlog_items.html" %}
+     data-move-url="{{ url_for('backlog.api_move_item', ref=b.name, key='__KEY__') }}"
+     data-reload-url="{{ url_for('backlog.backlog', ref=b.name) }}">
+  {% include "backlog/_items.html" %}
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='backlog.js') }}"></script>{% endblock %}
+{% block head %}{{ bl.backlog_css() }}{% endblock %}
+{% block scripts %}<script src="{{ url_for('backlog.static', filename='backlog.js') }}"></script>{% endblock %}

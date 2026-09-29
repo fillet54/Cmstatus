@@ -430,7 +430,7 @@
 </ol>
 {%- else -%}{{ empty(empty_text) }}{%- endif -%}
 {%- endmacro %}
-{#- ============================================================== tickets and backlogs #}
+{#- ============================================================== tickets (backlog items: backlog/_macros.html) #}
 
 {#- A ticket key linking to its page, plus a ↗ link to the source (Jira) when `url` is known. #}
 {% macro ticket_ref(key, href=None, url=None, source="Jira") -%}
@@ -534,32 +534,6 @@
 
 {% macro group_label(text) -%}<div class="ui-group-label">{{ text }}</div>{%- endmacro %}
 
-{#- One backlog item. Keeps the drag-and-drop contract of backlog.html: data-key / data-rank / data-state,
-    [data-pos] for the number, [data-move="top|up|down"] buttons. remove_attrs: hx-* attrs for the remove button.
-    caller (optional) = extra meta (e.g. a state_bar). #}
-{% macro rank_item(t, position, href=None, movable=True, remove_attrs=None, lifted=False, link_cis=False) -%}
-<li class="ui-rank-item{% if lifted %} ui-rank-item--lifted{% endif %}" draggable="{{ 'true' if movable else 'false' }}" data-key="{{ t.key }}" data-rank="{{ t.rank }}" data-state="{{ t.state }}">
-  {%- if movable %}<span class="ui-rank-item__handle" title="Drag to reorder{% if t.rank %} (rank {{ t.rank }}){% endif %}">{{ icon("grip", 16) }}</span>{% endif %}
-  <span class="ui-rank-item__pos" data-pos>{{ position }}</span>
-  <div class="ui-rank-item__body">
-    <div class="ui-rank-item__title">{{ ticket_ref(t.key, href, t.url) }}<span class="ui-rank-item__summary">{{ t.summary or "" }}</span>{% if t.type %}{{ badge(t.type, outline=True) }}{% endif %}</div>
-    {{ state_reason(t) }}
-    <div class="ui-rank-item__meta">
-      {%- for c in t.cis or [] %}{{ ident(c, href=url_for("ui.ci", ref=c) if link_cis else None) }}{% endfor %}
-      {{- caller() if caller }}
-    </div>
-  </div>
-  {{ state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}
-  {%- if movable %}
-  <div class="ui-rank-item__actions">
-    {{ icon_button("arrow-top", "Move " ~ t.key ~ " to top", size="sm", attrs={"data-move": "top"}) }}
-    {{ icon_button("arrow-up", "Move " ~ t.key ~ " up", size="sm", attrs={"data-move": "up"}) }}
-    {{ icon_button("arrow-down", "Move " ~ t.key ~ " down", size="sm", attrs={"data-move": "down"}) }}
-    {%- if remove_attrs %}{{ icon_button("x", "Remove " ~ t.key, size="sm", cls="ui-btn--danger", attrs=remove_attrs) }}{% endif %}
-  </div>
-  {%- endif %}
-</li>
-{%- endmacro %}
 {#- "Built from" parents of a version: [{"name", "href"?, "merge"?: True}] #}
 {% macro lineage(parents) -%}
 <div class="ui-row" style="--ui-gap: 6px;">

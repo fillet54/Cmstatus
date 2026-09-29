@@ -1,0 +1,36 @@
+{#- Backlog macros. Import next to the component library:
+      {% import "ui/components.html" as ui %}{% import "backlog/_macros.html" as bl %}
+    Styles: static/backlog.css (link it with backlog_css(), below). -#}
+{% import "ui/components.html" as ui %}
+
+{#- The stylesheet for rank items; put it in a page's {% block head %}. #}
+{% macro backlog_css() -%}
+<link rel="stylesheet" href="{{ url_for('backlog.static', filename='backlog.css') }}">
+{%- endmacro %}
+
+{#- One backlog item. Keeps the drag-and-drop contract of static/backlog.js: data-key / data-rank / data-state,
+    [data-pos] for the number, [data-move="top|up|down"] buttons. remove_attrs: hx-* attrs for the remove button.
+    caller (optional) = extra meta (e.g. a state_bar). #}
+{% macro rank_item(t, position, href=None, movable=True, remove_attrs=None, lifted=False, link_cis=False) -%}
+<li class="ui-rank-item{% if lifted %} ui-rank-item--lifted{% endif %}" draggable="{{ 'true' if movable else 'false' }}" data-key="{{ t.key }}" data-rank="{{ t.rank }}" data-state="{{ t.state }}">
+  {%- if movable %}<span class="ui-rank-item__handle" title="Drag to reorder{% if t.rank %} (rank {{ t.rank }}){% endif %}">{{ ui.icon("grip", 16) }}</span>{% endif %}
+  <span class="ui-rank-item__pos" data-pos>{{ position }}</span>
+  <div class="ui-rank-item__body">
+    <div class="ui-rank-item__title">{{ ui.ticket_ref(t.key, href, t.url) }}<span class="ui-rank-item__summary">{{ t.summary or "" }}</span>{% if t.type %}{{ ui.badge(t.type, outline=True) }}{% endif %}</div>
+    {{ ui.state_reason(t) }}
+    <div class="ui-rank-item__meta">
+      {%- for c in t.cis or [] %}{{ ui.ident(c, href=url_for("ui.ci", ref=c) if link_cis else None) }}{% endfor %}
+      {{- caller() if caller }}
+    </div>
+  </div>
+  {{ ui.state_pill(t.state, title=("Source status: " ~ t.status) if t.status else None) }}
+  {%- if movable %}
+  <div class="ui-rank-item__actions">
+    {{ ui.icon_button("arrow-top", "Move " ~ t.key ~ " to top", size="sm", attrs={"data-move": "top"}) }}
+    {{ ui.icon_button("arrow-up", "Move " ~ t.key ~ " up", size="sm", attrs={"data-move": "up"}) }}
+    {{ ui.icon_button("arrow-down", "Move " ~ t.key ~ " down", size="sm", attrs={"data-move": "down"}) }}
+    {%- if remove_attrs %}{{ ui.icon_button("x", "Remove " ~ t.key, size="sm", cls="ui-btn--danger", attrs=remove_attrs) }}{% endif %}
+  </div>
+  {%- endif %}
+</li>
+{%- endmacro %}

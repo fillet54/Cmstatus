@@ -1,8 +1,10 @@
 {% extends "ui/layout.html" %}
 {% import "ui/components.html" as ui %}
+{% import "backlog/_macros.html" as bl %}
 {% block title %}UI components{% endblock %}
 
 {% block head %}
+{{ bl.backlog_css() }}
 <style>
   /* style-guide-only helpers */
   .sg-section { scroll-margin-top: 40px; }
@@ -428,19 +430,20 @@
   {% set code %}{% raw %}
 <ol id="backlog-list" class="ui-rank-list">
   {% for t in b["items"] %}
-  {{ ui.rank_item(t, loop.index, href=url_for("ui.ticket", key=t.key),
-                  remove_attrs={"hx-post": url_for("ui.backlog_remove", ref=b.name, key=t.key),
+  {{ bl.rank_item(t, loop.index, href=url_for("ui.ticket", key=t.key),
+                  remove_attrs={"hx-post": url_for("backlog.remove", ref=b.name, key=t.key),
                                 "hx-target": "#backlog-items", "hx-confirm": "Remove " ~ t.key ~ "?"}) }}
   {% endfor %}
 </ol>
-{# keeps backlog.html's drag-and-drop contract: data-key/-rank/-state, [data-pos], [data-move] #}
+{# from backlog/_macros.html ({% import "backlog/_macros.html" as bl %}, styles: bl.backlog_css()).
+   Keeps backlog.js's drag-and-drop contract: data-key/-rank/-state, [data-pos], [data-move] #}
 {% endraw %}{% endset %}
-  {% call example("rank_item (backlog)", code) %}
+  {% call example("bl.rank_item (backlog package)", code) %}
     <ol class="ui-rank-list">
-      {{ ui.rank_item(backlog[0], 1, href="#", remove_attrs={"data-demo": "remove"}) }}
-      {% call ui.rank_item(backlog[1], 2, href="#", remove_attrs={"data-demo": "remove"}) %}{{ ui.state_bar(progress, width="120px") }}<span>3 of 6 CSC tickets done</span>{% endcall %}
-      {{ ui.rank_item(backlog[2], 3, href="#", lifted=True) }}
-      {{ ui.rank_item(backlog[3], 4, href="#", remove_attrs={"data-demo": "remove"}) }}
+      {{ bl.rank_item(backlog[0], 1, href="#", remove_attrs={"data-demo": "remove"}) }}
+      {% call bl.rank_item(backlog[1], 2, href="#", remove_attrs={"data-demo": "remove"}) %}{{ ui.state_bar(progress, width="120px") }}<span>3 of 6 CSC tickets done</span>{% endcall %}
+      {{ bl.rank_item(backlog[2], 3, href="#", lifted=True) }}
+      {{ bl.rank_item(backlog[3], 4, href="#", remove_attrs={"data-demo": "remove"}) }}
     </ol>
   {% endcall %}
 </section>

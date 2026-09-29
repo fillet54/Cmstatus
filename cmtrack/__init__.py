@@ -4,7 +4,7 @@ import sqlite3
 
 from flask import Flask, jsonify, render_template, request
 
-from . import db, tickets, ui
+from . import backlog, db, tickets, ui
 from .service import CMError
 
 
@@ -25,6 +25,7 @@ def create_app(config=None):
 
     conn = db.connect(app.config["DATABASE"])
     db.init_db(conn)
+    backlog.init_db(conn)
     conn.close()
 
     ui.init_app(app)
@@ -33,6 +34,7 @@ def create_app(config=None):
     from .views import bp as ui_bp
     app.register_blueprint(bp, url_prefix="/api")
     app.register_blueprint(ui_bp)
+    backlog.init_app(app)
     app.teardown_appcontext(db.close_db)
 
     @app.errorhandler(CMError)

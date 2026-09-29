@@ -148,21 +148,7 @@
       {% endcall %}
     {% endcall %}
 
-    {% if backlogs %}
-    {% call ui.card() %}
-      {% call ui.card_header("Backlogs") %}{% endcall %}
-      {% call ui.card_body() %}
-        <div class="ui-stack" style="--ui-gap: 6px;">
-        {% for b in backlogs %}
-          <div class="ui-row" style="justify-content: space-between;">
-            <a href="{{ url_for('ui.backlog', ref=b.name) }}">{{ b.name }}</a>
-            <span class="ui-muted" style="font-size: 12px;">{{ b.item_count }} item{{ 's' if b.item_count != 1 }}{% if b.teams %} · {{ b.teams | join(", ") }}{% endif %}</span>
-          </div>
-        {% endfor %}
-        </div>
-      {% endcall %}
-    {% endcall %}
-    {% endif %}
+    {% include "backlog/_ci_card.html" %}
 
     {% if ci.attributes %}
     {% call ui.card(title="Attributes") %}{% call ui.card_body() %}<pre class="ui-pre">{{ ci.attributes | tojson(indent=2) }}</pre>{% endcall %}{% endcall %}

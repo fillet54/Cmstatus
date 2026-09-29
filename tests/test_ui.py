@@ -101,7 +101,7 @@ class UiTests(unittest.TestCase):
 
     def test_rank_item_keeps_drag_contract(self):
         t = {"key": "PRG-1", "summary": "S", "state": "done", "rank": "i", "cis": ["NAV-SW"]}
-        html = self.render('{{ ui.rank_item(t, 3, remove_attrs={"hx-post": "/r"}) }}', t=t)
+        html = self.render('{% import "backlog/_macros.html" as bl %}{{ bl.rank_item(t, 3, remove_attrs={"hx-post": "/r"}) }}', t=t)
         for needle in ('draggable="true"', 'data-key="PRG-1"', 'data-rank="i"', 'data-state="done"', "data-pos>3<",
                        'data-move="top"', 'data-move="up"', 'data-move="down"', 'hx-post="/r"', "NAV-SW"):
             self.assertIn(needle, html)

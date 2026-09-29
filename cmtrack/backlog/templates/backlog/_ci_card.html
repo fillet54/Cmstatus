@@ -1,0 +1,16 @@
+{#- The CI page's "Backlogs" card (included by templates/ci.html; `backlogs` = service.list_backlogs(conn, ci)). -#}
+{% if backlogs %}
+{% call ui.card() %}
+  {% call ui.card_header("Backlogs") %}{% endcall %}
+  {% call ui.card_body() %}
+    <div class="ui-stack" style="--ui-gap: 6px;">
+    {% for b in backlogs %}
+      <div class="ui-row" style="justify-content: space-between;">
+        <a href="{{ url_for('backlog.backlog', ref=b.name) }}">{{ b.name }}</a>
+        <span class="ui-muted" style="font-size: 12px;">{{ b.item_count }} item{{ 's' if b.item_count != 1 }}{% if b.teams %} · {{ b.teams | join(", ") }}{% endif %}</span>
+      </div>
+    {% endfor %}
+    </div>
+  {% endcall %}
+{% endcall %}
+{% endif %}

@@ -115,7 +115,7 @@ class ViewTests(unittest.TestCase):
         panel = self.get(f"/releases/{rid}", HX)
         self.assertIn('aria-label="Release ', panel)
         self.assertNotIn("<html", panel)
-        self.assertIn("/static/backlog.js", self.get("/backlogs/Nav & Display"))
+        self.assertIn("/backlog-static/backlog.js", self.get("/backlogs/Nav & Display"))
 
     def test_not_found_is_html_outside_api(self):
         self.assertIn("CI &#39;NOPE&#39; not found", self.get("/cis/NOPE", status=404))

@@ -1,5 +1,6 @@
 {#- The ranked item list. Swapped in by htmx after pull/add/remove; static/backlog.js reorders it in place. -#}
 {% import "ui/components.html" as ui %}
+{% import "backlog/_macros.html" as bl %}
 {% if message %}{% call ui.alert("success") %}{{ message }}{% endcall %}{% endif %}
 {% if error %}{% call ui.alert("danger") %}{{ error }}{% endcall %}{% endif %}
 {% if source_error %}
@@ -11,14 +12,14 @@
   <span class="ui-muted" style="font-size: 12px;">{% for s, label in ui_states.items() if b.progress[s] %}{{ b.progress[s] }} {{ label | lower }}{{ " · " if not loop.last }}{% endfor %}</span>
   {% if b.max_rank_length > 12 %}
   <span class="ui-spacer"></span>
-  {{ ui.button("Rebalance ranks", size="sm", variant="ghost", attrs={"hx-post": url_for('ui.backlog_rebalance', ref=b.name), "hx-target": "#backlog-items",
+  {{ ui.button("Rebalance ranks", size="sm", variant="ghost", attrs={"hx-post": url_for('backlog.rebalance', ref=b.name), "hx-target": "#backlog-items",
                "title": "Ranks are getting long (" ~ b.max_rank_length ~ " characters); re-space them evenly"}) }}
   {% endif %}
 </div>
 <ol id="backlog-list" class="ui-rank-list" aria-label="Backlog in rank order">
   {% for t in b['items'] %}
-  {{ ui.rank_item(t, t.position, href=url_for('ui.ticket', key=t.key), link_cis=True,
-                  remove_attrs={"hx-post": url_for('ui.backlog_remove', ref=b.name, key=t.key), "hx-target": "#backlog-items",
+  {{ bl.rank_item(t, t.position, href=url_for('ui.ticket', key=t.key), link_cis=True,
+                  remove_attrs={"hx-post": url_for('backlog.remove', ref=b.name, key=t.key), "hx-target": "#backlog-items",
                                 "hx-confirm": "Remove " ~ t.key ~ " from " ~ b.name ~ "? (The ticket itself is not touched.)"}) }}
   {% endfor %}
 </ol>

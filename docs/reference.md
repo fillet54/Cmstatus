@@ -99,7 +99,8 @@ keeps the raw Jira status for display.
 
 Jira can't hold one ordering across several teams' projects, so cmtrack keeps it: a backlog has a name,
 the teams sharing it, and related CIs (for navigation and for choosing what to pull), and each item is just a
-top-level ticket key plus a **lexorank** (`cmtrack/rank.py`). Ticket data (summary, state, affected CIs) is
+top-level ticket key plus a **lexorank** (`cmtrack/backlog/rank.py`). All backlog code (tables, service,
+routes, templates, JS, CSS) lives in `cmtrack/backlog/`; its `README.md` is the map. Ticket data (summary, state, affected CIs) is
 read live from the ticket source like everywhere else.
 
 - **Ranks** are base-36 strings compared as plain strings. `rank.between(a, b)` returns a rank strictly
@@ -115,8 +116,8 @@ read live from the ticket source like everywhere else.
   candidates and appends the ones not already there, in the source's order. Records may set `cis` (affected
   CI names), which the backlog shows. Nothing is removed by a pull. Items can also be added by key (top or
   bottom); CSC tickets are refused, since the backlog holds their parents.
-- **Drag and drop** in `/backlogs/<b>` uses the browser's native drag events and ~60 lines of inline JS,
-  with no libraries. ⤒ ↑ ↓ buttons use the same callback for keyboard and touch users.
+- **Drag and drop** in `/backlogs/<b>` uses the browser's native drag events and ~60 lines of JS
+  (`backlog/static/backlog.js`), with no libraries. ⤒ ↑ ↓ buttons use the same callback for keyboard and touch users.
 
 ## Release sources
 
@@ -288,7 +289,7 @@ Macros: shell (`marking_banner`, `app_header`), structure (`page_header`, `bread
 forms (`field`, `input`, `select` (optgroups; `data-picker` for the fuzzy picker), `checkbox`, `search_box`,
 `segmented`, `tabs`), data (`table` (sortable headers), `empty_row`, `dl`, `kv`, `activity`, `disclosure`), release
 sources (`source_state`, `pinned`), tickets and backlogs (`ticket_ref`, `version_chip`, `ticket_line`,
-`group_label`, `work_group`, `rank_item`), lineage (`lineage`, `timeline`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
+`group_label`, `work_group`; the backlog's `rank_item` is in `backlog/templates/backlog/_macros.html`), lineage (`lineage`, `timeline`). Extra HTML attributes (hx-*, data-*, aria-*) go in `attrs={...}`.
 
 Every status is a glyph and a word as well as a colour. Identifiers are monospace, times always UTC (`utc` filter:
 `2026-09-23 14:24Z`), focus is always visible. Config in `cmtrack/ui.py`: `CMTRACK_MARKING` (+
@@ -297,8 +298,8 @@ Every status is a glyph and a word as well as a colour. Identifiers are monospac
 Forms post plain HTML (boosted by htmx, `hx-push-url="false"`) and redirect back; the layout's `htmx-config`
 swaps 4xx/5xx responses too, so a failed post shows the error page instead of silently doing nothing.
 
-Pages extend `ui/layout.html`, import the macros and add no page-specific CSS. The only page scripts are
-`static/backlog.js` (backlog drag and drop), `static/picker.js` (fuzzy search on a `select[data-picker]`) and
+Pages extend `ui/layout.html`, import the macros and add no page-specific CSS (the backlog package brings its own `backlog.css`). The only page scripts are
+`backlog/static/backlog.js` (backlog drag and drop), `static/picker.js` (fuzzy search on a `select[data-picker]`) and
 `static/timeline.js` (centres a timeline on today, and re-fetches
 one that is narrower than its box at the box's width).
 

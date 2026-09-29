@@ -381,22 +381,7 @@ body.ui {
 
 /* tree (IFC hierarchy) */
 
-/* ranked list (backlogs) */
-.ui-rank-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.ui-rank-item { display: flex; align-items: center; gap: 14px; padding: 12px 14px; background: var(--ui-surface); border: 1px solid var(--ui-line); border-radius: var(--ui-radius-lg); }
-.ui-rank-item[data-state="done"] { background: var(--ui-sunken); }
-.ui-rank-item[data-state="error"] { border-color: #E8B4AD; }
-.ui-rank-item.dragging { opacity: 0.4; }
-.ui-rank-item.saving { opacity: 0.6; }
-.ui-rank-item--lifted { border: 2px solid var(--ui-accent); box-shadow: var(--ui-shadow-lift); }
-.ui-rank-item__handle { cursor: grab; color: var(--ui-faint); display: inline-flex; }
-.ui-rank-item__pos { width: 30px; text-align: right; font-family: var(--ui-font-display); font-size: 22px; font-weight: 600; color: #3D4B59; }
-.ui-rank-item__body { flex: 1 1 auto; min-width: 0; }
-.ui-rank-item__title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
-.ui-rank-item__summary { font-size: 15px; font-weight: 600; }
-.ui-rank-item__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; font-size: 12px; color: var(--ui-muted); }
-.ui-rank-item__actions { display: inline-flex; gap: 2px; }
-.hide-done .ui-rank-item[data-state="done"] { display: none; }
+/* ranked list (backlogs): see backlog/static/backlog.css */
 
 /* a placeholder surface (e.g. "select a release") and a column that stays in view */
 .ui-card--dashed { border-style: dashed; background: transparent; }

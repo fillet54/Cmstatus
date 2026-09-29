@@ -7,7 +7,7 @@ import unittest
 
 from cmtrack import create_app
 from cmtrack.demo import DEMO_TICKETS, seed
-from cmtrack.rank import RankError, between, spread, validate
+from cmtrack.backlog.rank import RankError, between, spread, validate
 from cmtrack.tickets import StaticSource, TicketSource
 
 B = "/backlogs/Nav & Display"
@@ -160,7 +160,8 @@ class BacklogTests(unittest.TestCase):
         page = self.c.get(B).get_data(as_text=True)
         self.assertIn('id="backlog-list"', page)
         self.assertIn('draggable="true" data-key="PRG-20"', page)
-        self.assertIn("/api/backlogs/Nav%20%26%20Display/items/__KEY__/move", page)
+        self.assertRegex(page, r"/api/backlogs/Nav%20(%26|&amp;)%20Display/items/__KEY__/move")   # & kept or escaped,
+                                                                                            # depending on Werkzeug
         hx = {"HX-Request": "true"}
         frag = self.c.get(B, headers=hx).get_data(as_text=True)
         self.assertNotIn("<html", frag)

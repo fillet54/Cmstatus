@@ -2,9 +2,8 @@
 
 A view renders its fragment template for an htmx request and the full page otherwise, so every
 URL also works as a plain link, a bookmark or a history restore. Every page extends ui/layout.html and is
-built from the macros in ui/components.html. Forms post here: backlog forms get the refreshed list fragment
-back (drag-and-drop ranking in static/backlog.js calls the JSON API, POST /api/backlogs/<b>/items/<key>/move);
-release and version forms (sync, add, correct, remap, detach) redirect back to the page they came from.
+built from the macros in ui/components.html. Release and version forms (sync, add, correct, remap, detach)
+post here and redirect back to the page they came from. Backlog pages live in cmtrack/backlog/.
 """
 import datetime as dt
 import json
@@ -12,13 +11,14 @@ import json
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
 from . import graph, service as svc, tickets, ui
+from .backlog import service as backlogs
 from .db import get_db
 
 bp = Blueprint("ui", __name__)
 
 EVENT_PAGE = 50
 ENTITY_PAGES = {"ci": ("ui.ci", "ref"), "release": ("ui.release", "rid"), "version": ("ui.version", "vid"),
-                "baseline": ("ui.baseline", "bid"), "ifc": ("ui.ifc", "ref"), "backlog": ("ui.backlog", "ref")}
+                "baseline": ("ui.baseline", "bid"), "ifc": ("ui.ifc", "ref"), "backlog": ("backlog.backlog", "ref")}
 
 
 def is_fragment():
@@ -204,7 +204,7 @@ def render_ci(conn, ref, preview=None):
     missing = any(a["kind"].startswith("missing") for a in detail["attention"])
     overview = ci_overview(conn, detail["releases"])
     return render_template("ci.html", ci=detail, table=release_table(detail["releases"], focus_id=overview["focus_id"]),
-                           fielded=fielded, backlogs=svc.list_backlogs(conn, detail["id"]), overview=overview,
+                           fielded=fielded, backlogs=backlogs.list_backlogs(conn, detail["id"]), overview=overview,
                            candidates=svc.remap_candidates(conn, detail["id"]) if missing else None,
                            source_configured=detail["release_source"] in (current_app.config["RELEASE_SOURCES"] or {}),
                            preview=preview)
@@ -585,95 +585,6 @@ def events():
 def styleguide():
     """Living reference for the component library (templates/ui/components.html, static/ui.css)."""
     return render_template("ui/styleguide.html", **ui.styleguide_samples())
-
-
-# ----------------------------------------------------------------------------- backlogs
-
-@bp.get("/backlogs")
-def backlogs():
-    conn = get_db()
-    return render_template("backlogs.html", backlogs=svc.list_backlogs(conn),
-                           cis=svc.to_dicts(svc.list_cis(conn, managed=True)), error=None, form={})
-
-
-@bp.post("/backlogs")
-def create_backlog():
-    conn = get_db()
-    f = request.form
-    try:
-        with conn:
-            b = svc.create_backlog(conn, f.get("name"), f.get("description") or None, f.get("teams"),
-                                   f.getlist("cis"))
-    except svc.CMError as e:
-        # htmx only swaps 2xx responses, so the re-rendered form with its error comes back as 200 there
-        return render_template("backlogs.html", backlogs=svc.list_backlogs(conn), error=e.message, form=f,
-                               cis=svc.to_dicts(svc.list_cis(conn, managed=True))), \
-            200 if "HX-Request" in request.headers else e.status
-    target = url_for("ui.backlog", ref=b["name"])
-    if "HX-Request" in request.headers:
-        return "", 204, {"HX-Redirect": target}
-    return redirect(target, 303)
-
-
-def _backlog_fragment(conn, ref, message=None, error=None):
-    b = svc.backlog_summary(conn, ref)
-    view, source_error = live(svc.backlog_view, conn, ticket_source(b["source"]), ref)
-    return render_template("_backlog_items.html", b=view or b, source_error=source_error,
-                           message=message, error=error)
-
-
-@bp.get("/backlogs/<ref>")
-def backlog(ref):
-    conn = get_db()
-    b = svc.backlog_summary(conn, ref)
-    view, source_error = live(svc.backlog_view, conn, ticket_source(b["source"]), ref)
-    return page("backlog.html", "_backlog_items.html", b=view or b, source_error=source_error, message=None, error=None)
-
-
-def _backlog_action(ref, action):
-    """Run a backlog change for an htmx form and answer with the refreshed item list plus a message."""
-    conn = get_db()
-    b = svc.backlog_summary(conn, ref)
-    try:
-        with conn:
-            message = action(conn, ticket_source(b["source"]), b)
-    except svc.CMError as e:
-        return _backlog_fragment(conn, ref, error=e.message)
-    return _backlog_fragment(conn, ref, message=message)
-
-
-@bp.post("/backlogs/<ref>/pull")
-def backlog_pull(ref):
-    def pull(conn, source, b):
-        out = svc.pull_backlog(conn, source, b["id"])
-        return (f"Added {len(out['added'])} from {source.name}: {', '.join(out['added'])}" if out["added"]
-                else f"Nothing new from {source.name} ({out['offered']} offered, all already here)")
-    return _backlog_action(ref, pull)
-
-
-@bp.post("/backlogs/<ref>/add")
-def backlog_add(ref):
-    key, position = request.form.get("key", "").strip().upper(), request.form.get("position", "bottom")
-    def add(conn, source, b):
-        svc.add_backlog_item(conn, source, b["id"], key, position)
-        return f"Added {key} at the {position}"
-    return _backlog_action(ref, add)
-
-
-@bp.post("/backlogs/<ref>/items/<key>/remove")
-def backlog_remove(ref, key):
-    def remove(conn, source, b):
-        svc.remove_backlog_item(conn, b["id"], key)
-        return f"Removed {key}"
-    return _backlog_action(ref, remove)
-
-
-@bp.post("/backlogs/<ref>/rebalance")
-def backlog_rebalance(ref):
-    def rebalance(conn, source, b):
-        out = svc.rebalance_backlog(conn, b["id"])
-        return f"Re-spaced {out['items']} ranks (longest is now {out['max_rank_length']} characters)"
-    return _backlog_action(ref, rebalance)
 
 
 # ----------------------------------------------------------------------------- release & version forms

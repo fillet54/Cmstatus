@@ -3,7 +3,7 @@
  * After a drop, or a top/up/down click, the moved item's new neighbours are sent to the move endpoint
  * (data-move-url on #backlog-items, "__KEY__" replaced by the item's key), which gives it a rank between
  * theirs; no other item is touched. If the server refuses (e.g. someone else reordered meanwhile), a toast
- * explains and the list reloads from data-reload-url. Markup contract: ui.rank_item in components.html.
+ * explains and the list reloads from data-reload-url. Markup contract: rank_item in templates/backlog/_macros.html.
  */
 (() => {
   const root = document.getElementById("backlog-items");

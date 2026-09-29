@@ -28,7 +28,7 @@ HTMX = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"
 NAV = [
     ("overview", "Overview", "ui.dashboard"),
     ("cis", "Configuration items", "ui.cis"),
-    ("backlogs", "Backlogs", "ui.backlogs"),
+    ("backlogs", "Backlogs", "backlog.backlogs"),
     ("ifcs", "Capabilities", "ui.ifcs"),
     ("events", "Audit log", "ui.events"),
 ]

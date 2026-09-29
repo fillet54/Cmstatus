@@ -10,7 +10,7 @@
     {% call ui.table(["Backlog", "Teams", "CIs", {"label": "Items", "align": "end"}]) %}
       {% for b in backlogs %}
       <tr>
-        <td><a href="{{ url_for('ui.backlog', ref=b.name) }}"><b>{{ b.name }}</b></a>
+        <td><a href="{{ url_for('backlog.backlog', ref=b.name) }}"><b>{{ b.name }}</b></a>
           {% if b.description %}<span class="ui-muted ui-clip" style="font-size: 12px;">{{ b.description }}</span>{% endif %}</td>
         <td><div class="ui-row" style="--ui-gap: 4px;">{% for t in b.teams %}{{ ui.chip(t) }}{% endfor %}</div></td>
         <td class="ui-mono">{{ b.ci_names or "—" }}</td>
@@ -23,8 +23,8 @@
   {% call ui.card() %}
     {% call ui.card_header("New backlog") %}{% endcall %}
     {% call ui.card_body() %}
-    <form class="ui-stack" style="--ui-gap: 14px;" method="post" action="{{ url_for('ui.create_backlog') }}"
-          hx-post="{{ url_for('ui.create_backlog') }}" hx-target="body" hx-swap="outerHTML">
+    <form class="ui-stack" style="--ui-gap: 14px;" method="post" action="{{ url_for('backlog.create_backlog') }}"
+          hx-post="{{ url_for('backlog.create_backlog') }}" hx-target="body" hx-swap="outerHTML">
       {% if error %}{% call ui.alert("danger") %}{{ error }}{% endcall %}{% endif %}
       {% call ui.field("Name", "bl-name") %}{{ ui.input("name", form.get('name', ''), id="bl-name", required=True) }}{% endcall %}
       {% call ui.field("Description", "bl-description") %}{{ ui.input("description", form.get('description', ''), id="bl-description") }}{% endcall %}
