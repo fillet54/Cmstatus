@@ -212,6 +212,7 @@ Everything is in `cmtrack/backlog/`; its `README.md` lists the files in typing o
 | `backlog/schema.sql`, `backlog/__init__.py` | the three tables; `init_db` / `init_app`, called from `create_app` |
 | `tickets.py` | `TicketRecord.cis`; `TicketSource.top_level_tickets`; `StaticSource.top_level_tickets` |
 | `service.py` | `_ask`'s `NotImplementedError` branch (the rest of the backlog logic is `backlog/service.py`) |
+| `backlog/stores.py` | `RankStore`, `SqliteStore`; `JiraRankStore` + `JiraRestClient` / `MemoryJira` whenever you want the order in Jira |
 | `backlog/service.py`, `backlog/routes.py` | domain logic; one blueprint with the JSON API and the pages |
 | `backlog/templates/backlog/`, `backlog/static/` | `list.html`, `page.html`, `_items.html`, `_macros.html` (`rank_item`), `_ci_card.html` (included by `ci.html`); `backlog.js`, `backlog.css`. Also `checkbox`, `segmented` in `ui/components.html`, and Backlogs in `UI_NAV` |
 | `demo.py` | the backlog part of `seed`, plus `cis` on the top-level demo tickets |

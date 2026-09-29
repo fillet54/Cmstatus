@@ -5,7 +5,8 @@
 {% block title %}{{ b.name }}{% endblock %}
 {% block content %}
 {% call ui.page_header(b.name, b.description, crumbs=[("Backlogs", url_for('backlog.backlogs')), (b.name, None)],
-                       meta=(["Shared by " ~ b.teams | join(", ")] if b.teams else []) + (["CIs " ~ b.cis | join(", ")] if b.cis else [])) %}
+                       meta=(["Shared by " ~ b.teams | join(", ")] if b.teams else []) + (["CIs " ~ b.cis | join(", ")] if b.cis else [])
+                            + (["Order kept in " ~ b.store_label] if b.store != "sqlite" else [])) %}
   {{ ui.button("Pull from source", variant="primary", icon="download",
                attrs={"hx-post": url_for('backlog.pull', ref=b.name), "hx-target": "#backlog-items", "hx-indicator": "#backlog-busy",
                       "title": "Append the top-level tickets the source offers for this backlog"}) }}

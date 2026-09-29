@@ -100,7 +100,9 @@ keeps the raw Jira status for display.
 Jira can't hold one ordering across several teams' projects, so cmtrack keeps it: a backlog has a name,
 the teams sharing it, and related CIs (for navigation and for choosing what to pull), and each item is just a
 top-level ticket key plus a **lexorank** (`cmtrack/backlog/rank.py`). All backlog code (tables, service,
-routes, templates, JS, CSS) lives in `cmtrack/backlog/`; its `README.md` is the map. Ticket data (summary, state, affected CIs) is
+routes, templates, JS, CSS) lives in `cmtrack/backlog/`; its `README.md` is the map. The (key, rank) pairs
+are kept by the backlog's **rank store**: cmtrack's SQLite table (default), or a text custom field in Jira, one
+field per backlog (`backlog/stores.py`). Ticket data (summary, state, affected CIs) is
 read live from the ticket source like everywhere else.
 
 - **Ranks** are base-36 strings compared as plain strings. `rank.between(a, b)` returns a rank strictly

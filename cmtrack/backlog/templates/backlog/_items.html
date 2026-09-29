@@ -10,10 +10,10 @@
   <span><b>{{ b['items'] | length }}</b> item{{ 's' if b['items'] | length != 1 }}</span>
   {{ ui.state_bar(b.progress, size="lg", width="200px") }}
   <span class="ui-muted" style="font-size: 12px;">{% for s, label in ui_states.items() if b.progress[s] %}{{ b.progress[s] }} {{ label | lower }}{{ " · " if not loop.last }}{% endfor %}</span>
-  {% if b.max_rank_length > 12 %}
+  {% if b.needs_rebalance %}
   <span class="ui-spacer"></span>
   {{ ui.button("Rebalance ranks", size="sm", variant="ghost", attrs={"hx-post": url_for('backlog.rebalance', ref=b.name), "hx-target": "#backlog-items",
-               "title": "Ranks are getting long (" ~ b.max_rank_length ~ " characters); re-space them evenly"}) }}
+               "title": "Re-space every rank evenly (ranks are " ~ b.max_rank_length ~ " characters at most; also repairs shared or invalid ranks)"}) }}
   {% endif %}
 </div>
 <ol id="backlog-list" class="ui-rank-list" aria-label="Backlog in rank order">

@@ -7,16 +7,17 @@
 
 <div class="ui-split" style="--ui-aside: 380px;">
   {% call ui.card(flush=True) %}
-    {% call ui.table(["Backlog", "Teams", "CIs", {"label": "Items", "align": "end"}]) %}
+    {% call ui.table(["Backlog", "Teams", "CIs", "Order kept in", {"label": "Items", "align": "end"}]) %}
       {% for b in backlogs %}
       <tr>
         <td><a href="{{ url_for('backlog.backlog', ref=b.name) }}"><b>{{ b.name }}</b></a>
           {% if b.description %}<span class="ui-muted ui-clip" style="font-size: 12px;">{{ b.description }}</span>{% endif %}</td>
         <td><div class="ui-row" style="--ui-gap: 4px;">{% for t in b.teams %}{{ ui.chip(t) }}{% endfor %}</div></td>
         <td class="ui-mono">{{ b.ci_names or "—" }}</td>
-        <td class="ui-end">{{ b.item_count }}</td>
+        <td>{% if b.store == "sqlite" %}<span class="ui-muted">cmtrack</span>{% else %}{{ ui.chip(b.store) }} <span class="ui-mono ui-muted" style="font-size: 12px;">{{ b.store_params.rank_field }}</span>{% endif %}</td>
+        <td class="ui-end">{{ b.item_count if b.item_count is not none else "—" }}</td>
       </tr>
-      {% else %}{{ ui.empty_row("No backlogs yet", 4) }}{% endfor %}
+      {% else %}{{ ui.empty_row("No backlogs yet", 5) }}{% endfor %}
     {% endcall %}
   {% endcall %}
 
@@ -29,6 +30,13 @@
       {% call ui.field("Name", "bl-name") %}{{ ui.input("name", form.get('name', ''), id="bl-name", required=True) }}{% endcall %}
       {% call ui.field("Description", "bl-description") %}{{ ui.input("description", form.get('description', ''), id="bl-description") }}{% endcall %}
       {% call ui.field("Teams", "bl-teams", hint="Comma separated") %}{{ ui.input("teams", form.get('teams', ''), id="bl-teams", placeholder="Nav, Maps, Display") }}{% endcall %}
+      {% if store_names | length > 1 %}
+      {% call ui.field("Keep the order in", "bl-store", hint="cmtrack's database, or a text custom field in Jira (one field per backlog)") %}
+        {{ ui.select("store", [("sqlite", "cmtrack (SQLite)")] + (store_names | reject("equalto", "sqlite") | list), form.get('store') or default_store, id="bl-store") }}
+      {% endcall %}
+      {% call ui.field("Jira rank field", "bl-rank-field", hint="for a Jira store: the custom field id, e.g. customfield_12345") %}{{ ui.input("rank_field", form.get('rank_field', ''), id="bl-rank-field", mono=True, placeholder="customfield_12345") }}{% endcall %}
+      {% call ui.field("Jira scope (optional)", "bl-scope", hint="JQL that limits where the field is read, e.g. project in (PRG)") %}{{ ui.input("scope", form.get('scope', ''), id="bl-scope", mono=True) }}{% endcall %}
+      {% endif %}
       {% if cis %}
       <fieldset class="ui-field" style="border: 0; padding: 0; margin: 0;">
         <legend class="ui-field__label" style="margin-bottom: 6px;">Related CIs</legend>

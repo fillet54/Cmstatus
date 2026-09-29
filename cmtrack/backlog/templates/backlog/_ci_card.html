@@ -7,7 +7,7 @@
     {% for b in backlogs %}
       <div class="ui-row" style="justify-content: space-between;">
         <a href="{{ url_for('backlog.backlog', ref=b.name) }}">{{ b.name }}</a>
-        <span class="ui-muted" style="font-size: 12px;">{{ b.item_count }} item{{ 's' if b.item_count != 1 }}{% if b.teams %} · {{ b.teams | join(", ") }}{% endif %}</span>
+        <span class="ui-muted" style="font-size: 12px;">{% if b.item_count is not none %}{{ b.item_count }} item{{ 's' if b.item_count != 1 }}{% else %}order in {{ b.store }}{% endif %}{% if b.teams %} · {{ b.teams | join(", ") }}{% endif %}</span>
       </div>
     {% endfor %}
     </div>
