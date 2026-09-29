@@ -35,6 +35,8 @@ def create_app(config=None):
     app.register_blueprint(bp, url_prefix="/api")
     app.register_blueprint(ui_bp)
     backlog.init_app(app)
+    from . import backup           # imported here so `python -m cmtrack.backup` runs cleanly
+    backup.init_app(app)           # /api/admin/backup, and the daily timer if CMTRACK_BACKUP_DAILY_AT is set
     app.teardown_appcontext(db.close_db)
 
     @app.errorhandler(CMError)

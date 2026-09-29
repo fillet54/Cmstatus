@@ -185,6 +185,8 @@ POST /cis                          {name, type?, kind?, managed?, release_source
 GET  /cis/<ci>          PATCH /cis/<ci>   {managed, kind, release_source, source_params, require_tested, description, attributes}
 POST /cis/<ci>/cscs                {name, jira_project, affected_product, team?}
 GET  /cscs/lookup?project=&product=
+POST /admin/backup                 back up the database to CMTRACK_BACKUP_URL now (Bearer CMTRACK_BACKUP_TOKEN)
+GET  /admin/backup                 recent backups (started / done / failed); see README "Backups"
 GET  /release-sources              configured release sources
 POST /cis/<ci>/sync                {dry_run?}   reconcile with the release source → summary
 GET  /cis/<ci>/attention           unplaced, missing, no base, no reason, several open patches on a line

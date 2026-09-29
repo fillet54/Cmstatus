@@ -69,6 +69,41 @@ Environment variables, all optional:
 
 `cmtrack --port 8000 --host 0.0.0.0 --debug` changes where the dev server listens.
 
+## Backups
+
+cmtrack can copy its SQLite database to a Nexus **raw** repository (or a directory). Each backup is a consistent
+snapshot, taken safely while the app is writing, checked with SQLite's integrity check, then gzipped and uploaded
+as `{CMTRACK_BACKUP_URL}/{prefix}/cmtrack-<UTC time>.db.gz`. Every run shows in the audit log. To keep only the
+last N backups, set a cleanup policy on the Nexus repository.
+
+| Variable | |
+|---|---|
+| `CMTRACK_BACKUP_URL` | a Nexus raw repository, e.g. `https://nexus.example/repository/cmtrack-backups`, or a directory |
+| `CMTRACK_BACKUP_USER` + `CMTRACK_BACKUP_PASSWORD`, or `CMTRACK_BACKUP_BEARER` | Nexus credentials (Basic, or a user token as Bearer) |
+| `CMTRACK_BACKUP_PREFIX` | folder inside the repository (default `cmtrack`) |
+| `CMTRACK_BACKUP_TOKEN` | turns on `POST` / `GET /api/admin/backup`, which need `Authorization: Bearer <token>` |
+| `CMTRACK_BACKUP_DAILY_AT` | `HH:MM` (UTC): back up once a day from inside the app |
+
+Pick one way to schedule it (both can be on):
+
+- **A scheduled GitLab pipeline** calls the endpoint. The job only needs curl, since the database never leaves
+  the server:
+  ```yaml
+  backup-cmtrack:
+    rules: [{ if: $CI_PIPELINE_SOURCE == "schedule" }]
+    script:
+      - curl -fsS -X POST -H "Authorization: Bearer $CMTRACK_BACKUP_TOKEN" https://cmtrack.example/api/admin/backup
+  ```
+  The job fails if the upload does (the endpoint answers 502), so GitLab tells you.
+- **Inside the app**: set `CMTRACK_BACKUP_DAILY_AT=02:00`. A background thread checks every five minutes and backs
+  up once a day after that time, straight away if the day's run was missed because the server was down. With
+  several worker processes each one runs the timer, but each backup is claimed in the database first, so only
+  one of them makes it. A failed run is retried an hour later.
+
+By hand on the server: `python -m cmtrack.backup` (uses `CMTRACK_DB` and the settings above). To restore, run
+`python -m cmtrack.backup --restore <backup URL or file> new.db`. It downloads the backup, checks it and writes
+`new.db` (never over an existing file); then point `CMTRACK_DB` at it.
+
 ## Connecting your own Jira
 
 Implement a `TicketSource` (and optionally a `ReleaseSource`) around your Jira client and name it in the
