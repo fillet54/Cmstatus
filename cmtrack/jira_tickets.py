@@ -96,6 +96,11 @@ class JiraClient:
 
 # ----------------------------------------------------------------------------- fields
 
+def in_pairs(cscs):
+    """{(jira_project, affected_product)} for cmtrack CSC rows; None for no scope."""
+    return None if cscs is None else {(c["jira_project"], c["affected_product"]) for c in cscs if c.get("jira_project")}
+
+
 def as_list(value):
     """A field value as a list: None -> [], "x" -> ["x"], a list unchanged (empty values dropped)."""
     return [v for v in (value if isinstance(value, list) else [value]) if v not in (None, "")]
@@ -184,6 +189,10 @@ def quote(values):
 #
 # Register them with JiraTicketSource(..., state_rule=my_rule, rollup=my_rollup), by setting source.state_rule /
 # source.rollup, or in the JSON config ("state_rule": "mypkg.rules:my_rule").
+#
+# Scope: when cmtrack asks about a set of CSCs (a CI's work report, top_level_tickets_for_versions), the rollup only
+# gets the CSC tickets of those CSCs, and rules can see the scope as t.scope / t.cscs. Tickets asked for without a
+# scope (a ticket page, a backlog) roll up over all their CSC tickets.
 
 # Jira status (lower case) -> cmtrack state, for status_rule. Anything not here falls back on the status category.
 STATUS_MAP = {
@@ -209,14 +218,21 @@ class JiraTicket:
         t.field("short")    a registered field's plain value, e.g. t.field("analysis_state") -> "Ready for Work"
         t.has_label("x")    case-insensitive
         t.status_state()    the Jira status through status_map / the category (None if neither knows it)
+        t.scope             the CSCs being looked at (cmtrack CSC rows: name, jira_project, affected_product, team),
+                            or None when there's no scope (a ticket page, a backlog)
+        t.products          the ticket's Affected Product values (all of them; top-level tickets may set it too)
+        t.cscs              the CSCs in scope that this ticket names (top level: by Affected Product alone)
         t.issue, t.record   the raw API issue and the TicketRecord being built
     """
 
-    def __init__(self, source, issue, record):
+    def __init__(self, source, issue, record, scope=None):
         f = issue.get("fields", {})
         status = f.get("status") or {}
-        self.source, self.issue, self.record = source, issue, record
+        self.source, self.issue, self.record, self.scope = source, issue, record, scope
+        self.products = record.attributes.get("affected_products", [])
         self.key, self.type, self.is_top = record.key, record.type, record.project is None
+        self.cscs = [c for c in scope or [] if c["affected_product"] in self.products and   # top level: product only
+                     (self.is_top or c["jira_project"] == record.project)]
         self.status = str(status.get("name") or "")
         self.category = (status.get("statusCategory") or {}).get("key")
         self.labels = [str(label) for label in f.get("labels") or []]
@@ -286,6 +302,7 @@ class JiraTicketSource(TicketSource):
                           multi-select: every value is kept in attributes["affected_products"]; affected_product
                           is the first. tickets_for_versions returns one copy of the ticket per requested CSC
                           it names, each with that CSC's product
+                          On a top-level ticket it names the CSCs it affects (top_level_tickets_for_versions)
         cis               top-level ticket -> CI names it affects (shown on backlogs; used by top_level_tickets)
 
     States: ``state_rule`` (default status_rule) decides each ticket's own state; top-level tickets then go through
@@ -311,37 +328,42 @@ class JiraTicketSource(TicketSource):
         """Issues matching ``jql``, with the standard fields and every registered one (rules may read any)."""
         return self.client.search(jql, list(self.FIELDS) + self.fields.ids(*self.fields.names))
 
-    def records(self, issues):
-        """TicketRecords for API issues; top-level ones rolled up with their CSC tickets (one query per batch)."""
-        recs = [self.record(i) for i in issues]
+    def records(self, issues, cscs=None):
+        """TicketRecords for API issues; top-level ones rolled up with their CSC tickets (one query per batch).
+        With ``cscs`` (cmtrack CSC rows), the rollup only sees CSC tickets for those CSCs, and rules see the scope."""
+        recs = [self.record(i, cscs) for i in issues]
         tops = [(i, r) for i, r in zip(issues, recs) if r.project is None]
         if self.rollup and tops and "parent" in self.fields.names:
             children = {}
-            for c in self.children_of([r.key for _, r in tops]):
+            for c in self.children_of([r.key for _, r in tops], cscs):
                 children.setdefault(c.parent_key, []).append(c)
             for issue, r in tops:
-                out = self.rollup(JiraTicket(self, issue, r), (r.state, r.state_reason), children.get(r.key, []))
+                out = self.rollup(JiraTicket(self, issue, r, cscs), (r.state, r.state_reason), children.get(r.key, []))
                 r.state, r.state_reason = normalize_state(*(out if isinstance(out, tuple) else (out, None)))
         return recs
 
-    def children_of(self, keys):
-        """The CSC tickets whose parent field names any of ``keys`` (their own states only, no rollup)."""
+    def children_of(self, keys, cscs=None):
+        """The CSC tickets whose parent field names any of ``keys`` (their own states only, no rollup); with
+        ``cscs``, only those naming one of these CSCs."""
+        pairs = in_pairs(cscs)
         out = []
         for n in range(0, len(keys), BATCH // 2):
             batch = set(keys[n:n + BATCH // 2])
-            out += [r for r in (self.record(i) for i in self.search(self.fields.clause("parent", batch) + " ORDER BY key"))
-                    if r.parent_key in batch]
+            out += [r for r in (self.record(i, cscs) for i in self.search(self.fields.clause("parent", batch) + " ORDER BY key"))
+                    if r.parent_key in batch and (pairs is None or any((r.project, p) in pairs for p in
+                                                                       r.attributes["affected_products"]))]
         return out
 
-    def query(self, projects, jql=None):
+    def query(self, projects, jql=None, cscs=None):
         """Every issue in ``projects``, optionally narrowed by more ``jql``: the building block for the rest."""
         where = f"project in ({quote(projects)})" + (f" AND ({jql})" if jql else "")
-        return self.records([i for i in self.search(where + " ORDER BY key") if plain(i["fields"].get("project")) in projects])
+        return self.records([i for i in self.search(where + " ORDER BY key") if plain(i["fields"].get("project")) in projects],
+                            cscs)
 
-    def by_keys(self, keys):
+    def by_keys(self, keys, cscs=None):
         keys = list(dict.fromkeys(keys))
         return self.records([i for n in range(0, len(keys), BATCH)
-                             for i in self.search(f"key in ({quote(keys[n:n + BATCH])})") if i["key"] in keys])
+                             for i in self.search(f"key in ({quote(keys[n:n + BATCH])})") if i["key"] in keys], cscs)
 
     # -- TicketSource ----------------------------------------------------------------------------------------
 
@@ -353,7 +375,7 @@ class JiraTicketSource(TicketSource):
         if "affected_product" in self.fields.names:
             jql += " AND " + self.fields.clause("affected_product", {p for _, p in pairs})
         wanted, out = set(versions), []
-        for r in self.query(sorted({p for p, _ in pairs}), jql):
+        for r in self.query(sorted({p for p, _ in pairs}), jql, cscs):
             if wanted & set(r.fix_versions or ()):
                 # one copy per requested CSC it names: a ticket for two CSCs shows under both
                 out += [replace(r, affected_product=p, attributes=dict(r.attributes))
@@ -362,6 +384,26 @@ class JiraTicketSource(TicketSource):
 
     def get_tickets(self, keys):
         return self.by_keys(keys)
+
+    def get_parents(self, keys, cscs):
+        """Top-level tickets by key, rolled up over just ``cscs``' tickets (the CI work report's parents)."""
+        return self.by_keys(keys, cscs)
+
+    def top_level_tickets_for_versions(self, ci, cscs, versions):
+        """Features/discrepancies in the top-level projects fixed in ``versions`` whose Affected Product names any
+        of ``cscs``, whether or not CSC tickets exist yet. Each is rolled up over those CSCs' tickets only (other
+        CSCs following a different process, or out of scope, don't count)."""
+        products = {c["affected_product"] for c in cscs if c.get("affected_product")}
+        if not products or not versions:
+            return []
+        jql = f"fixVersion in ({quote(versions)})"
+        if self.top_types:
+            jql += f" AND issuetype in ({quote(sorted(self.top_types))})"
+        if "affected_product" in self.fields.names:
+            jql += " AND " + self.fields.clause("affected_product", products)
+        return [r for r in self.query(self.top_projects, jql, cscs)
+                if set(versions) & set(r.fix_versions or ()) and products & set(r.attributes["affected_products"])
+                and (not self.top_types or r.type in self.top_types)]
 
     def get_children(self, key):
         """The CSC tickets whose parent field names ``key`` (in any project)."""
@@ -377,26 +419,26 @@ class JiraTicketSource(TicketSource):
 
     # -- extraction ------------------------------------------------------------------------------------------
 
-    def record(self, issue):
+    def record(self, issue, cscs=None):
         """An API issue -> TicketRecord, with its own state (``state``); rollup happens in ``records``."""
         get = lambda short: self.fields.get(issue, short)
         project = get("project")
         top = project in self.top_projects
         cis = get("cis")
-        products = [] if top else as_list(get("affected_product"))   # a single or multi-select field
+        products = as_list(get("affected_product"))                 # a single or multi-select field
         rec = TicketRecord(
             key=issue["key"], summary=get("summary"), type=get("issuetype"), status=get("status"),
             parent_key=None if top else get("parent"),
-            project=None if top else project, affected_product=products[0] if products else None,
+            project=None if top else project, affected_product=None if top or not products else products[0],
             attributes={"affected_products": products},
             fix_versions=get("fixVersions") or [], cis=[cis] if isinstance(cis, str) else cis,
             url=self.browse + issue["key"], assignee=get("assignee"), updated=get("updated"), state="done")
-        rec.state, rec.state_reason = normalize_state(*self.state(issue, rec))
+        rec.state, rec.state_reason = normalize_state(*self.state(issue, rec, cscs))
         return rec
 
-    def state(self, issue, rec):
+    def state(self, issue, rec, cscs=None):
         """(state, reason): the registered state rule, then checks that flag data to fix in Jira as ``error``."""
-        t = JiraTicket(self, issue, rec)
+        t = JiraTicket(self, issue, rec, cscs)
         out = self.state_rule(t)
         state, reason = out if isinstance(out, tuple) else (out, None)
         if state is None:

@@ -33,10 +33,14 @@ def issue(key, type, status, category="indeterminate", parent=None, product=None
 
 
 ISSUES = [
-    issue("PRG-1", "Feature", "In Progress", cis=["NAV-SW"]),
+    issue("PRG-1", "Feature", "In Progress", cis=["NAV-SW"], product=["core", "maps"], fix=["2027.Q1-b2"]),
     issue("PRG-2", "Discrepancy", "Done", "done", cis=["NAV-SW"]),
     issue("PRG-3", "Task", "Open", "new"),
-    issue("PRG-10", "Feature", "Open", "new", cis=["DISPLAY-SW"]),
+    issue("PRG-10", "Feature", "Open", "new", cis=["DISPLAY-SW"], product="maps", fix=["2027.Q1-b2"]),
+    issue("PRG-11", "Discrepancy", "Open", "new", product="maps", fix=["2027.Q1-b2"]),         # no CSC tickets yet
+    issue("PRG-12", "Feature", "Open", "new", product="display", fix=["2027.Q1-b2"]),          # not our CSC
+    issue("PRG-13", "Feature", "Open", "new", product="maps", fix=["2027.Q2-b1"]),             # another version
+    issue("PRG-14", "Task", "Open", "new", product="maps", fix=["2027.Q1-b2"]),                # not a top-level type
     issue("NAVL-1", "Story", "In Review", parent="PRG-1", product="core", fix=["2027.Q1-b1"]),
     issue("NAVL-2", "Story", "In Progress", product="core", fix=["2027.Q1-b1"]),               # no parent
     issue("NAVL-3", "Story", "Closed", "done", parent="PRG-1", product="core"),               # closed, no fix version
@@ -108,9 +112,9 @@ class JiraTicketSourceTests(unittest.TestCase):
     def test_records_and_states(self):
         by = {r.key: r for r in self.source.get_tickets([i["key"] for i in ISSUES] + ["NOPE-1"])}
         keyed = [q for q in FakeJira.searches if q["jql"].startswith("key in (")]
-        self.assertEqual(len(keyed), 5)                                                    # 13 issues, pages of 3
-        self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1" OR cf[10500] ~ "PRG-10" OR cf[10500] ~ '
-                                                       '"PRG-2" OR cf[10500] ~ "PRG-3") ORDER BY key')      # + one rollup query
+        self.assertEqual(len(keyed), 6)                                                    # 17 issues, pages of 3
+        self.assertEqual(FakeJira.searches[-1]["jql"], "(" + " OR ".join(f'cf[10500] ~ "{k}"' for k in sorted(
+            i["key"] for i in ISSUES if i["key"].startswith("PRG-"))) + ") ORDER BY key")     # + one rollup query
         self.assertIn("customfield_10500", FakeJira.searches[0]["fields"])
         self.assertNotIn("NOPE-1", by)
         r = by["NAVL-1"]
@@ -143,6 +147,19 @@ class JiraTicketSourceTests(unittest.TestCase):
         self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1") ORDER BY key')  # exact match: not PRG-10's
         self.assertEqual([r.key for r in self.source.top_level_tickets({}, [{"name": "NAV-SW"}])], ["PRG-1"])
         self.assertEqual([r.key for r in self.source.query(["NAVX"])], ["NAVX-1", "NAVX-2", "NAVX-3", "NAVX-4"])
+
+    def test_top_level_tickets_for_versions(self):
+        maps = [{"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
+        tops = self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, maps, ["2027.Q1-b2"])
+        self.assertEqual([(r.key, r.state, r.state_reason) for r in tops],
+                         [("PRG-1", "blocked", None),      # rolled up over NAVX-1 only: not NAVL-3 (core) or NAVX-2
+                          ("PRG-10", "done", None),        # NAVX-3 only: not NAVX-4 (no product) or the NAVL ones
+                          ("PRG-11", "analysis_required", None)])   # found without any CSC ticket
+        self.assertEqual(FakeJira.searches[0]["jql"], 'project in ("PRG") AND (fixVersion in ("2027.Q1-b2") AND issuetype '
+                                                      'in ("Discrepancy", "Feature") AND cf[10600] in ("maps")) ORDER BY key')
+        by = {r.key: r for r in self.source.get_tickets(["PRG-1", "PRG-10"])}             # no scope: every CSC ticket
+        self.assertEqual((by["PRG-1"].state, by["PRG-10"].state), ("error", "error"))
+        self.assertEqual(self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, maps, ["1999.Q1"]), [])
 
     def test_own_session_and_auth(self):
         import requests
@@ -180,6 +197,8 @@ class JiraTicketSourceTests(unittest.TestCase):
             prg10 = next(i for i in work["items"] if i["parent"]["key"] == "PRG-10")
             self.assertEqual({g["csc"]: [t["key"] for t in g["tickets"]] for g in prg10["cscs"]},
                              {"nav-core": ["NAVL-4", "NAVL-5"], "nav-two": ["NAVL-5"], "nav-maps": ["NAVX-3"]})
+            self.assertEqual(prg10["parent"]["state"], "done")         # judged over this CI's CSCs: NAVX-4 isn't one
+            self.assertEqual(call("get", "/tickets/PRG-10")["state"], "error")   # the ticket page sees them all
             t = call("get", "/tickets/PRG-1")
             self.assertEqual(t["summary"], "PRG-1 summary")
             call("post", "/backlogs", {"name": "Nav", "cis": ["NAV-SW"]})
@@ -246,6 +265,18 @@ class StateRuleTests(unittest.TestCase):
         source.rollup = lambda t, own, children: ("verification", f"{len(children)} children")
         rec = next(r for r in source.get_tickets(["PRG-41"]))
         self.assertEqual((rec.state, rec.state_reason), ("verification", "3 children"))
+
+    def test_scope(self):
+        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule)
+        maps = [{"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
+        rec = next(iter(source.get_parents(["PRG-41"], maps)))
+        self.assertEqual(rec.state, "ready_for_work")             # NAVL-42 (core, in work) is out of scope
+        seen = []
+        source.state_rule = lambda t: seen.append((t.key, tuple(c["name"] for c in t.cscs), t.scope is maps)) or None
+        source.get_parents(["PRG-41"], maps)
+        family = sorted({s for s in seen if s[0] in ("PRG-41", "NAVL-41", "NAVL-42", "NAVX-42")})   # the fake ignores JQL
+        self.assertEqual(family, [("NAVL-41", (), True), ("NAVL-42", (), True), ("NAVX-42", ("nav-maps",), True),
+                                  ("PRG-41", (), True)])
 
     def test_rules_from_config(self):
         tmp = tempfile.mkdtemp()

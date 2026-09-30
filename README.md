@@ -112,8 +112,8 @@ client (on `requests`), a registry that lets you name custom fields ("Parent Tic
 feature and discrepancy projects plus CSCI projects whose tickets point at their parent through a custom field.
 Configure it in code or with `CMTRACK_TICKET_SOURCES=jira=cmtrack.jira_tickets:from_env` (settings in the module
 docstring). A ticket's state comes from a *state rule* you register, a function that sees one ticket (status,
-labels, any registered field); top-level tickets then go through a *rollup* over their CSC tickets. `analysis_rule`
-is an example, with an "Analysis State" field on features and an "Analysis" label on CSC tickets.
+labels, any registered field); top-level tickets then go through a *rollup* over their CSC tickets (in a CI's work report, and in
+`top_level_tickets_for_versions`, only the CSC tickets of the CSCs you're looking at). `analysis_rule` is an example, with an "Analysis State" field on features and an "Analysis" label on CSC tickets.
 
 Or implement a `TicketSource` (and optionally a `ReleaseSource`) around your own Jira client and name it in the
 variables above. The docstrings at the top of [`cmtrack/tickets.py`](cmtrack/tickets.py) and
