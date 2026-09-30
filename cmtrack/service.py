@@ -1721,9 +1721,9 @@ def work_report(conn, source, ci_ref, to=None, frm=None, versions=None):
             res.warnings.append(f"{rec.key}: belongs to {t['ci']}, not {ci['name']}; skipped")
         elif not t["versions"]:
             res.warnings.append(f"{rec.key}: none of its fix versions {rec.fix_versions} are in the requested set")
-        elif t["key"] not in seen:
+        elif (t["key"], t["csc"]) not in seen:                # a ticket may come once per CSC it names
             rows.append(t)
-            seen.add(t["key"])
+            seen.add((t["key"], t["csc"]))
     parents = res.parents(source, [r["parent_key"] for r in rows if r["parent_key"]])
     by_parent = {}
     for r in rows:

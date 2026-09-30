@@ -39,6 +39,7 @@ CMTRACK_JIRA_TOKEN (or CMTRACK_JIRA_USER + CMTRACK_JIRA_PASSWORD) and CMTRACK_JI
 import importlib
 import json
 import os
+from dataclasses import replace
 from typing import Iterable, List, Optional
 
 import requests
@@ -283,7 +284,8 @@ class JiraTicketSource(TicketSource):
         parent            CSC ticket -> its feature/discrepancy (text, issue picker, or select holding the key)
         affected_product  CSC ticket -> which CSC in its project (the second half of cmtrack's Jira pair). Single or
                           multi-select: every value is kept in attributes["affected_products"]; affected_product
-                          is the first, or in tickets_for_versions the first one that names a requested CSC
+                          is the first. tickets_for_versions returns one copy of the ticket per requested CSC
+                          it names, each with that CSC's product
         cis               top-level ticket -> CI names it affects (shown on backlogs; used by top_level_tickets)
 
     States: ``state_rule`` (default status_rule) decides each ticket's own state; top-level tickets then go through
@@ -352,10 +354,10 @@ class JiraTicketSource(TicketSource):
             jql += " AND " + self.fields.clause("affected_product", {p for _, p in pairs})
         wanted, out = set(versions), []
         for r in self.query(sorted({p for p, _ in pairs}), jql):
-            mine = [p for p in r.attributes.get("affected_products", []) if (r.project, p) in pairs]
-            if mine and wanted & set(r.fix_versions or ()):
-                r.affected_product = mine[0]            # file it under the requested CSC it names
-                out.append(r)
+            if wanted & set(r.fix_versions or ()):
+                # one copy per requested CSC it names: a ticket for two CSCs shows under both
+                out += [replace(r, affected_product=p, attributes=dict(r.attributes))
+                        for p in r.attributes.get("affected_products", []) if (r.project, p) in pairs]
         return out
 
     def get_tickets(self, keys):

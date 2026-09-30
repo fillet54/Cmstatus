@@ -44,6 +44,7 @@ ISSUES = [
     issue("NAVX-1", "Story", "Awaiting CCB", parent="PRG-1", product="maps", fix=["2027.Q1-b2"]),
     issue("NAVX-2", "Story", "Done", "done", parent="PRG-1", product="other", fix=["2027.Q1-b2"]),   # not our CSC
     issue("NAVX-3", "Story", "Done", "done", parent="PRG-10", product=["other", "maps"], fix=["2027.Q1-b2"]),  # multi
+    issue("NAVL-5", "Story", "Done", "done", parent="PRG-10", product=["core", "nav2"], fix=["2027.Q1-b2"]),   # 2 CSCs
     issue("NAVX-4", "Story", "Done", "done", parent="PRG-10", product=[], fix=["2027.Q1-b2"]),     # multi, empty
 ]
 
@@ -107,7 +108,7 @@ class JiraTicketSourceTests(unittest.TestCase):
     def test_records_and_states(self):
         by = {r.key: r for r in self.source.get_tickets([i["key"] for i in ISSUES] + ["NOPE-1"])}
         keyed = [q for q in FakeJira.searches if q["jql"].startswith("key in (")]
-        self.assertEqual(len(keyed), 4)                                                    # 12 issues, pages of 3
+        self.assertEqual(len(keyed), 5)                                                    # 13 issues, pages of 3
         self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1" OR cf[10500] ~ "PRG-10" OR cf[10500] ~ '
                                                        '"PRG-2" OR cf[10500] ~ "PRG-3") ORDER BY key')      # + one rollup query
         self.assertIn("customfield_10500", FakeJira.searches[0]["fields"])
@@ -131,10 +132,13 @@ class JiraTicketSourceTests(unittest.TestCase):
         cscs = [{"name": "nav-core", "jira_project": "NAVL", "affected_product": "core"},
                 {"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
         found = self.source.tickets_for_versions({"name": "NAV-SW"}, cscs, ["2027.Q1-b2"])
-        self.assertEqual(sorted(r.key for r in found), ["NAVL-4", "NAVX-1", "NAVX-3"])     # not NAVX-2 (other CSC)
-        self.assertEqual(next(r for r in found if r.key == "NAVX-3").affected_product, "maps")   # the CSC asked for
+        self.assertEqual(sorted(r.key for r in found), ["NAVL-4", "NAVL-5", "NAVX-1", "NAVX-3"])   # not NAVX-2
+        self.assertEqual(next(r for r in found if r.key == "NAVX-3").affected_product, "maps")   # the one CSC asked for
         self.assertEqual(FakeJira.searches[-1]["jql"], 'project in ("NAVL", "NAVX") AND (fixVersion in ("2027.Q1-b2") '
                                                        'AND cf[10600] in ("core", "maps")) ORDER BY key')
+        cscs.append({"name": "nav-two", "jira_project": "NAVL", "affected_product": "nav2"})
+        found = self.source.tickets_for_versions({"name": "NAV-SW"}, cscs, ["2027.Q1-b2"])
+        self.assertEqual(sorted(r.affected_product for r in found if r.key == "NAVL-5"), ["core", "nav2"])   # both
         self.assertEqual([r.key for r in self.source.get_children("PRG-1")], ["NAVL-1", "NAVL-3", "NAVX-1", "NAVX-2"])
         self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1") ORDER BY key')  # exact match: not PRG-10's
         self.assertEqual([r.key for r in self.source.top_level_tickets({}, [{"name": "NAV-SW"}])], ["PRG-1"])
@@ -170,7 +174,12 @@ class JiraTicketSourceTests(unittest.TestCase):
             work = call("get", "/cis/NAV-SW/work?versions=2027.Q1-b1,2027.Q1-b2")
             groups = {(i["parent"] or {}).get("key"): sorted(t["key"] for g in i["cscs"] for t in g["tickets"]) for i in work["items"]}
             self.assertEqual(groups["PRG-1"], ["NAVL-1", "NAVX-1"])
-            self.assertEqual(groups["PRG-10"], ["NAVL-4", "NAVX-3"])                         # NAVX-3 via its 2nd product
+            self.assertEqual(groups["PRG-10"], ["NAVL-4", "NAVL-5", "NAVX-3"])               # NAVX-3 via its 2nd product
+            call("post", "/cis/NAV-SW/cscs", {"name": "nav-two", "jira_project": "NAVL", "affected_product": "nav2"})
+            work = call("get", "/cis/NAV-SW/work?versions=2027.Q1-b2")
+            prg10 = next(i for i in work["items"] if i["parent"]["key"] == "PRG-10")
+            self.assertEqual({g["csc"]: [t["key"] for t in g["tickets"]] for g in prg10["cscs"]},
+                             {"nav-core": ["NAVL-4", "NAVL-5"], "nav-two": ["NAVL-5"], "nav-maps": ["NAVX-3"]})
             t = call("get", "/tickets/PRG-1")
             self.assertEqual(t["summary"], "PRG-1 summary")
             call("post", "/backlogs", {"name": "Nav", "cis": ["NAV-SW"]})
