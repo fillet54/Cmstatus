@@ -26,7 +26,9 @@ def issue(key, type, status, category="indeterminate", parent=None, product=None
         "summary": f"{key} summary", "issuetype": {"name": type}, "project": {"key": key.split("-")[0], "name": "x"},
         "status": {"name": status, "statusCategory": {"key": category}} if status else None,
         "fixVersions": [{"name": v} for v in fix], "assignee": {"name": "jdoe", "displayName": "J. Doe"},
-        "customfield_10500": parent, "customfield_10600": {"value": product, "id": "1"} if product else None,
+        "customfield_10500": parent,
+        "customfield_10600": [{"value": p, "id": "1"} for p in product] if isinstance(product, list)
+                             else {"value": product, "id": "1"} if product else None,
         "customfield_10700": [{"value": c} for c in cis] if cis else None}}
 
 
@@ -41,6 +43,8 @@ ISSUES = [
     issue("NAVL-4", "Bug", "Done", "done", parent="PRG-10", product="core", fix=["2027.Q1-b2"]),
     issue("NAVX-1", "Story", "Awaiting CCB", parent="PRG-1", product="maps", fix=["2027.Q1-b2"]),
     issue("NAVX-2", "Story", "Done", "done", parent="PRG-1", product="other", fix=["2027.Q1-b2"]),   # not our CSC
+    issue("NAVX-3", "Story", "Done", "done", parent="PRG-10", product=["other", "maps"], fix=["2027.Q1-b2"]),  # multi
+    issue("NAVX-4", "Story", "Done", "done", parent="PRG-10", product=[], fix=["2027.Q1-b2"]),     # multi, empty
 ]
 
 
@@ -103,7 +107,7 @@ class JiraTicketSourceTests(unittest.TestCase):
     def test_records_and_states(self):
         by = {r.key: r for r in self.source.get_tickets([i["key"] for i in ISSUES] + ["NOPE-1"])}
         keyed = [q for q in FakeJira.searches if q["jql"].startswith("key in (")]
-        self.assertEqual(len(keyed), 4)                                                    # 10 issues, pages of 3
+        self.assertEqual(len(keyed), 4)                                                    # 12 issues, pages of 3
         self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1" OR cf[10500] ~ "PRG-10" OR cf[10500] ~ '
                                                        '"PRG-2" OR cf[10500] ~ "PRG-3") ORDER BY key')      # + one rollup query
         self.assertIn("customfield_10500", FakeJira.searches[0]["fields"])
@@ -114,7 +118,9 @@ class JiraTicketSourceTests(unittest.TestCase):
         self.assertEqual((by["PRG-1"].project, by["PRG-1"].parent_key, by["PRG-1"].cis), (None, None, ["NAV-SW"]))
         # rolled up: its CSC tickets are in work, and one of them is in error, which wins
         self.assertEqual((by["PRG-1"].state, by["PRG-1"].state_reason), ("error", "NAVL-3: closed without a fix version"))
-        self.assertEqual(by["PRG-10"].state, "done")                                       # its only CSC ticket is done
+        self.assertEqual((by["PRG-10"].state, by["PRG-10"].state_reason), ("error", "NAVX-4: no 'affected product' set"))
+        self.assertEqual((by["NAVX-3"].affected_product, by["NAVX-3"].attributes["affected_products"]),
+                         ("other", ["other", "maps"]))                                     # multi-select: first, and all
         self.assertTrue(by["PRG-1"].url.endswith("/browse/PRG-1"))
         self.assertEqual(by["NAVX-1"].state, "blocked")                                     # status_map from config
         self.assertEqual((by["NAVL-2"].state, by["NAVL-2"].state_reason), ("error", "no parent ticket in 'Parent Ticket'"))
@@ -125,13 +131,14 @@ class JiraTicketSourceTests(unittest.TestCase):
         cscs = [{"name": "nav-core", "jira_project": "NAVL", "affected_product": "core"},
                 {"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
         found = self.source.tickets_for_versions({"name": "NAV-SW"}, cscs, ["2027.Q1-b2"])
-        self.assertEqual(sorted(r.key for r in found), ["NAVL-4", "NAVX-1"])               # not NAVX-2 (other CSC)
+        self.assertEqual(sorted(r.key for r in found), ["NAVL-4", "NAVX-1", "NAVX-3"])     # not NAVX-2 (other CSC)
+        self.assertEqual(next(r for r in found if r.key == "NAVX-3").affected_product, "maps")   # the CSC asked for
         self.assertEqual(FakeJira.searches[-1]["jql"], 'project in ("NAVL", "NAVX") AND (fixVersion in ("2027.Q1-b2") '
                                                        'AND cf[10600] in ("core", "maps")) ORDER BY key')
         self.assertEqual([r.key for r in self.source.get_children("PRG-1")], ["NAVL-1", "NAVL-3", "NAVX-1", "NAVX-2"])
         self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1") ORDER BY key')  # exact match: not PRG-10's
         self.assertEqual([r.key for r in self.source.top_level_tickets({}, [{"name": "NAV-SW"}])], ["PRG-1"])
-        self.assertEqual([r.key for r in self.source.query(["NAVX"])], ["NAVX-1", "NAVX-2"])
+        self.assertEqual([r.key for r in self.source.query(["NAVX"])], ["NAVX-1", "NAVX-2", "NAVX-3", "NAVX-4"])
 
     def test_own_session_and_auth(self):
         import requests
@@ -163,7 +170,7 @@ class JiraTicketSourceTests(unittest.TestCase):
             work = call("get", "/cis/NAV-SW/work?versions=2027.Q1-b1,2027.Q1-b2")
             groups = {(i["parent"] or {}).get("key"): sorted(t["key"] for g in i["cscs"] for t in g["tickets"]) for i in work["items"]}
             self.assertEqual(groups["PRG-1"], ["NAVL-1", "NAVX-1"])
-            self.assertEqual(groups["PRG-10"], ["NAVL-4"])
+            self.assertEqual(groups["PRG-10"], ["NAVL-4", "NAVX-3"])                         # NAVX-3 via its 2nd product
             t = call("get", "/tickets/PRG-1")
             self.assertEqual(t["summary"], "PRG-1 summary")
             call("post", "/backlogs", {"name": "Nav", "cis": ["NAV-SW"]})

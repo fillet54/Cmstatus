@@ -95,6 +95,11 @@ class JiraClient:
 
 # ----------------------------------------------------------------------------- fields
 
+def as_list(value):
+    """A field value as a list: None -> [], "x" -> ["x"], a list unchanged (empty values dropped)."""
+    return [v for v in (value if isinstance(value, list) else [value]) if v not in (None, "")]
+
+
 def plain(value):
     """A Jira field value as plain data: select {"value": x} -> x, user {"displayName": x} -> x, version or
     status {"name": x} -> x, issue {"key": x} -> x, lists element by element, everything else unchanged."""
@@ -276,7 +281,9 @@ class JiraTicketSource(TicketSource):
 
     Registered field names used here (all optional except ``parent``); register any others your rules read:
         parent            CSC ticket -> its feature/discrepancy (text, issue picker, or select holding the key)
-        affected_product  CSC ticket -> which CSC in its project (the second half of cmtrack's Jira pair)
+        affected_product  CSC ticket -> which CSC in its project (the second half of cmtrack's Jira pair). Single or
+                          multi-select: every value is kept in attributes["affected_products"]; affected_product
+                          is the first, or in tickets_for_versions the first one that names a requested CSC
         cis               top-level ticket -> CI names it affects (shown on backlogs; used by top_level_tickets)
 
     States: ``state_rule`` (default status_rule) decides each ticket's own state; top-level tickets then go through
@@ -343,9 +350,13 @@ class JiraTicketSource(TicketSource):
         jql = f"fixVersion in ({quote(versions)})"
         if "affected_product" in self.fields.names:
             jql += " AND " + self.fields.clause("affected_product", {p for _, p in pairs})
-        wanted = set(versions)
-        return [r for r in self.query(sorted({p for p, _ in pairs}), jql)
-                if (r.project, r.affected_product) in pairs and wanted & set(r.fix_versions or ())]
+        wanted, out = set(versions), []
+        for r in self.query(sorted({p for p, _ in pairs}), jql):
+            mine = [p for p in r.attributes.get("affected_products", []) if (r.project, p) in pairs]
+            if mine and wanted & set(r.fix_versions or ()):
+                r.affected_product = mine[0]            # file it under the requested CSC it names
+                out.append(r)
+        return out
 
     def get_tickets(self, keys):
         return self.by_keys(keys)
@@ -370,10 +381,12 @@ class JiraTicketSource(TicketSource):
         project = get("project")
         top = project in self.top_projects
         cis = get("cis")
+        products = [] if top else as_list(get("affected_product"))   # a single or multi-select field
         rec = TicketRecord(
             key=issue["key"], summary=get("summary"), type=get("issuetype"), status=get("status"),
             parent_key=None if top else get("parent"),
-            project=None if top else project, affected_product=None if top else get("affected_product"),
+            project=None if top else project, affected_product=products[0] if products else None,
+            attributes={"affected_products": products},
             fix_versions=get("fixVersions") or [], cis=[cis] if isinstance(cis, str) else cis,
             url=self.browse + issue["key"], assignee=get("assignee"), updated=get("updated"), state="done")
         rec.state, rec.state_reason = normalize_state(*self.state(issue, rec))
