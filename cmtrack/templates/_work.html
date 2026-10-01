@@ -33,12 +33,11 @@
   {{ ui.stat("Not started", counts.analysis_required + counts.ready_for_work if counts else "—", "analysis required or ready for work" if counts else missing_hint) }}
   {{ ui.stat("Versions accounted for", version_count if version_count is not none else "—", "in the selected range" if version_count is not none else "choose a range") }}
 {% endcall %}
-{% if counts and (counts.error or counts.cancelled) %}
+{% if counts and (counts.error or counts.cancelled or counts.ignored) %}
+  {% set parts = [counts.error ~ " ticket" ~ ("s" if counts.error != 1 else "") ~ " in error" if counts.error,
+                  counts.cancelled ~ " cancelled" if counts.cancelled, counts.ignored ~ " ignored" if counts.ignored] %}
   <div class="ui-muted" style="font-size: 12px;">
-    {% if counts.error %}{{ counts.error }} ticket{{ "s" if counts.error != 1 else "" }} in error{% endif %}
-    {% if counts.error and counts.cancelled %} and {% endif %}
-    {% if counts.cancelled %}{{ counts.cancelled }} cancelled ticket{{ "s" if counts.cancelled != 1 else "" }}{% endif %}
-    excluded from these three ticket counts.
+    {{ parts | select | join(", ") }} excluded from these three ticket counts.
   </div>
 {% endif %}
 

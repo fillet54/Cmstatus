@@ -96,9 +96,11 @@ source can't find shows as an `error` placeholder.
 
 **States** (`GET /api/ticket-states`), in workflow order: `analysis_required`, `in_analysis`, `ready_for_work`,
 `in_progress`, `peer_review`, `verification`, `done`; plus `blocked` (waiting on something: `state_reason` says what),
-`cancelled` and `error` (the source data doesn't add up, e.g. closed with open sub-tasks). The source decides a CSC
+`cancelled`, `ignored` (not part of the work, e.g. a verification ticket filed like a CSC ticket: listed, but left
+out of rollups, progress totals and the "open" filter) and `error` (the source data doesn't add up, e.g. closed with
+open sub-tasks). The source decides a CSC
 ticket's state, usually with domain logic over the ticket and everything linked to it rather than one Jira status.
-A parent (DR/FEAT) ticket's state is consistent with its CSC tickets: `tickets.rollup` ignores cancelled ones,
+A parent (DR/FEAT) ticket's state is consistent with its CSC tickets: `tickets.rollup` ignores cancelled and ignored ones,
 lets blocked or error win, and otherwise takes the least advanced (in progress once any CSC has started);
 `StaticSource` fills it in for parents that come without one. A missing or unrecognized state is stored as `error`
 with a reason; blocked and error reasons show next to the ticket so people know what to fix in Jira. `status`

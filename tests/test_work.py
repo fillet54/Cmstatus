@@ -320,6 +320,9 @@ class TicketUnitTests(unittest.TestCase):
         self.assertEqual(rollup(["done", "done"]), "done")
         self.assertEqual(rollup(["done", "cancelled"]), "done")                         # cancelled ones don't count
         self.assertEqual(rollup(["cancelled", "cancelled"]), "cancelled")
+        self.assertEqual(rollup(["ignored", "in_progress", "done"]), "in_progress")     # ignored ones don't either
+        self.assertEqual(rollup(["ignored", "cancelled"]), "cancelled")
+        self.assertIsNone(rollup(["ignored"]))                                          # like having no CSC tickets
         self.assertEqual(rollup(["verification", "done"]), "verification")              # the least advanced
         self.assertEqual(rollup(["analysis_required", "in_analysis"]), "analysis_required")
         self.assertEqual(rollup(["in_analysis", "peer_review"]), "in_progress")          # work has started

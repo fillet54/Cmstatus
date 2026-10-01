@@ -3,6 +3,7 @@ returns every issue, so these tests also show the source filters its results exa
 Run: python -m unittest discover -s tests"""
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -20,10 +21,10 @@ FIELDS = [{"id": "summary", "name": "Summary", "schema": {"type": "string"}},
 
 
 def issue(key, type, status, category="indeterminate", parent=None, product=None, fix=(), cis=None, analysis=None,
-          labels=()):
+          labels=(), summary=None):
     return {"key": key, "fields": {"labels": list(labels),
         "customfield_10800": {"value": analysis} if analysis else None,
-        "summary": f"{key} summary", "issuetype": {"name": type}, "project": {"key": key.split("-")[0], "name": "x"},
+        "summary": summary or f"{key} summary", "issuetype": {"name": type}, "project": {"key": key.split("-")[0], "name": "x"},
         "status": {"name": status, "statusCategory": {"key": category}} if status else None,
         "fixVersions": [{"name": v} for v in fix], "assignee": {"name": "jdoe", "displayName": "J. Doe"},
         "customfield_10500": parent,
@@ -219,6 +220,8 @@ RULE_ISSUES = [
     issue("PRG-44", "Feature", "Closed", "done", analysis="Ready for Work"),             # Jira closed it
     issue("PRG-45", "Feature", "Open", "new", analysis="Waiting"),                       # not a known value
     issue("PRG-46", "Feature", "Open", "new"),                                            # no analysis state: status
+    issue("PRG-47", "Feature", "Open", "new", analysis="Ready for Work"),
+    issue("NAVL-48", "Story", "In Work", parent="PRG-47", summary="VER: verify PRG-47"),   # verification: no product
 ]
 
 
@@ -265,6 +268,18 @@ class StateRuleTests(unittest.TestCase):
         source.rollup = lambda t, own, children: ("verification", f"{len(children)} children")
         rec = next(r for r in source.get_tickets(["PRG-41"]))
         self.assertEqual((rec.state, rec.state_reason), ("verification", "3 children"))
+
+    def test_ignored(self):
+        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule)
+        got = self.states(source)
+        self.assertEqual((got["NAVL-48"], got["PRG-47"]), ("error", "error"))     # no product set: looks like a bad CSC ticket
+        source.ignore_summary = re.compile(r"VER:")
+        rec = {r.key: r for r in source.get_tickets(["NAVL-48", "PRG-47"])}
+        self.assertEqual((rec["NAVL-48"].state, rec["NAVL-48"].state_reason), ("ignored", "summary matches 'VER:'"))
+        self.assertEqual(rec["PRG-47"].state, "ready_for_work")                     # it's in work, but doesn't count
+        source.ignore_summary = None
+        source.state_rule = lambda t: "ignored" if t.record.summary.startswith("VER:") else analysis_rule(t)
+        self.assertEqual(self.states(source)["PRG-47"], "ready_for_work")           # the same, from a rule
 
     def test_scope(self):
         source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule)

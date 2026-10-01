@@ -1638,11 +1638,11 @@ def _ask(source, method, *args):
 
 
 def _progress(rows):
-    """Ticket counts per state (all states, workflow order) plus total."""
+    """Ticket counts per state (all states, workflow order) plus total (ignored tickets are counted but not in it)."""
     counts = {s: 0 for s in tickets.STATES}
     for r in rows:
         counts[r["state"] if r["state"] in counts else tickets.ERROR] += 1
-    return {**counts, "total": len(rows)}
+    return {**counts, "total": len(rows) - counts["ignored"]}
 
 
 class _Resolver:
@@ -1737,7 +1737,7 @@ def work_report(conn, source, ci_ref, to=None, frm=None, versions=None):
     return report
 
 
-STATE_FILTERS = {"open": lambda s: s not in ("done", "cancelled"), "blocked": lambda s: s == "blocked",
+STATE_FILTERS = {"open": lambda s: s not in ("done", "cancelled", "ignored"), "blocked": lambda s: s == "blocked",
                  "done": lambda s: s == "done"}
 
 

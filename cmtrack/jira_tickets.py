@@ -34,17 +34,19 @@ CMTRACK_JIRA_TOKEN (or CMTRACK_JIRA_USER + CMTRACK_JIRA_PASSWORD) and CMTRACK_JI
     {"top_projects": ["PRG"],
      "fields": {"parent": "Parent Ticket", "affected_product": "Affected Product", "cis": "Affected CIs"},
      "status_map": {"Awaiting CCB": "blocked"},
-     "state_rule": "cmtrack.jira_tickets:analysis_rule"}          (and optionally "rollup": "module:function" or null)
+     "state_rule": "cmtrack.jira_tickets:analysis_rule",          (and optionally "rollup": "module:function" or null)
+     "ignore_summary": "VER-"}                                     (a regex matched at the start of the summary)
 """
 import importlib
 import json
 import os
+import re
 from dataclasses import replace
 from typing import Iterable, List, Optional
 
 import requests
 
-from .tickets import TicketRecord, TicketSource, normalize_state, rollup
+from .tickets import IDLE, TicketRecord, TicketSource, normalize_state, rollup
 
 BATCH = 100            # keys per "key in (...)" query
 
@@ -193,6 +195,11 @@ def quote(values):
 # Scope: when cmtrack asks about a set of CSCs (a CI's work report, top_level_tickets_for_versions), the rollup only
 # gets the CSC tickets of those CSCs, and rules can see the scope as t.scope / t.cscs. Tickets asked for without a
 # scope (a ticket page, a backlog) roll up over all their CSC tickets.
+#
+# Ignored: tickets that look like CSC tickets but aren't part of the work (verification tickets, say) can be given
+# the state "ignored", by a rule or with ignore_summary (a regex matched at the start of the summary, checked before
+# the rule). They still show in lists, but rollups, progress totals and the "open" filter leave them out, and the
+# data checks (no fix version, no parent...) don't apply to them.
 
 # Jira status (lower case) -> cmtrack state, for status_rule. Anything not here falls back on the status category.
 STATUS_MAP = {
@@ -255,8 +262,9 @@ def status_rule(t):
 def work_rollup(t, own, children):
     """The default rollup for top-level tickets: their own state until work starts on any CSC ticket (in progress
     or later, or blocked / in error); from then on the CSC tickets' combined state (tickets.rollup: the least
-    advanced, but in progress once anything is; blocked and error win). Cancelled CSC tickets don't count."""
-    live = [c for c in children if c.state != "cancelled"]
+    advanced, but in progress once anything is; blocked and error win). Cancelled and ignored CSC tickets don't
+    count."""
+    live = [c for c in children if c.state not in IDLE]
     if own[0] in ("error", "cancelled") or not any(c.state in WORK_STARTED for c in live):
         return own
     state = rollup([c.state for c in live])
@@ -313,7 +321,7 @@ class JiraTicketSource(TicketSource):
     FIELDS = ("summary", "issuetype", "status", "project", "fixVersions", "assignee", "updated", "labels")
 
     def __init__(self, client, top_projects, fields=None, status_map=None, top_types=None, browse_url=None,
-                 state_rule=status_rule, rollup=work_rollup):
+                 state_rule=status_rule, rollup=work_rollup, ignore_summary=None):
         self.client = client
         self.top_projects = list(top_projects)
         self.fields = fields if isinstance(fields, Fields) else Fields(client, **(fields or {}))
@@ -321,6 +329,7 @@ class JiraTicketSource(TicketSource):
         self.top_types = set(top_types or ())            # e.g. {"Feature", "Discrepancy"}; empty = any type
         self.browse = (browse_url or getattr(client, "url", "")).rstrip("/") + "/browse/"
         self.state_rule, self.rollup = state_rule or status_rule, rollup
+        self.ignore_summary = re.compile(ignore_summary) if isinstance(ignore_summary, str) else ignore_summary
 
     # -- queries -------------------------------------------------------------------------------------------
 
@@ -439,11 +448,13 @@ class JiraTicketSource(TicketSource):
     def state(self, issue, rec, cscs=None):
         """(state, reason): the registered state rule, then checks that flag data to fix in Jira as ``error``."""
         t = JiraTicket(self, issue, rec, cscs)
+        if self.ignore_summary and self.ignore_summary.match(rec.summary or ""):
+            return "ignored", f"summary matches {self.ignore_summary.pattern!r}"
         out = self.state_rule(t)
         state, reason = out if isinstance(out, tuple) else (out, None)
         if state is None:
             state, reason = (lambda o: o if isinstance(o, tuple) else (o, None))(status_rule(t))
-        problem = self.check(t, state)
+        problem = None if state == "ignored" else self.check(t, state)
         return ("error", problem) if problem else (state, reason)
 
     def check(self, t, state):
@@ -473,4 +484,4 @@ def from_env():
     rules = {k: load_function(config[k]) if config.get(k) else None for k in ("state_rule", "rollup")}
     return JiraTicketSource(client, config.get("top_projects", []), config.get("fields"), config.get("status_map"),
                             config.get("top_types"), config.get("browse_url"), rules["state_rule"] or status_rule,
-                            rules["rollup"] if "rollup" in config else work_rollup)
+                            rules["rollup"] if "rollup" in config else work_rollup, config.get("ignore_summary"))

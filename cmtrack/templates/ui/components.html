@@ -231,6 +231,7 @@
   {%- elif state == "verification" %}<path d="M8 1.5 L13.5 3.5 L13.5 8 C13.5 11 11 13.5 8 14.5 C5 13.5 2.5 11 2.5 8 L2.5 3.5 Z" stroke-width="1.5"/><path d="M5.5 8 L7.3 9.8 L10.6 6.3" stroke-width="1.5"/>
   {%- elif state == "done" %}<circle cx="8" cy="8" r="6.5" fill="currentColor" stroke="none"/><path d="M5 8.2 L7.1 10.2 L11 6" stroke="#FFFFFF" stroke-width="1.7"/>
   {%- elif state == "cancelled" %}<circle cx="8" cy="8" r="6"/><path d="M3.8 12.2 L12.2 3.8"/>
+  {%- elif state == "ignored" %}<circle cx="8" cy="8" r="6" stroke-dasharray="1 2.6"/><path d="M5 8 L11 8"/>
   {%- elif state == "error" %}<path d="M8 1.5 L15 14 L1 14 Z"/><path d="M8 6 L8 9.5 M8 11.5 L8 11.6" stroke-width="1.7"/>
   {%- else %}<circle cx="8" cy="8" r="6"/>{% endif -%}
 </svg>
@@ -256,7 +257,7 @@
 {%- for s, label in ui_states.items() if progress[s] %}{% set _ = parts.append(progress[s] ~ " " ~ label | lower) %}{% endfor -%}
 <div class="ui-statebar{% if size == 'lg' %} ui-statebar--lg{% endif %}" role="img"
      aria-label="{{ parts | join(', ') if parts else 'no tickets' }}" title="{{ parts | join(' · ') }}"{% if width %} style="--ui-bar-w: {{ width }};"{% endif %}>
-  {%- if total %}{% for s in ui_states if progress[s] %}<span class="ui-statebar__{{ s }}" style="width: {{ '%.2f' | format(100 * progress[s] / total) }}%"></span>{% endfor %}{% endif -%}
+  {%- if total %}{% for s in ui_states if progress[s] and s != "ignored" %}<span class="ui-statebar__{{ s }}" style="width: {{ '%.2f' | format(100 * progress[s] / total) }}%"></span>{% endfor %}{% endif -%}
 </div>
 {%- endmacro %}
 

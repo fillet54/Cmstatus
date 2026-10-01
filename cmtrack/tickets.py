@@ -52,19 +52,23 @@ STATES = {
     "done":                 "Done",
     "blocked":              "Blocked",           # waiting on something; state_reason says what
     "cancelled":            "Cancelled",
+    "ignored":              "Ignored",           # not part of the work (e.g. a verification ticket filed like a CSC
+                                                 # ticket): shown, but left out of rollups and progress totals
     "error":                "Error",             # something is off in the source data; state_reason says what
 }
 ALIASES = {"analysis_in_progress": "in_analysis", "merge_blocked": "blocked", "canceled": "cancelled"}
+IDLE = ("cancelled", "ignored")       # CSC ticket states a parent's rollup doesn't count
 WORKFLOW = ["analysis_required", "in_analysis", "ready_for_work", "in_progress", "peer_review", "verification", "done"]
 
 
 def rollup(states):
-    """A parent ticket's state from its CSC tickets' states: cancelled ones don't count (all cancelled: cancelled);
+    """A parent ticket's state from its CSC tickets' states: cancelled and ignored ones don't count (all cancelled:
+    cancelled);
     any error or blocked wins; otherwise the least advanced, except that once any CSC has started work
     (in progress or later) a parent still partly in analysis is in progress."""
-    live = [s for s in states if s != "cancelled"]
+    live = [s for s in states if s not in IDLE]
     if not live:
-        return "cancelled" if states else None
+        return "cancelled" if "cancelled" in states else None
     for s in ("error", "blocked"):
         if s in live:
             return s

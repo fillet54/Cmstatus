@@ -53,6 +53,7 @@
   --ui-state-peer_review: var(--ui-review);
   --ui-state-blocked: var(--ui-warning);
   --ui-state-cancelled: var(--ui-faint);
+  --ui-state-ignored: var(--ui-faint);
   --ui-state-verification: var(--ui-verify);
   --ui-state-done: var(--ui-success);
   --ui-state-error: var(--ui-danger);
@@ -210,6 +211,7 @@ body.ui {
 .ui-state--verification { --ui-state-color: var(--ui-state-verification); background: #E4F2F2; }
 .ui-state--done { --ui-state-color: var(--ui-success-ink); background: var(--ui-success-soft); border-color: transparent; }
 .ui-state--cancelled { --ui-state-color: var(--ui-state-cancelled); border-style: dashed; text-decoration: line-through; }
+.ui-state--ignored { --ui-state-color: var(--ui-state-ignored); border-style: dotted; }
 .ui-state--error { --ui-state-color: #FFFFFF; background: var(--ui-danger); border-color: var(--ui-danger); }
 .ui-reason { font-size: 12px; margin-top: 2px; }
 .ui-reason--blocked { color: var(--ui-warning-ink); }
