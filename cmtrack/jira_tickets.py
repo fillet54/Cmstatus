@@ -44,6 +44,8 @@ import re
 from dataclasses import replace
 from typing import Iterable, List, Optional
 
+from urllib.parse import quote as quote_path
+
 import requests
 
 from .tickets import IDLE, ROLES, TicketRecord, TicketSource, normalize_state, rollup
@@ -94,6 +96,10 @@ class JiraClient:
     def fields(self):
         """[{"id": "customfield_10500", "name": "Parent Ticket", "custom": true, ...}, ...]"""
         return self._request("GET", "/rest/api/2/field")
+
+    def project_versions(self, project):
+        """A project's versions: [{"id", "name", "releaseDate"?, "released", "archived", "description"?}, ...]"""
+        return self._request("GET", f"/rest/api/2/project/{quote_path(project, safe='')}/versions")
 
 
 # ----------------------------------------------------------------------------- fields

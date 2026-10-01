@@ -962,7 +962,8 @@ def sync_ci(conn, source, ci_ref, dry_run=False):
         raise CMError(f"{ci['name']} has no release source; its releases are managed by hand")
     if source is None:
         raise CMError(f"release source {ci['release_source']!r} is not configured (set CMTRACK_RELEASE_SOURCES)")
-    records, issues = _source_records(source, to_dict(ci), json.loads(ci["source_params"] or "{}"))
+    cscs = to_dicts(conn.execute("SELECT * FROM csc WHERE ci_id = ? ORDER BY name", (ci["id"],)))
+    records, issues = _source_records(source, {**to_dict(ci), "cscs": cscs}, json.loads(ci["source_params"] or "{}"))
     summary = {"ci": ci["name"], "source": ci["release_source"], "at": now(), "dry_run": bool(dry_run),
                "created": [], "updated": [], "adopted": [], "rekeyed": [], "restored": [], "missing": [], "pinned": [],
                "bases": [], "issues": issues}

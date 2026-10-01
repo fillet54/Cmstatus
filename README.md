@@ -118,6 +118,10 @@ pattern or issue type per role, or a function) says what each CSC ticket is for:
 parent only before work starts), *verification* (tracked per parent as "Verified n/m", never counted as work in a
 version or release) or *ignore*. `analysis_rule` is an example, with an "Analysis State" field on features and an "Analysis" label on CSC tickets.
 
+For releases, [`cmtrack/jira_releases.py`](cmtrack/jira_releases.py) merges the versions of every Jira project a
+CI's CSCs map to and sorts them into releases and builds with the CI's name patterns
+(`CMTRACK_RELEASE_SOURCES=jira=cmtrack.jira_releases:from_env`).
+
 Or implement a `TicketSource` (and optionally a `ReleaseSource`) around your own Jira client and name it in the
 variables above. The docstrings at the top of [`cmtrack/tickets.py`](cmtrack/tickets.py) and
 [`cmtrack/releases.py`](cmtrack/releases.py) are the templates; [docs/reference.md](docs/reference.md#work-items-tickets)

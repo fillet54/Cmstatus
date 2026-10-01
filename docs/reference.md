@@ -189,6 +189,13 @@ version Jira marks released that cmtrack hasn't released is reported. Anything e
 reason, released, builds) and `Unplaced` items. Register with
 `create_app({"RELEASE_SOURCES": {"jira": JiraReleases()}})` or `CMTRACK_RELEASE_SOURCES=jira=mypkg.jira:JiraReleases`,
 then `PATCH /api/cis/NAV-SW {"release_source": "jira", "source_params": {...}}`. A failing source answers 502.
+Sources get the CI with its CSC rows (`ci["cscs"]`).
+
+`cmtrack/jira_releases.py` is a working Jira release source (`CMTRACK_RELEASE_SOURCES=jira=cmtrack.jira_releases:from_env`):
+it reads the versions of every Jira project the CI's CSCs map to (or `source_params.projects`), merges them by
+name (key = name, latest release date, released/archived only when every project says so), optionally keeps only
+names matching `source_params.match`, and sorts them with the patterns above. With `"require_all": true`, a name
+missing from some projects is reported instead of used.
 
 ## Endpoints (`/api`, CI/IFC refs accept id or name; `GET /api/` lists them all)
 

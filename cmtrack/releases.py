@@ -140,12 +140,16 @@ class PatternSource(ReleaseSource):
         return compiled
 
     def releases(self, ci, params):
+        return self.place(self.versions(ci, params), params)
+
+    def place(self, versions, params):
+        """Sort a flat version list into ReleaseRecords (and Unplaced) by the patterns in ``params``."""
         pats = self.check_params(params)
         self_build = set(params.get("self_build", ["patch", "emergency"]))
         include_archived = params.get("include_archived", True)
         planned, children, builds, out = {}, [], {}, []
 
-        for v in self.versions(ci, params):
+        for v in versions:
             v = v if isinstance(v, SourceVersion) else SourceVersion(**v)
             if v.archived and not include_archived:
                 continue
