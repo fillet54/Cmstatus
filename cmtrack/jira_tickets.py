@@ -34,8 +34,8 @@ CMTRACK_JIRA_TOKEN (or CMTRACK_JIRA_USER + CMTRACK_JIRA_PASSWORD) and CMTRACK_JI
     {"top_projects": ["PRG"],
      "fields": {"parent": "Parent Ticket", "affected_product": "Affected Product", "cis": "Affected CIs"},
      "status_map": {"Awaiting CCB": "blocked"},
-     "state_rule": "cmtrack.jira_tickets:analysis_rule",          (and optionally "rollup": "module:function" or null)
-     "ignore_summary": "VER-"}                                     (a regex matched at the start of the summary)
+     "roles": {"analysis": {"label": "Analysis"}, "verification": {"summary": "VER:"}},   (or "module:function")
+     "state_rule": "cmtrack.jira_tickets:analysis_rule"}          (and optionally "rollup": "module:function" or null)
 """
 import importlib
 import json
@@ -46,7 +46,7 @@ from typing import Iterable, List, Optional
 
 import requests
 
-from .tickets import IDLE, TicketRecord, TicketSource, normalize_state, rollup
+from .tickets import IDLE, ROLES, TicketRecord, TicketSource, normalize_state, rollup
 
 BATCH = 100            # keys per "key in (...)" query
 
@@ -196,10 +196,21 @@ def quote(values):
 # gets the CSC tickets of those CSCs, and rules can see the scope as t.scope / t.cscs. Tickets asked for without a
 # scope (a ticket page, a backlog) roll up over all their CSC tickets.
 #
-# Ignored: tickets that look like CSC tickets but aren't part of the work (verification tickets, say) can be given
-# the state "ignored", by a rule or with ignore_summary (a regex matched at the start of the summary, checked before
-# the rule). They still show in lists, but rollups, progress totals and the "open" filter leave them out, and the
-# data checks (no fix version, no parent...) don't apply to them.
+#
+# Roles: CSC tickets aren't all work. A *role rule* (``roles``) says what each one is for, before its state is decided:
+#
+#     work          the default: counts against its fix versions and drives the parent's rollup
+#     analysis      drives the parent only before work starts (in analysis while one is active); its own state is
+#                   its real one (done is done), and it needs no fix version
+#     verification  never counted as work in a version or release, and doesn't move the parent's state: the parent
+#                   carries it separately as attributes["verification"] = {"state", "done", "total"} (so "all work
+#                   done" and "all work verified" are two questions). It needs no product or fix version, and a
+#                   CSC scope doesn't filter it out (verification is often about the whole capability)
+#     ignore        not part of the process at all: state "ignored", listed but left out of rollups and totals
+#
+# ``roles`` is a function (t -> role, or None for work) or a dict, first match wins:
+#     {"analysis": {"label": "Analysis"}, "verification": {"summary": "VER:"}, "ignore": {"type": ["Test"]}}
+# where label is case-insensitive, summary a regex matched at the start, and type the issue type name(s).
 
 # Jira status (lower case) -> cmtrack state, for status_rule. Anything not here falls back on the status category.
 STATUS_MAP = {
@@ -215,12 +226,29 @@ STATUS_MAP = {
 }
 CATEGORY_MAP = {"new": "analysis_required", "indeterminate": "in_progress", "done": "done"}
 WORK_STARTED = {"in_progress", "peer_review", "verification", "done", "blocked", "error"}
+ACTIVE = {"in_analysis", "in_progress", "peer_review", "verification", "blocked", "error"}   # started, not done
+DEFAULT_ROLES = {"analysis": {"label": "Analysis"}}
+
+
+def match_roles(roles):
+    """A role rule from a dict, {role: {"label": ..., "summary": regex, "type": name(s)}}: the first role any of
+    whose conditions matches, else None (work)."""
+    specs = [(role, as_list(spec.get("label")), re.compile(spec["summary"]) if spec.get("summary") else None,
+              set(as_list(spec.get("type")))) for role, spec in roles.items()]
+
+    def rule(t):
+        for role, labels, summary, types in specs:
+            if any(t.has_label(x) for x in labels) or (summary and summary.match(t.summary)) or t.type in types:
+                return role
+        return None
+    return rule
 
 
 class JiraTicket:
     """What a state rule sees: one issue, with the lookups rules tend to need.
 
-        t.key, t.type, t.status ("In Progress"), t.category ("new" / "indeterminate" / "done"), t.labels
+        t.key, t.type, t.summary, t.status ("In Progress"), t.category ("new" / "indeterminate" / "done"), t.labels
+        t.role              a CSC ticket's role (work / analysis / verification / ignore); top-level: work
         t.is_top            a feature/discrepancy (in top_projects), not a CSC ticket
         t.field("short")    a registered field's plain value, e.g. t.field("analysis_state") -> "Ready for Work"
         t.has_label("x")    case-insensitive
@@ -237,7 +265,8 @@ class JiraTicket:
         status = f.get("status") or {}
         self.source, self.issue, self.record, self.scope = source, issue, record, scope
         self.products = record.attributes.get("affected_products", [])
-        self.key, self.type, self.is_top = record.key, record.type, record.project is None
+        self.key, self.type, self.summary, self.is_top = record.key, record.type, record.summary or "", record.project is None
+        self.role = record.role
         self.cscs = [c for c in scope or [] if c["affected_product"] in self.products and   # top level: product only
                      (self.is_top or c["jira_project"] == record.project)]
         self.status = str(status.get("name") or "")
@@ -260,36 +289,52 @@ def status_rule(t):
 
 
 def work_rollup(t, own, children):
-    """The default rollup for top-level tickets: their own state until work starts on any CSC ticket (in progress
-    or later, or blocked / in error); from then on the CSC tickets' combined state (tickets.rollup: the least
-    advanced, but in progress once anything is; blocked and error win). Cancelled and ignored CSC tickets don't
-    count."""
-    live = [c for c in children if c.state not in IDLE]
-    if own[0] in ("error", "cancelled") or not any(c.state in WORK_STARTED for c in live):
+    """The default rollup for top-level tickets, by phase:
+
+    - once work starts on any work ticket (in progress or later, or blocked / in error): the work tickets' combined
+      state (tickets.rollup: the least advanced, but in progress once anything is; blocked and error win). Analysis
+      tickets don't count then, except that a reopened one keeps a parent whose work is all done in progress;
+    - before that, while any analysis ticket is active: in analysis (or blocked / error, if one is);
+    - otherwise the parent's own state.
+
+    Verification tickets never count (see records: they're summarized apart), nor do cancelled or ignored ones."""
+    if own[0] in ("error", "cancelled"):
         return own
-    state = rollup([c.state for c in live])
-    reason = next((f"{c.key}: {c.state_reason}" for c in live if c.state == state and c.state_reason), None)
-    return state, reason
+    live = [c for c in children if c.state not in IDLE]
+    work = [c for c in live if c.role == "work"]
+    analysis = [c for c in live if c.role == "analysis" and c.state in ACTIVE]
+    if any(c.state in WORK_STARTED for c in work):
+        state = rollup([c.state for c in work])
+        if state == "done" and analysis:
+            return "in_progress", f"{analysis[0].key}: analysis reopened"
+        return state, _reason(work, state)
+    if analysis:
+        state = next((s for s in ("error", "blocked") if any(c.state == s for c in analysis)), "in_analysis")
+        return state, _reason(analysis, state)
+    return own
+
+
+def _reason(children, state):
+    return next((f"{c.key}: {c.state_reason}" for c in children if c.state == state and c.state_reason), None)
 
 
 # An example of mixed rules (see the tests): register the field as fields={"analysis_state": "Analysis State"}
-# and the rule as state_rule=analysis_rule; the default rollup then moves the parent to in progress once a CSC ticket
-# is in work.
+# and the rule as state_rule=analysis_rule; the default rollup then moves the parent to in analysis while an
+# analysis ticket is active, and to in progress once a work ticket is in work.
 ANALYSIS_STATES = {"analysis required": "analysis_required", "in analysis": "in_analysis",
                    "ready for work": "ready_for_work"}
-ANALYSIS_WORK = {"in_progress": "in_analysis", "peer_review": "in_analysis", "verification": "in_analysis",
-                 "done": "ready_for_work"}
+ANALYSIS_WORK = {"in_progress": "in_analysis", "peer_review": "in_analysis", "verification": "in_analysis"}
 
 
 def analysis_rule(t):
-    """Top-level tickets: the "Analysis State" field (unless Jira has closed or cancelled them). CSC tickets
-    labelled "Analysis" are analysis work: in progress (or review/test) means in analysis, done means ready for
-    work. Everything else: the Jira status."""
+    """Top-level tickets: the "Analysis State" field (unless Jira has closed or cancelled them). Analysis tickets
+    (role "analysis") in progress (or review/test) read as in analysis; done is done. Everything else: the Jira
+    status."""
     status = t.status_state()
     if t.is_top and status not in ("done", "cancelled") and t.field("analysis_state"):
         value = str(t.field("analysis_state"))
         return ANALYSIS_STATES.get(value.casefold()) or ("error", f"Analysis State {value!r} isn't one cmtrack knows")
-    if not t.is_top and t.has_label("Analysis") and status:
+    if t.role == "analysis" and status:
         return ANALYSIS_WORK.get(status, status)
     return status_rule(t)
 
@@ -313,15 +358,17 @@ class JiraTicketSource(TicketSource):
                           On a top-level ticket it names the CSCs it affects (top_level_tickets_for_versions)
         cis               top-level ticket -> CI names it affects (shown on backlogs; used by top_level_tickets)
 
-    States: ``state_rule`` (default status_rule) decides each ticket's own state; top-level tickets then go through
-    ``rollup`` (default work_rollup; None to skip it) with their CSC tickets, fetched in one query per batch.
+    States: ``roles`` (a dict or function; default: the "Analysis" label means analysis) gives each CSC ticket its
+    role, ``state_rule`` (default status_rule) its own state; top-level tickets then go through ``rollup`` (default
+    work_rollup; None to skip it) with their CSC tickets, fetched in one query per batch, and carry their
+    verification tickets' summary in attributes["verification"].
     """
 
     name = "jira"
     FIELDS = ("summary", "issuetype", "status", "project", "fixVersions", "assignee", "updated", "labels")
 
     def __init__(self, client, top_projects, fields=None, status_map=None, top_types=None, browse_url=None,
-                 state_rule=status_rule, rollup=work_rollup, ignore_summary=None):
+                 state_rule=status_rule, rollup=work_rollup, roles=DEFAULT_ROLES):
         self.client = client
         self.top_projects = list(top_projects)
         self.fields = fields if isinstance(fields, Fields) else Fields(client, **(fields or {}))
@@ -329,7 +376,7 @@ class JiraTicketSource(TicketSource):
         self.top_types = set(top_types or ())            # e.g. {"Feature", "Discrepancy"}; empty = any type
         self.browse = (browse_url or getattr(client, "url", "")).rstrip("/") + "/browse/"
         self.state_rule, self.rollup = state_rule or status_rule, rollup
-        self.ignore_summary = re.compile(ignore_summary) if isinstance(ignore_summary, str) else ignore_summary
+        self.roles = roles
 
     # -- queries -------------------------------------------------------------------------------------------
 
@@ -338,29 +385,36 @@ class JiraTicketSource(TicketSource):
         return self.client.search(jql, list(self.FIELDS) + self.fields.ids(*self.fields.names))
 
     def records(self, issues, cscs=None):
-        """TicketRecords for API issues; top-level ones rolled up with their CSC tickets (one query per batch).
-        With ``cscs`` (cmtrack CSC rows), the rollup only sees CSC tickets for those CSCs, and rules see the scope."""
+        """TicketRecords for API issues; top-level ones rolled up with their CSC tickets (one query per batch), and
+        given their verification summary. With ``cscs`` (cmtrack CSC rows), the rollup only sees CSC tickets for
+        those CSCs (verification tickets aren't filtered), and rules see the scope."""
         recs = [self.record(i, cscs) for i in issues]
         tops = [(i, r) for i, r in zip(issues, recs) if r.project is None]
-        if self.rollup and tops and "parent" in self.fields.names:
+        if tops and "parent" in self.fields.names:
             children = {}
             for c in self.children_of([r.key for _, r in tops], cscs):
                 children.setdefault(c.parent_key, []).append(c)
             for issue, r in tops:
-                out = self.rollup(JiraTicket(self, issue, r, cscs), (r.state, r.state_reason), children.get(r.key, []))
-                r.state, r.state_reason = normalize_state(*(out if isinstance(out, tuple) else (out, None)))
+                kids = children.get(r.key, [])
+                verification = [c for c in kids if c.role == "verification" and c.state not in IDLE]
+                if verification:
+                    r.attributes["verification"] = {"state": rollup([c.state for c in verification]), "total": len(verification),
+                                                    "done": sum(c.state == "done" for c in verification)}
+                if self.rollup:
+                    out = self.rollup(JiraTicket(self, issue, r, cscs), (r.state, r.state_reason), kids)
+                    r.state, r.state_reason = normalize_state(*(out if isinstance(out, tuple) else (out, None)))
         return recs
 
     def children_of(self, keys, cscs=None):
         """The CSC tickets whose parent field names any of ``keys`` (their own states only, no rollup); with
-        ``cscs``, only those naming one of these CSCs."""
+        ``cscs``, only those naming one of these CSCs (and every verification ticket)."""
         pairs = in_pairs(cscs)
         out = []
         for n in range(0, len(keys), BATCH // 2):
             batch = set(keys[n:n + BATCH // 2])
             out += [r for r in (self.record(i, cscs) for i in self.search(self.fields.clause("parent", batch) + " ORDER BY key"))
-                    if r.parent_key in batch and (pairs is None or any((r.project, p) in pairs for p in
-                                                                       r.attributes["affected_products"]))]
+                    if r.parent_key in batch and (pairs is None or r.role == "verification" or
+                                                  any((r.project, p) in pairs for p in r.attributes["affected_products"]))]
         return out
 
     def query(self, projects, jql=None, cscs=None):
@@ -385,7 +439,7 @@ class JiraTicketSource(TicketSource):
             jql += " AND " + self.fields.clause("affected_product", {p for _, p in pairs})
         wanted, out = set(versions), []
         for r in self.query(sorted({p for p, _ in pairs}), jql, cscs):
-            if wanted & set(r.fix_versions or ()):
+            if wanted & set(r.fix_versions or ()) and r.role != "verification":     # not work against a version
                 # one copy per requested CSC it names: a ticket for two CSCs shows under both
                 out += [replace(r, affected_product=p, attributes=dict(r.attributes))
                         for p in r.attributes.get("affected_products", []) if (r.project, p) in pairs]
@@ -445,11 +499,20 @@ class JiraTicketSource(TicketSource):
         rec.state, rec.state_reason = normalize_state(*self.state(issue, rec, cscs))
         return rec
 
+    def role(self, t):
+        """A CSC ticket's role from the role rule (``roles``): work, analysis, verification or ignore."""
+        rule = self.roles if callable(self.roles) else match_roles(self.roles or {})
+        role = None if t.is_top else rule(t)
+        return role if role in ROLES or role == "ignore" else "work"
+
     def state(self, issue, rec, cscs=None):
-        """(state, reason): the registered state rule, then checks that flag data to fix in Jira as ``error``."""
+        """(state, reason): the role, the registered state rule, then checks that flag data to fix in Jira as
+        ``error``. Sets ``rec.role`` as it goes."""
         t = JiraTicket(self, issue, rec, cscs)
-        if self.ignore_summary and self.ignore_summary.match(rec.summary or ""):
-            return "ignored", f"summary matches {self.ignore_summary.pattern!r}"
+        role = self.role(t)
+        rec.role = t.role = "work" if role == "ignore" else role
+        if role == "ignore":
+            return "ignored", "left out by the role rules"
         out = self.state_rule(t)
         state, reason = out if isinstance(out, tuple) else (out, None)
         if state is None:
@@ -463,9 +526,9 @@ class JiraTicketSource(TicketSource):
         if rec.project:                                               # a CSC ticket
             if not rec.parent_key:
                 return f"no parent ticket in {self.fields.names.get('parent', 'parent')!r}"
-            if "affected_product" in self.fields.names and not rec.affected_product:
+            if "affected_product" in self.fields.names and not rec.affected_product and rec.role != "verification":
                 return f"no {self.fields.names['affected_product']!r} set"
-            if state == "done" and not rec.fix_versions:
+            if state == "done" and not rec.fix_versions and rec.role == "work":
                 return "closed without a fix version"
         elif self.top_types and rec.type not in self.top_types:
             return f"{rec.type!r} isn't a top-level type ({', '.join(sorted(self.top_types))})"
@@ -482,6 +545,8 @@ def from_env():
     client = JiraClient(env("CMTRACK_JIRA_URL"), env("CMTRACK_JIRA_TOKEN"), env("CMTRACK_JIRA_USER"),
                         env("CMTRACK_JIRA_PASSWORD"))
     rules = {k: load_function(config[k]) if config.get(k) else None for k in ("state_rule", "rollup")}
+    roles = config.get("roles", DEFAULT_ROLES)
     return JiraTicketSource(client, config.get("top_projects", []), config.get("fields"), config.get("status_map"),
                             config.get("top_types"), config.get("browse_url"), rules["state_rule"] or status_rule,
-                            rules["rollup"] if "rollup" in config else work_rollup, config.get("ignore_summary"))
+                            rules["rollup"] if "rollup" in config else work_rollup,
+                            load_function(roles) if isinstance(roles, str) else roles)

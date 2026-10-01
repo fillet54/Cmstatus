@@ -3,7 +3,6 @@ returns every issue, so these tests also show the source filters its results exa
 Run: python -m unittest discover -s tests"""
 import json
 import os
-import re
 import shutil
 import tempfile
 import threading
@@ -51,6 +50,7 @@ ISSUES = [
     issue("NAVX-3", "Story", "Done", "done", parent="PRG-10", product=["other", "maps"], fix=["2027.Q1-b2"]),  # multi
     issue("NAVL-5", "Story", "Done", "done", parent="PRG-10", product=["core", "nav2"], fix=["2027.Q1-b2"]),   # 2 CSCs
     issue("NAVX-4", "Story", "Done", "done", parent="PRG-10", product=[], fix=["2027.Q1-b2"]),     # multi, empty
+    issue("NAVX-5", "Story", "In Test", parent="PRG-1", product="maps", fix=["2027.Q1-b2"], summary="VER: PRG-1"),
 ]
 
 
@@ -93,7 +93,7 @@ class JiraTicketSourceTests(unittest.TestCase):
         self.source = JiraTicketSource(self.client, ["PRG"], top_types=["Feature", "Discrepancy"],
                                        fields={"parent": "Parent Ticket", "affected_product": "affected product",
                                                "cis": "Affected CIs"},
-                                       status_map={"Awaiting CCB": "blocked"})
+                                       status_map={"Awaiting CCB": "blocked"}, roles={"verification": {"summary": "VER:"}})
 
     def tearDown(self):
         self.server.shutdown()
@@ -137,17 +137,18 @@ class JiraTicketSourceTests(unittest.TestCase):
         cscs = [{"name": "nav-core", "jira_project": "NAVL", "affected_product": "core"},
                 {"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
         found = self.source.tickets_for_versions({"name": "NAV-SW"}, cscs, ["2027.Q1-b2"])
-        self.assertEqual(sorted(r.key for r in found), ["NAVL-4", "NAVL-5", "NAVX-1", "NAVX-3"])   # not NAVX-2
+        self.assertEqual(sorted(r.key for r in found), ["NAVL-4", "NAVL-5", "NAVX-1", "NAVX-3"])   # not NAVX-2, nor
+                                                                                       # NAVX-5 (verification)
         self.assertEqual(next(r for r in found if r.key == "NAVX-3").affected_product, "maps")   # the one CSC asked for
         self.assertEqual(FakeJira.searches[-1]["jql"], 'project in ("NAVL", "NAVX") AND (fixVersion in ("2027.Q1-b2") '
                                                        'AND cf[10600] in ("core", "maps")) ORDER BY key')
         cscs.append({"name": "nav-two", "jira_project": "NAVL", "affected_product": "nav2"})
         found = self.source.tickets_for_versions({"name": "NAV-SW"}, cscs, ["2027.Q1-b2"])
         self.assertEqual(sorted(r.affected_product for r in found if r.key == "NAVL-5"), ["core", "nav2"])   # both
-        self.assertEqual([r.key for r in self.source.get_children("PRG-1")], ["NAVL-1", "NAVL-3", "NAVX-1", "NAVX-2"])
+        self.assertEqual([r.key for r in self.source.get_children("PRG-1")], ["NAVL-1", "NAVL-3", "NAVX-1", "NAVX-2", "NAVX-5"])
         self.assertEqual(FakeJira.searches[-1]["jql"], '(cf[10500] ~ "PRG-1") ORDER BY key')  # exact match: not PRG-10's
         self.assertEqual([r.key for r in self.source.top_level_tickets({}, [{"name": "NAV-SW"}])], ["PRG-1"])
-        self.assertEqual([r.key for r in self.source.query(["NAVX"])], ["NAVX-1", "NAVX-2", "NAVX-3", "NAVX-4"])
+        self.assertEqual([r.key for r in self.source.query(["NAVX"])], ["NAVX-1", "NAVX-2", "NAVX-3", "NAVX-4", "NAVX-5"])
 
     def test_top_level_tickets_for_versions(self):
         maps = [{"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
@@ -200,8 +201,13 @@ class JiraTicketSourceTests(unittest.TestCase):
                              {"nav-core": ["NAVL-4", "NAVL-5"], "nav-two": ["NAVL-5"], "nav-maps": ["NAVX-3"]})
             self.assertEqual(prg10["parent"]["state"], "done")         # judged over this CI's CSCs: NAVX-4 isn't one
             self.assertEqual(call("get", "/tickets/PRG-10")["state"], "error")   # the ticket page sees them all
+            prg1 = next(i for i in work["items"] if i["parent"]["key"] == "PRG-1")
+            self.assertEqual(prg1["parent"]["attributes"]["verification"], {"state": "verification", "done": 0, "total": 1})
             t = call("get", "/tickets/PRG-1")
             self.assertEqual(t["summary"], "PRG-1 summary")
+            self.assertEqual([c["key"] for c in t["verification"]["tickets"]], ["NAVX-5"])    # apart from the CSC work
+            self.assertNotIn("NAVX-5", [c["key"] for g in t["children"] for c in g["tickets"]])
+            self.assertIn("Verified 0 of 1", c.get("/tickets/PRG-1").get_data(as_text=True))
             call("post", "/backlogs", {"name": "Nav", "cis": ["NAV-SW"]})
             self.assertEqual(call("post", "/backlogs/Nav/pull")["added"], ["PRG-1"])       # open, affects NAV-SW
         finally:
@@ -209,8 +215,8 @@ class JiraTicketSourceTests(unittest.TestCase):
 
 
 RULE_ISSUES = [
-    issue("PRG-40", "Feature", "Open", "new", analysis="Ready for Work"),                # nothing started yet
-    issue("NAVL-40", "Story", "Done", "done", parent="PRG-40", product="core", labels=["Analysis"]),
+    issue("PRG-40", "Feature", "Open", "new", analysis="Ready for Work"),                # analysis done, no work yet
+    issue("NAVL-40", "Story", "Done", "done", parent="PRG-40", product="core", labels=["Analysis"]),   # no fix version
     issue("PRG-41", "Feature", "Open", "new", analysis="Ready for Work"),                # one CSC ticket in work
     issue("NAVL-41", "Story", "Done", "done", parent="PRG-41", product="core", labels=["analysis"]),
     issue("NAVL-42", "Story", "In Work", parent="PRG-41", product="core"),
@@ -220,9 +226,23 @@ RULE_ISSUES = [
     issue("PRG-44", "Feature", "Closed", "done", analysis="Ready for Work"),             # Jira closed it
     issue("PRG-45", "Feature", "Open", "new", analysis="Waiting"),                       # not a known value
     issue("PRG-46", "Feature", "Open", "new"),                                            # no analysis state: status
-    issue("PRG-47", "Feature", "Open", "new", analysis="Ready for Work"),
+    issue("PRG-47", "Feature", "Open", "new", analysis="Ready for Work"),                # work done, verification open
+    issue("NAVL-47", "Story", "Done", "done", parent="PRG-47", product="core", fix=["2027.Q1-b1"]),
     issue("NAVL-48", "Story", "In Work", parent="PRG-47", summary="VER: verify PRG-47"),   # verification: no product
+    issue("NAVX-48", "Story", "Done", "done", parent="PRG-47", summary="VER: maps"),
+    issue("PRG-49", "Feature", "Open", "new", analysis="Ready for Work"),                # work done, analysis reopened
+    issue("NAVL-49", "Story", "Done", "done", parent="PRG-49", product="core", fix=["2027.Q1-b1"]),
+    issue("NAVL-50", "Story", "In Progress", parent="PRG-49", product="core", labels=["Analysis"]),
+    issue("PRG-51", "Feature", "Open", "new", analysis="Ready for Work"),                # work in progress, analysis too
+    issue("NAVL-51", "Story", "In Progress", parent="PRG-51", product="core", labels=["Analysis"]),
+    issue("NAVL-52", "Story", "In Work", parent="PRG-51", product="core"),
+    issue("PRG-53", "Feature", "Open", "new", analysis="Ready for Work"),                # analysis restarted, no work yet
+    issue("NAVL-53", "Story", "In Progress", parent="PRG-53", product="core", labels=["Analysis"]),
+    issue("NAVL-54", "Story", "Open", "new", parent="PRG-53", product="core"),
+    issue("PRG-55", "Feature", "Open", "new", analysis="Ready for Work"),
+    issue("NAVL-55", "Story", "In Work", parent="PRG-55", summary="SKIP: housekeeping"),  # ignored
 ]
+ROLES = {"analysis": {"label": "Analysis"}, "verification": {"summary": "VER:"}, "ignore": {"summary": "SKIP:"}}
 
 
 class StateRuleTests(unittest.TestCase):
@@ -242,25 +262,56 @@ class StateRuleTests(unittest.TestCase):
         return {r.key: r.state for r in source.get_tickets([i["key"] for i in RULE_ISSUES])}
 
     def test_analysis_rule_and_rollup(self):
-        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule)
-        got = self.states(source)
+        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule,
+                                  roles=ROLES)
+        recs = {r.key: r for r in source.get_tickets([i["key"] for i in RULE_ISSUES])}
+        got = {k: r.state for k, r in recs.items()}
         self.assertEqual({k: got[k] for k in ("NAVL-40", "NAVL-41", "NAVL-42", "NAVX-42", "NAVL-43")},
-                         {"NAVL-40": "ready_for_work", "NAVL-41": "ready_for_work",   # analysis done (no fix version needed)
+                         {"NAVL-40": "done", "NAVL-41": "done",                     # analysis done: done, no fix version needed
                           "NAVL-42": "in_progress", "NAVX-42": "analysis_required", "NAVL-43": "in_analysis"})
-        self.assertEqual(got["PRG-40"], "ready_for_work")        # the Analysis State field; nothing in work yet
-        self.assertEqual(got["PRG-41"], "in_progress")           # one CSC ticket in work: rolled up to in progress
-        self.assertEqual(got["PRG-43"], "in_analysis")           # analysis tickets don't count as work
+        self.assertEqual(recs["NAVL-40"].role, "analysis")
+        self.assertEqual(got["PRG-40"], "ready_for_work")        # the Analysis State field; no work started
+        self.assertEqual(got["PRG-41"], "in_progress")           # one work ticket in work
+        self.assertEqual(got["PRG-43"], "in_analysis")           # an analysis ticket active, no work
         self.assertEqual(got["PRG-44"], "done")                  # closed in Jira wins over the field
         self.assertEqual(got["PRG-45"], "error")
+        self.assertIn("Waiting", recs["PRG-45"].state_reason)
         self.assertEqual(got["PRG-46"], "analysis_required")     # no field: the Jira status
-        self.assertIn("Waiting", next(r for r in source.get_tickets(["PRG-45"])).state_reason)
+        self.assertEqual((recs["PRG-49"].state, recs["PRG-49"].state_reason), ("in_progress", "NAVL-50: analysis reopened"))
+        self.assertEqual(got["PRG-51"], "in_progress")           # work in progress: analysis doesn't pull it back
+        self.assertEqual(got["PRG-53"], "in_analysis")           # analysis restarted before any work started
+
+    def test_verification(self):
+        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule,
+                                  roles=ROLES)
+        recs = {r.key: r for r in source.get_tickets(["PRG-47", "NAVL-48", "NAVX-48", "PRG-41"])}
+        self.assertEqual((recs["NAVL-48"].role, recs["NAVL-48"].state), ("verification", "in_progress"))   # no product: fine
+        self.assertEqual(recs["NAVX-48"].state, "done")                                  # no fix version: fine
+        self.assertEqual(recs["PRG-47"].state, "done")                                   # all work done...
+        self.assertEqual(recs["PRG-47"].attributes["verification"], {"state": "in_progress", "done": 1, "total": 2})
+        self.assertNotIn("verification", recs["PRG-41"].attributes)                      # ...no verification tickets
+        maps = [{"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
+        scoped = next(iter(source.get_parents(["PRG-47"], maps)))
+        self.assertEqual(scoped.attributes["verification"]["total"], 2)                 # scope doesn't filter verification
+        self.assertEqual(scoped.state, "ready_for_work")                                  # no maps work: its own state
+
+    def test_roles(self):
+        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule,
+                                  roles=ROLES)
+        recs = {r.key: r for r in source.get_tickets(["NAVL-55", "PRG-55"])}
+        self.assertEqual((recs["NAVL-55"].state, recs["NAVL-55"].role), ("ignored", "work"))
+        self.assertEqual(recs["PRG-55"].state, "ready_for_work")                         # in work, but ignored
+        source.roles = lambda t: "verification" if t.summary.startswith("VER") else None   # a function works too
+        self.assertEqual(next(iter(source.get_tickets(["NAVL-48"]))).role, "verification")
+        source.roles = {}                                                                 # no roles: all work
+        got = self.states(source)
+        self.assertEqual((got["NAVL-48"], got["PRG-47"]), ("error", "error"))          # a work ticket with no product
 
     def test_registering_rules(self):
         source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields)
-        got = self.states(source)                                 # defaults: status rule, work rollup
-        self.assertEqual(got["PRG-46"], "analysis_required")
-        self.assertEqual(got["PRG-40"], "error")                  # its analysis ticket reads as closed without a fix version
-        source.state_rule = lambda t: ("blocked", "CCB") if t.has_label("analysis") else None   # None: status_rule
+        got = self.states(source)                                 # defaults: status rule, work rollup, "Analysis" label
+        self.assertEqual((got["PRG-46"], got["PRG-40"], got["NAVL-40"]), ("analysis_required",) * 2 + ("done",))
+        source.state_rule = lambda t: ("blocked", "CCB") if t.role == "analysis" else None   # None: status_rule
         got = self.states(source)
         self.assertEqual((got["NAVL-41"], got["NAVL-42"]), ("blocked", "in_progress"))
         source.rollup = None                                      # no rollup: parents keep their own state
@@ -268,18 +319,6 @@ class StateRuleTests(unittest.TestCase):
         source.rollup = lambda t, own, children: ("verification", f"{len(children)} children")
         rec = next(r for r in source.get_tickets(["PRG-41"]))
         self.assertEqual((rec.state, rec.state_reason), ("verification", "3 children"))
-
-    def test_ignored(self):
-        source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule)
-        got = self.states(source)
-        self.assertEqual((got["NAVL-48"], got["PRG-47"]), ("error", "error"))     # no product set: looks like a bad CSC ticket
-        source.ignore_summary = re.compile(r"VER:")
-        rec = {r.key: r for r in source.get_tickets(["NAVL-48", "PRG-47"])}
-        self.assertEqual((rec["NAVL-48"].state, rec["NAVL-48"].state_reason), ("ignored", "summary matches 'VER:'"))
-        self.assertEqual(rec["PRG-47"].state, "ready_for_work")                     # it's in work, but doesn't count
-        source.ignore_summary = None
-        source.state_rule = lambda t: "ignored" if t.record.summary.startswith("VER:") else analysis_rule(t)
-        self.assertEqual(self.states(source)["PRG-47"], "ready_for_work")           # the same, from a rule
 
     def test_scope(self):
         source = JiraTicketSource(JiraClient(self.url, token="t"), ["PRG"], self.fields, state_rule=analysis_rule)
@@ -298,7 +337,7 @@ class StateRuleTests(unittest.TestCase):
         try:
             path = os.path.join(tmp, "jira.json")
             with open(path, "w") as f:
-                json.dump({"top_projects": ["PRG"], "fields": self.fields,
+                json.dump({"top_projects": ["PRG"], "fields": self.fields, "roles": ROLES,
                            "state_rule": "cmtrack.jira_tickets:analysis_rule"}, f)
             env = {"CMTRACK_JIRA_URL": self.url, "CMTRACK_JIRA_TOKEN": "t", "CMTRACK_JIRA_CONFIG": path}
             old = {k: os.environ.get(k) for k in env}
@@ -310,6 +349,7 @@ class StateRuleTests(unittest.TestCase):
                     os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
             self.assertIs(source.state_rule, analysis_rule)
             self.assertEqual(self.states(source)["PRG-41"], "in_progress")
+            self.assertEqual(source.get_tickets(["NAVL-48"])[0].role, "verification")
         finally:
             shutil.rmtree(tmp)
 

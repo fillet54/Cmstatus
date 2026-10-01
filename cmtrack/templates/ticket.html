@@ -24,6 +24,9 @@
   {% if t.children %}
     {% call ui.stat("CSC tickets done", t.progress.done ~ " of " ~ t.progress.total) %}{{ ui.state_bar(t.progress) }}{% endcall %}
   {% endif %}
+  {% if t.verification %}
+    {% call ui.stat("Verification", "Verified " ~ t.verification.progress.done ~ " of " ~ t.verification.progress.total, "tracked apart from the work") %}{{ ui.state_bar(t.verification.progress) }}{% endcall %}
+  {% endif %}
   {{ ui.stat(t.source | capitalize ~ " status", t.status or "—") }}
   {{ ui.stat("Assignee", t.assignee or "—") }}
 {% endcall %}
@@ -38,8 +41,17 @@
     {% endfor %}
   </ul>
 {% endcall %}
-{% elif not t.csc %}
+{% elif not t.csc and not t.verification %}
 {{ ui.empty("No CSC tickets reference this ticket yet.") }}
+{% endif %}
+
+{% if t.verification %}
+{% call ui.card(flush=True) %}
+  {% call ui.card_header("Verification", "not counted as work in any version; read live from " ~ t.source) %}{% endcall %}
+  <ul class="ui-tickets">
+    {% for c in t.verification.tickets %}{{ ui.ticket_line(c) }}{% endfor %}
+  </ul>
+{% endcall %}
 {% endif %}
 
 {% if t.warnings %}

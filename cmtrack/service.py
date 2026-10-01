@@ -1657,7 +1657,7 @@ class _Resolver:
     def ticket(self, rec, only_versions=None):
         """Record -> dict for reports. ``only_versions`` ({name: id}) limits fix versions to a version set."""
         csc = self.cscs.get((rec.project, rec.affected_product)) if (rec.project or rec.affected_product) else None
-        if csc is None and (rec.project or rec.affected_product):
+        if csc is None and (rec.project or rec.affected_product) and rec.role != "verification":
             self.warnings.append(f"{rec.key}: no CSC mapped to ({rec.project}, {rec.affected_product})")
         versions = []
         for name in rec.fix_versions or []:
@@ -1718,6 +1718,8 @@ def work_report(conn, source, ci_ref, to=None, frm=None, versions=None):
     res = _Resolver(conn, getattr(source, "name", None))
     rows, seen = [], set()
     for rec in _ask(source, "tickets_for_versions", to_dict(ci), cscs, list(names)):
+        if rec.role == "verification":                        # tracked per parent, not as work in a version
+            continue
         t = res.ticket(rec, names)
         if t["ci"] not in (None, ci["name"]):
             res.warnings.append(f"{rec.key}: belongs to {t['ci']}, not {ci['name']}; skipped")
@@ -1761,7 +1763,8 @@ def filter_report(report, csc=None, type=None, state=None):
 
 
 def ticket_detail(conn, source, key):
-    """A ticket from the source, its parent, and the CSC tickets under it grouped by CI/CSC."""
+    """A ticket from the source, its parent, and the CSC tickets under it grouped by CI/CSC (verification tickets
+    apart, in ``verification``)."""
     found = _ask(source, "get_tickets", [key])
     rec = next((r for r in found if r.key == key), None)
     if rec is None:
@@ -1770,8 +1773,11 @@ def ticket_detail(conn, source, key):
     out = res.ticket(rec)
     out["parent"] = res.parents(source, [rec.parent_key])[rec.parent_key] if rec.parent_key else None
     children = [res.ticket(c) for c in _ask(source, "get_children", key)]
+    verification = [c for c in children if c["role"] == "verification"]
+    children = [c for c in children if c["role"] != "verification"]
     out["children"] = _group_by_csc(children)
     out["progress"] = _progress(children)
+    out["verification"] = {"tickets": verification, "progress": _progress(verification)} if verification else None
     out["warnings"] = res.warnings
     return out
 

@@ -57,6 +57,9 @@ STATES = {
     "error":                "Error",             # something is off in the source data; state_reason says what
 }
 ALIASES = {"analysis_in_progress": "in_analysis", "merge_blocked": "blocked", "canceled": "cancelled"}
+# What a CSC ticket is for. Only "work" (and "analysis") tickets count as work against a version; a "verification"
+# ticket is tracked separately, per parent, and never shows in a version's or release's work.
+ROLES = ("work", "analysis", "verification")
 IDLE = ("cancelled", "ignored")       # CSC ticket states a parent's rollup doesn't count
 WORKFLOW = ["analysis_required", "in_analysis", "ready_for_work", "in_progress", "peer_review", "verification", "done"]
 
@@ -98,7 +101,8 @@ class TicketRecord:
 
     ``state`` is one of ``STATES`` and is the source's call; ``state_reason`` explains it where useful
     (why it's ``error``, what a ``blocked`` ticket waits on). ``status`` is the raw source status,
-    kept for display.
+    kept for display. ``role`` (``ROLES``) says what a CSC ticket is for: work (the default), analysis or
+    verification.
     """
     key: str
     summary: Optional[str] = None
@@ -115,6 +119,7 @@ class TicketRecord:
     assignee: Optional[str] = None
     updated: Optional[str] = None
     attributes: dict = field(default_factory=dict)
+    role: str = "work"
 
     @classmethod
     def from_dict(cls, d: dict) -> "TicketRecord":
@@ -133,6 +138,8 @@ class TicketRecord:
             self.fix_versions = [self.fix_versions]
         if isinstance(self.cis, str):
             self.cis = [self.cis]
+        if self.role not in ROLES:
+            self.role = "work"
 
     def to_dict(self) -> dict:
         return asdict(self)
