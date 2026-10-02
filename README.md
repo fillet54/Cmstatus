@@ -42,6 +42,16 @@ CMTRACK_DB=demo.db CMTRACK_TICKET_SOURCES=jira=cmtrack.demo:demo_source \
 
 Open <http://127.0.0.1:5000>. To start over, run the load again (`--reset` deletes the database first).
 
+**C. Your own program, configured in code**: [`examples/bootstrap.py`](examples/bootstrap.py) sets up the
+database, the Jira ticket and release sources and two CIs (NAV-SW synced from Jira with the quarterly patterns,
+DISP-SW on the manual release source), each with a few CSCs, without any environment variables. It only creates
+what's missing, so it's safe to run again. Copy it and change the settings at the top.
+
+```bash
+python examples/bootstrap.py           # create what's missing
+python examples/bootstrap.py serve     # and run the app with that configuration
+```
+
 ## A quick tour (with the sample history)
 
 | Where | What to look at |
