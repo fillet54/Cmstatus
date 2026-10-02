@@ -1678,11 +1678,12 @@ class _Resolver:
                  ci=csc["ci"] if csc else None, versions=versions)
         return d
 
-    def parents(self, source, keys, cscs=None):
+    def parents(self, source, keys, cscs=None, versions=None):
         """{key: ticket} for parent keys, with a placeholder 'error' ticket for any the source doesn't return. With
-        ``cscs`` (a report's CSCs), the source judges each parent over just those CSCs (``get_parents``)."""
+        ``cscs`` (a report's CSCs) and ``versions`` (its version names), the source judges each parent over just
+        those CSCs' tickets in those versions (``get_parents``)."""
         keys = sorted(set(keys))
-        found = ({r.key: self.ticket(r) for r in (_ask(source, "get_parents", keys, cscs) if cscs is not None
+        found = ({r.key: self.ticket(r) for r in (_ask(source, "get_parents", keys, cscs, versions) if cscs is not None
                                                   else _ask(source, "get_tickets", keys))} if keys else {})
         for k in keys:
             if k not in found:
@@ -1729,7 +1730,7 @@ def work_report(conn, source, ci_ref, to=None, frm=None, versions=None):
         elif (t["key"], t["csc"]) not in seen:                # a ticket may come once per CSC it names
             rows.append(t)
             seen.add((t["key"], t["csc"]))
-    parents = res.parents(source, [r["parent_key"] for r in rows if r["parent_key"]], cscs)
+    parents = res.parents(source, [r["parent_key"] for r in rows if r["parent_key"]], cscs, list(names))
     by_parent = {}
     for r in rows:
         by_parent.setdefault(r["parent_key"], []).append(r)

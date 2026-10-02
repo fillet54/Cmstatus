@@ -36,6 +36,9 @@ CMTRACK_JIRA_TOKEN (or CMTRACK_JIRA_USER + CMTRACK_JIRA_PASSWORD) and CMTRACK_JI
      "status_map": {"Awaiting CCB": "blocked"},
      "roles": {"analysis": {"label": "Analysis"}, "verification": {"summary": "VER:"}},   (or "module:function")
      "state_rule": "cmtrack.jira_tickets:analysis_rule"}          (and optionally "rollup": "module:function" or null)
+
+     "unlinked_error": false   optional: show unlinked CSC tickets from top_level_tickets_for_versions in their own
+                               state instead of as errors (the default is error)
 """
 import importlib
 import json
@@ -107,6 +110,14 @@ class JiraClient:
 def in_pairs(cscs):
     """{(jira_project, affected_product)} for cmtrack CSC rows; None for no scope."""
     return None if cscs is None else {(c["jira_project"], c["affected_product"]) for c in cscs if c.get("jira_project")}
+
+
+def in_versions(rec, versions):
+    """Whether a CSC ticket is in a version scope: fixed in one of ``versions``, or with no fix version at all (an
+    analysis ticket needs none; a work ticket without one turns its parent to error, see records). No scope (None)
+    takes everything."""
+    fixed = set(rec.fix_versions or ())
+    return versions is None or not fixed or bool(fixed & set(versions))
 
 
 def as_list(value):
@@ -199,8 +210,11 @@ def quote(values):
 # source.rollup, or in the JSON config ("state_rule": "mypkg.rules:my_rule").
 #
 # Scope: when cmtrack asks about a set of CSCs (a CI's work report, top_level_tickets_for_versions), the rollup only
-# gets the CSC tickets of those CSCs, and rules can see the scope as t.scope / t.cscs. Tickets asked for without a
-# scope (a ticket page, a backlog) roll up over all their CSC tickets.
+# gets the CSC tickets of those CSCs, and rules can see the scope as t.scope / t.cscs. When it also asks about a set
+# of versions, the rollup only gets CSC tickets fixed in one of them (t.versions), so work planned for other builds
+# doesn't drag the parent around. Tickets with no fix version stay in: analysis and verification ones need none, but
+# a live work ticket without one puts the parent in error ("NAVL-3: no fix version"), whatever the rollup says.
+# Tickets asked for without a scope (a ticket page, a backlog) roll up over all their CSC tickets.
 #
 #
 # Roles: CSC tickets aren't all work. A *role rule* (``roles``) says what each one is for, before its state is decided:
@@ -263,13 +277,14 @@ class JiraTicket:
                             or None when there's no scope (a ticket page, a backlog)
         t.products          the ticket's Affected Product values (all of them; top-level tickets may set it too)
         t.cscs              the CSCs in scope that this ticket names (top level: by Affected Product alone)
+        t.versions          the version names in scope (a work report's versions), or None
         t.issue, t.record   the raw API issue and the TicketRecord being built
     """
 
-    def __init__(self, source, issue, record, scope=None):
+    def __init__(self, source, issue, record, scope=None, versions=None):
         f = issue.get("fields", {})
         status = f.get("status") or {}
-        self.source, self.issue, self.record, self.scope = source, issue, record, scope
+        self.source, self.issue, self.record, self.scope, self.versions = source, issue, record, scope, versions
         self.products = record.attributes.get("affected_products", [])
         self.key, self.type, self.summary, self.is_top = record.key, record.type, record.summary or "", record.project is None
         self.role = record.role
@@ -374,7 +389,7 @@ class JiraTicketSource(TicketSource):
     FIELDS = ("summary", "issuetype", "status", "project", "fixVersions", "assignee", "updated", "labels")
 
     def __init__(self, client, top_projects, fields=None, status_map=None, top_types=None, browse_url=None,
-                 state_rule=status_rule, rollup=work_rollup, roles=DEFAULT_ROLES):
+                 state_rule=status_rule, rollup=work_rollup, roles=DEFAULT_ROLES, unlinked_error=True):
         self.client = client
         self.top_projects = list(top_projects)
         self.fields = fields if isinstance(fields, Fields) else Fields(client, **(fields or {}))
@@ -383,6 +398,7 @@ class JiraTicketSource(TicketSource):
         self.browse = (browse_url or getattr(client, "url", "")).rstrip("/") + "/browse/"
         self.state_rule, self.rollup = state_rule or status_rule, rollup
         self.roles = roles
+        self.unlinked_error = unlinked_error             # top_level_tickets_for_versions: unlinked CSC tickets = error
 
     # -- queries -------------------------------------------------------------------------------------------
 
@@ -390,15 +406,15 @@ class JiraTicketSource(TicketSource):
         """Issues matching ``jql``, with the standard fields and every registered one (rules may read any)."""
         return self.client.search(jql, list(self.FIELDS) + self.fields.ids(*self.fields.names))
 
-    def records(self, issues, cscs=None):
+    def records(self, issues, cscs=None, versions=None):
         """TicketRecords for API issues; top-level ones rolled up with their CSC tickets (one query per batch), and
-        given their verification summary. With ``cscs`` (cmtrack CSC rows), the rollup only sees CSC tickets for
-        those CSCs (verification tickets aren't filtered), and rules see the scope."""
-        recs = [self.record(i, cscs) for i in issues]
+        given their verification summary. With ``cscs`` (cmtrack CSC rows) and/or ``versions`` (version names), the
+        rollup only sees the CSC tickets in that scope (see children_of), and rules see the scope."""
+        recs = [self.record(i, cscs, versions) for i in issues]
         tops = [(i, r) for i, r in zip(issues, recs) if r.project is None]
         if tops and "parent" in self.fields.names:
             children = {}
-            for c in self.children_of([r.key for _, r in tops], cscs):
+            for c in self.children_of([r.key for _, r in tops], cscs, versions):
                 children.setdefault(c.parent_key, []).append(c)
             for issue, r in tops:
                 kids = children.get(r.key, [])
@@ -407,32 +423,40 @@ class JiraTicketSource(TicketSource):
                     r.attributes["verification"] = {"state": rollup([c.state for c in verification]), "total": len(verification),
                                                     "done": sum(c.state == "done" for c in verification)}
                 if self.rollup:
-                    out = self.rollup(JiraTicket(self, issue, r, cscs), (r.state, r.state_reason), kids)
+                    out = self.rollup(JiraTicket(self, issue, r, cscs, versions), (r.state, r.state_reason), kids)
                     r.state, r.state_reason = normalize_state(*(out if isinstance(out, tuple) else (out, None)))
+                unplanned = [c.key for c in kids if versions is not None and c.role == "work" and not c.fix_versions
+                             and c.state not in IDLE]
+                if unplanned:                         # work in the scope's CSCs that no version accounts for
+                    r.state, r.state_reason = "error", f"{', '.join(unplanned)}: no fix version"
         return recs
 
-    def children_of(self, keys, cscs=None):
-        """The CSC tickets whose parent field names any of ``keys`` (their own states only, no rollup); with
-        ``cscs``, only those naming one of these CSCs (and every verification ticket)."""
+    def children_of(self, keys, cscs=None, versions=None):
+        """The CSC tickets whose parent field names any of ``keys`` (their own states only, no rollup). With
+        ``cscs``, only those naming one of these CSCs; with ``versions``, only those fixed in one of them or with
+        no fix version at all. Verification tickets are never filtered out."""
         pairs = in_pairs(cscs)
         out = []
         for n in range(0, len(keys), BATCH // 2):
             batch = set(keys[n:n + BATCH // 2])
-            out += [r for r in (self.record(i, cscs) for i in self.search(self.fields.clause("parent", batch) + " ORDER BY key"))
-                    if r.parent_key in batch and (pairs is None or r.role == "verification" or
-                                                  any((r.project, p) in pairs for p in r.attributes["affected_products"]))]
+            out += [r for r in (self.record(i, cscs, versions)
+                                for i in self.search(self.fields.clause("parent", batch) + " ORDER BY key"))
+                    if r.parent_key in batch and (r.role == "verification" or (
+                        (pairs is None or any((r.project, p) in pairs for p in r.attributes["affected_products"])) and
+                        in_versions(r, versions)))]
         return out
 
-    def query(self, projects, jql=None, cscs=None):
+    def query(self, projects, jql=None, cscs=None, versions=None):
         """Every issue in ``projects``, optionally narrowed by more ``jql``: the building block for the rest."""
         where = f"project in ({quote(projects)})" + (f" AND ({jql})" if jql else "")
         return self.records([i for i in self.search(where + " ORDER BY key") if plain(i["fields"].get("project")) in projects],
-                            cscs)
+                            cscs, versions)
 
-    def by_keys(self, keys, cscs=None):
+    def by_keys(self, keys, cscs=None, versions=None):
         keys = list(dict.fromkeys(keys))
         return self.records([i for n in range(0, len(keys), BATCH)
-                             for i in self.search(f"key in ({quote(keys[n:n + BATCH])})") if i["key"] in keys], cscs)
+                             for i in self.search(f"key in ({quote(keys[n:n + BATCH])})") if i["key"] in keys],
+                            cscs, versions)
 
     # -- TicketSource ----------------------------------------------------------------------------------------
 
@@ -444,7 +468,7 @@ class JiraTicketSource(TicketSource):
         if "affected_product" in self.fields.names:
             jql += " AND " + self.fields.clause("affected_product", {p for _, p in pairs})
         wanted, out = set(versions), []
-        for r in self.query(sorted({p for p, _ in pairs}), jql, cscs):
+        for r in self.query(sorted({p for p, _ in pairs}), jql, cscs, versions):
             if wanted & set(r.fix_versions or ()) and r.role != "verification":     # not work against a version
                 # one copy per requested CSC it names: a ticket for two CSCs shows under both
                 out += [replace(r, affected_product=p, attributes=dict(r.attributes))
@@ -454,14 +478,21 @@ class JiraTicketSource(TicketSource):
     def get_tickets(self, keys):
         return self.by_keys(keys)
 
-    def get_parents(self, keys, cscs):
-        """Top-level tickets by key, rolled up over just ``cscs``' tickets (the CI work report's parents)."""
-        return self.by_keys(keys, cscs)
+    def get_parents(self, keys, cscs, versions=None):
+        """Top-level tickets by key, rolled up over just ``cscs``' tickets fixed in ``versions`` (the CI work
+        report's parents)."""
+        return self.by_keys(keys, cscs, versions)
 
-    def top_level_tickets_for_versions(self, ci, cscs, versions):
-        """Features/discrepancies in the top-level projects fixed in ``versions`` whose Affected Product names any
-        of ``cscs``, whether or not CSC tickets exist yet. Each is rolled up over those CSCs' tickets only (other
-        CSCs following a different process, or out of scope, don't count)."""
+    def top_level_tickets_for_versions(self, ci, cscs, versions, unlinked_error=None):
+        """Everything planned for ``versions`` in ``cscs``, searched two ways:
+
+        1. features/discrepancies in the top-level projects fixed in ``versions`` whose Affected Product names any
+           of ``cscs``, whether or not CSC tickets exist yet. Each is rolled up over those CSCs' tickets in
+           ``versions`` only (other CSCs following a different process, or work for other versions, don't count);
+        2. then the CSC tickets fixed in ``versions`` (tickets_for_versions) whose parent isn't one of those: no
+           parent at all, or one that isn't fixed in these versions. They come after the top-level tickets, once
+           each, with attributes["unlinked"] = True and, unless ``unlinked_error`` is False (default: the source's
+           ``unlinked_error``), state error with the reason. Cancelled and ignored ones are left out."""
         products = {c["affected_product"] for c in cscs if c.get("affected_product")}
         if not products or not versions:
             return []
@@ -470,9 +501,22 @@ class JiraTicketSource(TicketSource):
             jql += f" AND issuetype in ({quote(sorted(self.top_types))})"
         if "affected_product" in self.fields.names:
             jql += " AND " + self.fields.clause("affected_product", products)
-        return [r for r in self.query(self.top_projects, jql, cscs)
+        tops = [r for r in self.query(self.top_projects, jql, cscs, versions)
                 if set(versions) & set(r.fix_versions or ()) and products & set(r.attributes["affected_products"])
                 and (not self.top_types or r.type in self.top_types)]
+        error = self.unlinked_error if unlinked_error is None else unlinked_error
+        seen = {r.key for r in tops}
+        for r in self.tickets_for_versions(ci, cscs, versions):
+            if r.key in seen or r.parent_key in seen or r.state in IDLE:
+                continue
+            seen.add(r.key)
+            r.attributes["unlinked"] = True
+            if error:
+                r.state, r.state_reason = "error", (
+                    f"parent {r.parent_key} isn't a top-level ticket for these versions" if r.parent_key
+                    else "not linked to a top-level ticket")
+            tops.append(r)
+        return tops
 
     def get_children(self, key):
         """The CSC tickets whose parent field names ``key`` (in any project)."""
@@ -488,7 +532,7 @@ class JiraTicketSource(TicketSource):
 
     # -- extraction ------------------------------------------------------------------------------------------
 
-    def record(self, issue, cscs=None):
+    def record(self, issue, cscs=None, versions=None):
         """An API issue -> TicketRecord, with its own state (``state``); rollup happens in ``records``."""
         get = lambda short: self.fields.get(issue, short)
         project = get("project")
@@ -502,7 +546,7 @@ class JiraTicketSource(TicketSource):
             attributes={"affected_products": products},
             fix_versions=get("fixVersions") or [], cis=[cis] if isinstance(cis, str) else cis,
             url=self.browse + issue["key"], assignee=get("assignee"), updated=get("updated"), state="done")
-        rec.state, rec.state_reason = normalize_state(*self.state(issue, rec, cscs))
+        rec.state, rec.state_reason = normalize_state(*self.state(issue, rec, cscs, versions))
         return rec
 
     def role(self, t):
@@ -511,10 +555,10 @@ class JiraTicketSource(TicketSource):
         role = None if t.is_top else rule(t)
         return role if role in ROLES or role == "ignore" else "work"
 
-    def state(self, issue, rec, cscs=None):
+    def state(self, issue, rec, cscs=None, versions=None):
         """(state, reason): the role, the registered state rule, then checks that flag data to fix in Jira as
         ``error``. Sets ``rec.role`` as it goes."""
-        t = JiraTicket(self, issue, rec, cscs)
+        t = JiraTicket(self, issue, rec, cscs, versions)
         role = self.role(t)
         rec.role = t.role = "work" if role == "ignore" else role
         if role == "ignore":
@@ -555,4 +599,5 @@ def from_env():
     return JiraTicketSource(client, config.get("top_projects", []), config.get("fields"), config.get("status_map"),
                             config.get("top_types"), config.get("browse_url"), rules["state_rule"] or status_rule,
                             rules["rollup"] if "rollup" in config else work_rollup,
-                            load_function(roles) if isinstance(roles, str) else roles)
+                            load_function(roles) if isinstance(roles, str) else roles,
+                            config.get("unlinked_error", True))

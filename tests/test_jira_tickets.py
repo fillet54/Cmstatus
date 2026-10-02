@@ -150,6 +150,27 @@ class JiraTicketSourceTests(unittest.TestCase):
         self.assertEqual([r.key for r in self.source.top_level_tickets({}, [{"name": "NAV-SW"}])], ["PRG-1"])
         self.assertEqual([r.key for r in self.source.query(["NAVX"])], ["NAVX-1", "NAVX-2", "NAVX-3", "NAVX-4", "NAVX-5"])
 
+    def test_version_scope(self):
+        cscs = [{"name": "nav-core", "jira_project": "NAVL", "affected_product": "core"},
+                {"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
+        rec = next(iter(self.source.get_parents(["PRG-1"], cscs)))
+        self.assertEqual((rec.state, rec.state_reason), ("error", "NAVL-3: closed without a fix version"))
+        seen, rollup = [], self.source.rollup
+        self.source.rollup = lambda t, own, kids: seen.append((t.versions, [c.key for c in kids])) or rollup(t, own, kids)
+        rec = next(iter(self.source.get_parents(["PRG-1"], cscs, ["2027.Q1-b1"])))
+        # not NAVX-1 (b2); NAVL-3 has no fix version, so it stays and puts the parent in error; NAVX-5 is
+        # verification, which a scope never filters out
+        self.assertEqual(seen, [(["2027.Q1-b1"], ["NAVL-1", "NAVL-3", "NAVX-5"])])
+        self.assertEqual((rec.state, rec.state_reason), ("error", "NAVL-3: no fix version"))
+        self.assertEqual([r.key for r in self.source.children_of(["PRG-1"], versions=["2027.Q1-b2"])],
+                         ["NAVL-3", "NAVX-1", "NAVX-2", "NAVX-5"])
+        self.source.roles = {"verification": {"summary": "VER:"}, "analysis": {"summary": "Closed"}}
+        self.source.rollup = rollup
+        FakeJira.issues = [dict(i, fields=dict(i["fields"], summary="Closed analysis")) if i["key"] == "NAVL-3" else i
+                           for i in ISSUES]
+        rec = next(iter(self.source.get_parents(["PRG-1"], cscs, ["2027.Q1-b1"])))
+        self.assertEqual(rec.state, "peer_review")                # an analysis ticket needs no fix version
+
     def test_top_level_tickets_for_versions(self):
         maps = [{"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps"}]
         tops = self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, maps, ["2027.Q1-b2"])
@@ -162,6 +183,24 @@ class JiraTicketSourceTests(unittest.TestCase):
         by = {r.key: r for r in self.source.get_tickets(["PRG-1", "PRG-10"])}             # no scope: every CSC ticket
         self.assertEqual((by["PRG-1"].state, by["PRG-10"].state), ("error", "error"))
         self.assertEqual(self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, maps, ["1999.Q1"]), [])
+
+    def test_unlinked_csc_tickets_for_versions(self):
+        core = [{"name": "nav-core", "jira_project": "NAVL", "affected_product": "core"}]
+        found = self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, core, ["2027.Q1-b1"])
+        # no top-level ticket is fixed in b1, but two core tickets are: NAVL-1 (parent PRG-1 is b2) and NAVL-2 (none)
+        self.assertEqual([(r.key, r.state, r.state_reason, r.attributes.get("unlinked")) for r in found],
+                         [("NAVL-1", "error", "parent PRG-1 isn't a top-level ticket for these versions", True),
+                          ("NAVL-2", "error", "not linked to a top-level ticket", True)])
+        found = self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, core, ["2027.Q1-b2"])
+        self.assertEqual([r.key for r in found], ["PRG-1", "NAVL-4", "NAVL-5"])   # PRG-10 is maps: its core tickets
+        self.assertEqual([r.key for r in found if r.attributes.get("unlinked")], ["NAVL-4", "NAVL-5"])   # show apart
+        found = self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, core, ["2027.Q1-b1"], unlinked_error=False)
+        self.assertEqual([(r.key, r.state, r.state_reason) for r in found],
+                         [("NAVL-1", "peer_review", None), ("NAVL-2", "error", "no parent ticket in 'Parent Ticket'")])
+                                                                   # their own states (no parent is its own error)
+        self.source.unlinked_error = False                         # the source-wide setting ("unlinked_error" in config)
+        self.assertEqual(self.source.top_level_tickets_for_versions({"name": "NAV-SW"}, core, ["2027.Q1-b1"])[0].state,
+                         "peer_review")
 
     def test_own_session_and_auth(self):
         import requests

@@ -78,11 +78,14 @@ tickets (`status_rule`, `work_rollup`, the example `analysis_rule`). Or implemen
 - `tickets_for_versions(ci, cscs, versions)`: CSC tickets of those CSCs whose fix versions include any of `versions`;
 - `get_tickets(keys)`: tickets by key (ticket pages, and the parents of a report's CSC tickets);
 - `get_children(key)`: the CSC tickets under a parent, across CIs;
-- optional `get_parents(keys, cscs)`: a CI work report's parents, their state judged over just that CI's CSCs
+- optional `get_parents(keys, cscs, versions=None)`: a CI work report's parents, their state judged over just that CI's CSCs
+  and the report's versions (CSC tickets fixed in other versions don't count; a work ticket with no fix version puts the parent in error)
   (defaults to `get_tickets(keys)`). `JiraTicketSource` rolls each parent up over only those CSCs' tickets, and
   also offers `top_level_tickets_for_versions(ci, cscs, versions)`: features and discrepancies in the top-level
   projects fixed in `versions` whose Affected Product names one of `cscs` (CSC tickets or not), rolled up the
-  same way.
+  same way, followed by the CSC tickets fixed in `versions` that aren't linked to one of them (no parent, or a
+  parent outside those versions). Those carry `attributes["unlinked"]` and are errors unless the config sets
+  `"unlinked_error": false` (or the call passes `unlinked_error=False`).
 
 Register it with `create_app({"TICKET_SOURCES": {"jira": JiraSource()}})` or
 `CMTRACK_TICKET_SOURCES=jira=mypkg.jira:JiraSource`; with several, pick one per request with `?source=`.

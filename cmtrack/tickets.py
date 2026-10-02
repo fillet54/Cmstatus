@@ -164,9 +164,10 @@ class TicketSource:
         """Tickets by key (a ticket page, and the parents of CSC tickets in a report). Omit unknown keys."""
         raise NotImplementedError
 
-    def get_parents(self, keys: List[str], cscs: List[dict]) -> Iterable[TicketRecord]:
-        """Optional: parent tickets for a report about ``cscs`` (a CI's CSC rows), their state judged over just
-        those CSCs' tickets. Defaults to ``get_tickets(keys)``."""
+    def get_parents(self, keys: List[str], cscs: List[dict], versions: List[str] = None) -> Iterable[TicketRecord]:
+        """Optional: parent tickets for a report about ``cscs`` (a CI's CSC rows) and ``versions`` (the report's
+        version names), their state judged over just those CSCs' tickets in those versions. Defaults to
+        ``get_tickets(keys)``."""
         return self.get_tickets(keys)
 
     def get_children(self, key: str) -> Iterable[TicketRecord]:
