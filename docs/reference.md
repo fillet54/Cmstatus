@@ -183,9 +183,9 @@ class JiraReleases(PatternSource):
               "emergency": "(?P<line>\\d{4}\\.Q\\d)\\.ER(?P<n>\\d+)"},
  "self_build": ["patch", "emergency"], "include_archived": true}
 ```
-Patterns match whole names; names matching none are ignored. Named groups tie things together: a build, patch or
-emergency belongs to the planned release whose groups (all but `n`) have the same values, and `n` orders
-builds (numerically). Kinds in `self_build` are their own build (add `"planned"` when a release's last build
+Patterns match whole names; names matching none are ignored. Named groups tie things together: a build, patch,
+emergency or snapshot belongs to the planned release whose groups have the same values, leaving out the order
+groups `n`, `n1`, `n2`, ..., which order builds numerically, in that order. Kinds in `self_build` are their own build (add `"planned"` when a release's last build
 carries the release's name, e.g. `3.2.0-rc1`, `3.2.0`). The version description becomes the reason / CR; a
 version Jira marks released that cmtrack hasn't released is reported. Anything else implements
 `ReleaseSource.releases(ci, params)` and returns `ReleaseRecord`s (key, name, kind, target_date, parent_key,
@@ -193,6 +193,26 @@ reason, released, builds) and `Unplaced` items. Register with
 `create_app({"RELEASE_SOURCES": {"jira": JiraReleases()}})` or `CMTRACK_RELEASE_SOURCES=jira=mypkg.jira:JiraReleases`,
 then `PATCH /api/cis/NAV-SW {"release_source": "jira", "source_params": {...}}`. A failing source answers 502.
 Sources get the CI with its CSC rows (`ci["cscs"]`).
+
+Two more settings cover schemes where a release's builds aren't all its own, e.g. quarters with monthly drops
+(`2026.01` with drops `2026.01.01.00`..`03.00`, patch builds `2026.01.01.01`, emergencies `2026.01.ER01` whose
+drops continue the count, `2026.01.04.00`, and one-off snapshots `2026.01.00.NN`):
+
+```json
+{"patterns": {"planned":   "(?P<line>\\d{4}\\.\\d{2})",
+              "build":     "(?P<line>\\d{4}\\.\\d{2})\\.(?P<n1>0[1-9]|[1-9]\\d)\\.(?P<n2>\\d{2})",
+              "emergency": "(?P<line>\\d{4}\\.\\d{2})\\.ER(?P<n>\\d+)",
+              "snapshot":  "(?P<line>\\d{4}\\.\\d{2})\\.00\\.(?P<n>\\d{2})"},
+ "child_builds": {"kind": "emergency", "group": "n1", "after": 3},
+ "self_build": []}
+```
+
+- `child_builds`: a build whose `group` is `after` + k belongs to the `kind` release numbered k (its `n`) on the
+  same line, so drop 04 is ER01's and drop 12 is ER09's. One with no such release is reported.
+- `snapshot`: one-off builds that belong to no release. Each line's snapshots are kept in a `<release> snapshots`
+  record (kind `snapshot`, under the planned release) that is never a release: it isn't counted as open, can't be
+  released, isn't part of the release's family for what's fielded, and has no base version. Each snapshot's
+  lineage parent is the line's latest build dated on or before it, so ranges to and from a snapshot work.
 
 `cmtrack/jira_releases.py` is a working Jira release source (`CMTRACK_RELEASE_SOURCES=jira=cmtrack.jira_releases:from_env`):
 it reads the versions of every Jira project the CI's CSCs map to (or `source_params.projects`), merges them by

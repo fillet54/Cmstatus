@@ -80,7 +80,8 @@ def ci_overview(conn, releases):
     focus = nxt or current or (releases[0] if releases else None)
     return {"current": current, "effective": effective["name"] if effective else None, "next": nxt,
             "next_built": built, "next_total": total,
-            "open_children": [r for r in releases if r["parent_id"] and r["status"] in ("planned", "active")],
+            "open_children": [r for r in releases if r["parent_id"] and r["kind"] != "snapshot"
+                              and r["status"] in ("planned", "active")],
             "behind": svc.behind_effective(conn, current["id"]) if current else [],
             "focus_id": focus["id"] if focus else None}
 
@@ -133,12 +134,12 @@ def dashboard():
     counts = {
         "managed": q("SELECT COUNT(*) FROM ci WHERE managed = 1"),
         "placeholders": q("SELECT COUNT(*) FROM ci WHERE managed = 0"),
-        "open_releases": q("SELECT COUNT(*) FROM release WHERE status IN ('planned', 'active')"),
+        "open_releases": q("SELECT COUNT(*) FROM release WHERE status IN ('planned', 'active') AND kind != 'snapshot'"),
         "approved_baselines": q("SELECT COUNT(*) FROM baseline WHERE status = 'approved'"),
     }
     open_children = svc.to_dicts(conn.execute(
         "SELECT r.*, c.name AS ci, p.name AS parent FROM release r JOIN ci c ON c.id = r.ci_id "
-        "JOIN release p ON p.id = r.parent_id WHERE r.status IN ('planned', 'active') "
+        "JOIN release p ON p.id = r.parent_id WHERE r.status IN ('planned', 'active') AND r.kind != 'snapshot' "
         "ORDER BY r.kind DESC, r.created_at"))
     upcoming = svc.to_dicts(conn.execute(
         "SELECT r.*, c.name AS ci FROM release r JOIN ci c ON c.id = r.ci_id "
@@ -166,7 +167,8 @@ def cis():
     a = request.args
     filters = {"q": a.get("q", "").strip(), "type": a.get("type", ""), "managed": a.get("managed", "")}
     sql = """SELECT c.*,
-                    (SELECT COUNT(*) FROM release r WHERE r.ci_id = c.id AND r.status IN ('planned', 'active'))
+                    (SELECT COUNT(*) FROM release r WHERE r.ci_id = c.id AND r.status IN ('planned', 'active')
+                        AND r.kind != 'snapshot')
                         AS open_releases,
                     (SELECT r.name FROM release r WHERE r.ci_id = c.id AND r.status = 'released'
                         ORDER BY r.released_at DESC, r.id DESC LIMIT 1) AS last_release,

@@ -57,6 +57,48 @@ class ManualSourceTests(unittest.TestCase):
         self.assertEqual([(m["name"], m["kind"]) for m in listed],
                          [("2027.Q1-b1", "build"), ("2027.Q1-b2", "build"), ("2027.Q1", "planned"), ("2027.Q1.P1", "patch")])
 
+    def test_quarters_with_monthly_drops(self):
+        q = r"(?P<line>\d{4}\.\d{2})"
+        self.call("post", "/cis", {"name": "MON-SW", "release_source": "manual", "source_params": {
+            "self_build": [], "child_builds": {"kind": "emergency", "group": "n1", "after": 3},
+            "patterns": {"planned": q, "build": q + r"\.(?P<n1>0[1-9]|[1-9]\d)\.(?P<n2>\d{2})",
+                         "emergency": q + r"\.ER(?P<n>\d+)", "snapshot": q + r"\.00\.(?P<n>\d{2})"}}})
+        for name, date in [("2026.01", "2026-03-31"), ("2026.01.01.00", "2026-01-31"), ("2026.01.01.01", "2026-02-05"),
+                           ("2026.01.02.00", "2026-02-28"), ("2026.01.03.00", "2026-03-31"),
+                           ("2026.01.00.00", "2026-02-10"), ("2026.01.00.01", None)]:
+            self.call("post", "/cis/MON-SW/manual-versions", {"name": name, "date": date}, 201)
+        rels = {r["name"]: r for r in self.call("get", "/cis/MON-SW/releases")}
+        self.assertEqual(sorted(rels), ["2026.01", "2026.01 snapshots"])
+        self.assertEqual(rels["2026.01 snapshots"]["kind"], "snapshot")
+        q1 = self.call("get", f"/releases/{rels['2026.01']['id']}")
+        self.assertEqual([v["name"] for v in q1["versions"]],
+                         ["2026.01.01.00", "2026.01.01.01", "2026.01.02.00", "2026.01.03.00"])
+        snaps = self.call("get", f"/releases/{rels['2026.01 snapshots']['id']}")["versions"]
+        lineage = {s["name"]: self.call("get", f"/versions/{s['id']}/lineage") for s in snaps}
+        self.assertEqual([p["name"] for p in lineage["2026.01.00.00"]["parents"]], ["2026.01.01.01"])   # latest by 02-10
+        self.assertEqual(lineage["2026.01.00.01"]["parents"], [])                # undated, and nothing before the line
+        overview = self.c.get("/").get_data(as_text=True)
+        self.assertNotIn(">2026.01 snapshots</a>", overview)                    # not an open or upcoming release
+        self.assertRegex(overview, r"Open releases</div>\s*<div class=\"ui-stat__value\">1<")
+        self.assertRegex(self.c.get("/cis").get_data(as_text=True), r"MON-SW(.|\n)*?<td class=\"ui-end\">1</td>")
+        err = self.call("post", f"/versions/{snaps[0]['id']}/release", {}, 400)["error"]
+        self.assertIn("never released", err)
+        self.assertIn("planned, patch, emergency", self.call("post", "/cis/MON-SW/releases",
+                                                             {"name": "x", "kind": "snapshot"}, 400)["error"])
+        # the quarter ships, an emergency follows with drop 04 = 3 + ER01, built on what shipped
+        q1v = {v["name"]: v["id"] for v in q1["versions"]}
+        for vid in (q1v["2026.01.03.00"],):
+            self.call("patch", f"/versions/{vid}", {"status": "built"}, 200)
+            self.call("patch", f"/versions/{vid}", {"status": "tested"}, 200)
+            self.call("post", f"/versions/{vid}/release", {}, 200)
+        self.call("post", "/cis/MON-SW/manual-versions", {"name": "2026.01.ER01", "description": "CR-9"}, 201)
+        self.call("post", "/cis/MON-SW/manual-versions", {"name": "2026.01.04.00"}, 201)
+        er = next(r for r in self.call("get", "/cis/MON-SW/releases") if r["name"] == "2026.01.ER01")
+        er = self.call("get", f"/releases/{er['id']}")
+        self.assertEqual(([v["name"] for v in er["versions"]], er["base_version"]), (["2026.01.04.00"], "2026.01.03.00"))
+        b4 = self.call("get", f"/versions/{er['versions'][0]['id']}/lineage")
+        self.assertEqual([p["name"] for p in b4["parents"]], ["2026.01.03.00"])
+
     def test_checks(self):
         self.add("2027.Q1")
         self.assertIn("matches none", self.call("post", "/cis/DISP-SW/manual-versions", {"name": "nightly"}, 400)["error"])

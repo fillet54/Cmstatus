@@ -31,12 +31,14 @@ class BootstrapExampleTests(unittest.TestCase):
         self.assertEqual(sorted(app.config["RELEASE_SOURCES"]), ["jira", "manual"])
         first = self.run_once(app)
         self.assertIn("CI NAV-SW: created (releases from jira)", first)
-        self.assertIn("  synced: 2027.Q1, 2027.Q1-b1, 2027.Q1-b2", first)
+        self.assertIn("  synced: 2026.01, 2026.01.01.00, 2026.01.01.01, 2026.01.02.00, 2026.01.03.00, "
+                      "2026.01 snapshots, 2026.01.00.00", first)
         c = app.test_client()
         cis = {ci["name"]: ci for ci in c.get("/api/cis").get_json()}
         self.assertEqual((cis["NAV-SW"]["release_source"], cis["DISP-SW"]["release_source"]), ("jira", "manual"))
         self.assertEqual(len(c.get("/api/cis/DISP-SW").get_json()["cscs"]), 3)
-        self.assertEqual([r["name"] for r in c.get("/api/cis/DISP-SW/releases").get_json()], ["2027.Q1"])
+        self.assertEqual(sorted(r["name"] for r in c.get("/api/cis/DISP-SW/releases").get_json()),
+                         ["2026.01", "2026.01 snapshots"])
         c.patch("/api/cis/NAV-SW", json={"description": "changed by hand"})
         again = self.run_once(app)
         self.assertFalse([line for line in again if "created" in line or "synced" in line], again)

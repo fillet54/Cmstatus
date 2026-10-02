@@ -4,7 +4,7 @@
 {% set open_ = r.status not in ("released", "cancelled") %}
 {% call ui.card(attrs={"aria-label": "Release " ~ r.name}) %}
   {% call ui.card_header("Release details" if standalone else r.name, None if standalone else r.ci ~ " release", mono=not standalone) %}
-    {% if not standalone %}{% if r.kind != "planned" %}{{ ui.release_kind(r.kind) }}{% endif %}{{ ui.version_status(r.status) }}{% endif %}
+    {% if not standalone %}{% if r.kind != "planned" %}{{ ui.release_kind(r.kind) }}{% endif %}{% if r.kind != "snapshot" %}{{ ui.version_status(r.status) }}{% endif %}{% endif %}
     {{ ui.dialog_button("edit-release-" ~ r.id, "Edit", icon="edit") }}
     {% if open_ %}{{ ui.dialog_button("add-build-" ~ r.id, "Add a build", icon="plus") }}{% endif %}
     {% if r.status == "released" %}{{ ui.dialog_button("correct-release-" ~ r.id, "Correct date", icon="clock") }}{% endif %}

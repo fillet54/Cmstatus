@@ -1,7 +1,7 @@
 {#- The version list of a CI on the "manual" release source (manual_releases.py): add, edit and remove versions.
     Each change syncs the CI, so the releases table follows. -#}
 {% import "ui/components.html" as ui %}
-{% set kinds = {"planned": "release", "build": "build", "patch": "patch", "emergency": "emergency"} %}
+{% set kinds = {"planned": "release", "build": "build", "patch": "patch", "emergency": "emergency", "snapshot": "snapshot"} %}
 {% call ui.card(flush=True, attrs={"aria-label": "Versions"}) %}
   {% call ui.card_header("Versions", "kept in cmtrack (manual release source); the name patterns sort them into releases and builds") %}
     {{ ui.badge(manual_versions | length) }}{{ ui.dialog_button("add-manual-version", "Add a version", icon="plus", variant="primary") }}

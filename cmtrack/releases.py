@@ -27,7 +27,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, List, Optional, Union
 
-KINDS = ("planned", "patch", "emergency")
+KINDS = ("planned", "patch", "emergency", "snapshot")   # snapshot: one-off builds, in no release
 
 
 class SourceConfigError(ValueError):
@@ -104,18 +104,33 @@ class PatternSource(ReleaseSource):
          "patterns": {"planned":   "(?P<line>\\d{4}\\.Q\\d)",
                       "build":     "(?P<line>\\d{4}\\.Q\\d)-b(?P<n>\\d+)",
                       "patch":     "(?P<line>\\d{4}\\.Q\\d)\\.P(?P<n>\\d+)",
-                      "emergency": "(?P<line>\\d{4}\\.Q\\d)\\.ER(?P<n>\\d+)"},
+                      "emergency": "(?P<line>\\d{4}\\.Q\\d)\\.ER(?P<n>\\d+)",
+                      "snapshot":  "(?P<line>\\d{4}\\.Q\\d)-s(?P<n>\\d+)"},
          "self_build": ["patch", "emergency"],
+         "child_builds": {"kind": "emergency", "group": "n1", "after": 3},
          "include_archived": true}
 
-    Patterns must match the whole name. Named groups tie things together: a build, patch or emergency
-    belongs to the planned release whose groups (all except ``n``) have the same values; ``n`` orders
-    builds. Only ``planned`` is required. Kinds in ``self_build`` get their own version as a build (a
-    patch is usually one Jira version that is both the release and its build; add "planned" when a
-    release's final build carries the release's name). Names matching no pattern are ignored.
+    Patterns must match the whole name. Named groups tie things together: a build, patch, emergency or snapshot
+    belongs to the planned release whose groups have the same values, leaving out the *order groups*: ``n``,
+    ``n1``, ``n2``, ... (numbers; builds are ordered by them, in that order, so 2026.01.01.00 < 2026.01.01.01 <
+    2026.01.02.00 with ``(?P<n1>\\d\\d)\\.(?P<n2>\\d\\d)``). Only ``planned`` is required. Names matching no
+    pattern are ignored.
+
+    ``self_build``: kinds that get their own version as a build (a patch is usually one Jira version that is both
+    the release and its build; add "planned" when a release's final build carries the release's name).
+
+    ``child_builds``: builds numbered past a planned release's own belong to its patches or emergencies. With
+    {"kind": "emergency", "group": "n1", "after": 3}, a build whose n1 is 3 or less is the planned release's, and
+    one whose n1 is 3 + k is the build of the emergency numbered k (its ``n``) on the same line: 2026.01.04.00
+    belongs to 2026.01.ER01, 2026.01.12.00 to 2026.01.ER09.
+
+    ``snapshot``: one-off builds that belong to no release. They're kept per line, in a "<release> snapshots"
+    record of kind snapshot under the planned release, which never counts as a release (it isn't open, released
+    or fielded); each snapshot hangs off the line's latest build at its date.
     """
 
-    PATTERN_KINDS = ("planned", "build", "patch", "emergency")
+    PATTERN_KINDS = ("planned", "build", "patch", "emergency", "snapshot")
+    SELF_BUILD = ("planned", "patch", "emergency")
 
     def versions(self, ci: dict, params: dict) -> Iterable[SourceVersion]:
         raise NotImplementedError
@@ -135,8 +150,18 @@ class PatternSource(ReleaseSource):
             except (re.error, TypeError) as e:
                 raise SourceConfigError(f"bad {kind} pattern {rx!r}: {e}") from None
         self_build = params.get("self_build", ["patch", "emergency"])
-        if not isinstance(self_build, list) or set(self_build) - set(KINDS):
-            raise SourceConfigError(f"self_build must be a list drawn from {list(KINDS)}")
+        if not isinstance(self_build, list) or set(self_build) - set(cls.SELF_BUILD):
+            raise SourceConfigError(f"self_build must be a list drawn from {list(cls.SELF_BUILD)}")
+        cb = params.get("child_builds")
+        if cb is not None:
+            if not (isinstance(cb, dict) and cb.get("kind") in ("patch", "emergency") and isinstance(cb.get("after"), int)
+                    and is_order_group(cb.get("group") or "")):
+                raise SourceConfigError('child_builds must be {"kind": "patch" or "emergency", "group": an order group '
+                                        'such as "n1", "after": a number}')
+            if "build" not in compiled or cb["group"] not in compiled["build"].groupindex:
+                raise SourceConfigError(f"child_builds.group {cb['group']!r} isn't a group of the build pattern")
+            if cb["kind"] not in compiled:
+                raise SourceConfigError(f"child_builds.kind {cb['kind']!r} has no pattern")
         return compiled
 
     def releases(self, ci, params):
@@ -147,7 +172,8 @@ class PatternSource(ReleaseSource):
         pats = self.check_params(params)
         self_build = set(params.get("self_build", ["patch", "emergency"]))
         include_archived = params.get("include_archived", True)
-        planned, children, builds, out = {}, [], {}, []
+        cb = params.get("child_builds")
+        planned, children, builds, child_builds, snapshots, out = {}, [], {}, {}, {}, []
 
         for v in versions:
             v = v if isinstance(v, SourceVersion) else SourceVersion(**v)
@@ -161,9 +187,9 @@ class PatternSource(ReleaseSource):
                 continue
             kind, m = hits[0]
             groups = m.groupdict()
-            line = tuple(sorted((g, val) for g, val in groups.items() if g != "n"))
-            n = groups.get("n")
-            order = (int(n) if n and n.isdigit() else float("inf"), v.date or "", v.name)
+            line = tuple(sorted((g, val) for g, val in groups.items() if not is_order_group(g)))
+            numbers = [_number(groups[g]) for g in sorted(filter(is_order_group, groups), key=_order_index)]
+            order = (numbers or [float("inf")], v.date or "", v.name)
             if kind == "planned":
                 if line in planned:
                     out.append(Unplaced(v.key, v.name, f"same release line as {planned[line].name}"))
@@ -171,33 +197,64 @@ class PatternSource(ReleaseSource):
                 planned[line] = ReleaseRecord(key=v.key, name=v.name, target_date=v.date, reason=v.description,
                                               released=v.released)
             elif kind == "build":
-                builds.setdefault(line, []).append((order, v))
+                child = cb and _number(groups.get(cb["group"])) - cb["after"]
+                if child and child > 0:                       # numbered past the release's own: a child's build
+                    child_builds.setdefault((line, cb["kind"], child), []).append((order, v))
+                else:
+                    builds.setdefault(line, []).append((order, v))
+            elif kind == "snapshot":
+                snapshots.setdefault(line, []).append((order, v))
             else:
-                children.append((line, kind, v))
+                children.append((line, kind, v, _number(groups.get("n"))))
 
         def line_name(line):
             return ", ".join(f"{g}={val}" for g, val in line) or "no groups"
 
+        def ordered(found):
+            return [BuildRecord(v.key, v.name, v.date) for _, v in sorted(found, key=lambda b: b[0])]
+
         for line, rec in planned.items():
-            found = sorted(builds.pop(line, []), key=lambda b: b[0])
-            rec.builds = [BuildRecord(v.key, v.name, v.date) for _, v in found]
+            rec.builds = ordered(builds.pop(line, []))
             if "planned" in self_build:
                 rec.builds.append(BuildRecord(rec.key, rec.name, rec.target_date))
             out.append(rec)
-        for line, kind, v in children:
+        for line, kind, v, n in children:
             parent = planned.get(line)
             if parent is None:
                 out.append(Unplaced(v.key, v.name, f"{kind} with no planned release for {line_name(line)}"))
                 continue
             rec = ReleaseRecord(key=v.key, name=v.name, kind=kind, target_date=v.date, parent_key=parent.key,
                                 reason=v.description, released=v.released)
-            if kind in self_build:
-                rec.builds = [BuildRecord(v.key, v.name, v.date)]
+            rec.builds = ([BuildRecord(v.key, v.name, v.date)] if kind in self_build else []) + \
+                ordered(child_builds.pop((line, kind, n), []))
             out.append(rec)
+        for line, found in snapshots.items():
+            parent = planned.get(line)
+            if parent is None:
+                out += [Unplaced(v.key, v.name, f"snapshot with no planned release for {line_name(line)}") for _, v in found]
+                continue
+            out.append(ReleaseRecord(key=f"snapshots:{parent.key}", name=f"{parent.name} snapshots", kind="snapshot",
+                                     parent_key=parent.key, builds=ordered(found)))
         for line, found in builds.items():
             for _, v in found:
                 out.append(Unplaced(v.key, v.name, f"build with no planned release for {line_name(line)}"))
+        for (line, kind, n), found in child_builds.items():
+            for _, v in found:
+                out.append(Unplaced(v.key, v.name, f"build for {kind} {n} of {line_name(line)}, which isn't listed"))
         return out
+
+
+def is_order_group(name):
+    """``n``, ``n1``, ``n2``, ...: the groups that order builds rather than tie them to a release."""
+    return re.fullmatch(r"n\d*", name) is not None
+
+
+def _order_index(name):
+    return int(name[1:] or 0)
+
+
+def _number(value):
+    return int(value) if value and value.isdigit() else float("inf")
 
 
 class StaticVersionSource(PatternSource):

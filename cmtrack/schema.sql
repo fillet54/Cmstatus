@@ -69,10 +69,11 @@ CREATE TABLE IF NOT EXISTS release (
     id                  INTEGER PRIMARY KEY,
     ci_id               INTEGER NOT NULL REFERENCES ci(id),
     name                TEXT NOT NULL,
-    kind                TEXT NOT NULL CHECK (kind IN ('planned', 'patch', 'emergency', 'external')),
+    kind                TEXT NOT NULL CHECK (kind IN ('planned', 'patch', 'emergency', 'snapshot', 'external')),
     status              TEXT NOT NULL DEFAULT 'planned'
                         CHECK (status IN ('planned', 'active', 'released', 'cancelled')),
-    parent_id           INTEGER REFERENCES release(id),   -- planned release a patch/emergency patches
+    parent_id           INTEGER REFERENCES release(id),   -- planned release a patch/emergency patches (or whose
+                                                           -- snapshots a 'snapshot' release holds: never a release)
     base_version_id     INTEGER REFERENCES version(id),   -- released version a patch/emergency builds on
     released_version_id INTEGER REFERENCES version(id),   -- the version promoted to be this release
     target_date         TEXT,

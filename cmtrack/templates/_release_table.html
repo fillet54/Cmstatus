@@ -34,7 +34,7 @@
                hx-boost="false" onclick="event.preventDefault()">{{ r.name }}</a>
           {%- if r.source_state == "missing" %} {{ ui.badge("missing", "danger", outline=True) }}{% elif ci.release_source and not r.source_key and r.kind != "external" %} {{ ui.badge("by hand", outline=True) }}{% endif %}</td>
         <td>{{ ui.release_kind(r.kind) }}</td>
-        <td>{{ ui.version_status(r.status) }}</td>
+        <td>{% if r.kind == "snapshot" %}<span class="ui-muted">not a release</span>{% else %}{{ ui.version_status(r.status) }}{% endif %}</td>
         <td>{% if child and r.reason %}{{ ui.ident(r.reason, plain=True) }}{% else %}<span class="ui-mono">{{ r.target_date or "—" }}</span>{% endif %}</td>
         <td>{% if r.released_version %}{{ ui.ident(r.released_version, plain=True) }}{% endif %}</td>
         <td class="ui-end">

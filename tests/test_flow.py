@@ -49,6 +49,33 @@ class PatternSourceTests(unittest.TestCase):
         both = {"patterns": {"planned": r"(?P<x>\d+)", "build": r"(?P<x>\d)"}, "project": "NAV"}
         self.assertIn("more than one pattern", self.releases([v("1", "7")], both)[0].why)
 
+    def test_monthly_drops_ers_and_snapshots(self):
+        q = r"(?P<line>\d{4}\.\d{2})"
+        params = {"project": "NAV", "self_build": [],
+                  "patterns": {"planned": q, "build": q + r"\.(?P<n1>0[1-9]|[1-9]\d)\.(?P<n2>\d{2})",
+                               "emergency": q + r"\.ER(?P<n>\d+)", "snapshot": q + r"\.00\.(?P<n>\d{2})"},
+                  "child_builds": {"kind": "emergency", "group": "n1", "after": 3}}
+        out = self.releases([v("1", "2026.01"), v("2", "2026.01.02.00"), v("3", "2026.01.01.01"), v("4", "2026.01.01.00"),
+                             v("5", "2026.01.03.00"), v("6", "2026.01.ER01", description="CR-9"), v("7", "2026.01.04.01"),
+                             v("8", "2026.01.04.00"), v("9", "2026.01.00.01"), v("10", "2026.01.00.00"),
+                             v("11", "2026.01.12.00"), v("12", "2026.02.00.00")], params)
+        recs = {r.name: r for r in out if isinstance(r, ReleaseRecord)}
+        self.assertEqual([b.name for b in recs["2026.01"].builds],              # by drop, then patch
+                         ["2026.01.01.00", "2026.01.01.01", "2026.01.02.00", "2026.01.03.00"])
+        er = recs["2026.01.ER01"]
+        self.assertEqual((er.kind, er.parent_key, [b.name for b in er.builds]),  # drop 04 = 3 + ER 1; not itself
+                         ("emergency", "1", ["2026.01.04.00", "2026.01.04.01"]))
+        snaps = recs["2026.01 snapshots"]
+        self.assertEqual((snaps.kind, snaps.parent_key, snaps.key, [b.name for b in snaps.builds]),
+                         ("snapshot", "1", "snapshots:1", ["2026.01.00.00", "2026.01.00.01"]))
+        unplaced = {u.name: u.why for u in out if isinstance(u, Unplaced)}
+        self.assertEqual(unplaced, {"2026.01.12.00": "build for emergency 9 of line=2026.01, which isn't listed",
+                                    "2026.02.00.00": "snapshot with no planned release for line=2026.02"})
+        for bad in ({"kind": "hotfix", "group": "n1", "after": 3}, {"kind": "emergency", "group": "line", "after": 3},
+                    {"kind": "emergency", "group": "n7", "after": 3}, {"kind": "emergency", "group": "n1", "after": "3"}):
+            with self.assertRaises(SourceConfigError):
+                self.releases([], {**params, "child_builds": bad})
+
     def test_bad_params(self):
         for params in ({"project": "NAV"}, {"project": "NAV", "patterns": {"planned": "("}},
                        {"project": "NAV", "patterns": {"planned": "x", "hotfix": "y"}},

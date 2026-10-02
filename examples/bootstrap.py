@@ -5,8 +5,8 @@
 
 Everything is set here, in code, instead of through CMTRACK_* environment variables:
 
-    NAV-SW    releases synced from Jira: the versions of its CSCs' Jira projects, sorted by the quarterly patterns
-    DISP-SW   releases kept in cmtrack (the "manual" release source), sorted by the same patterns
+    NAV-SW    releases synced from Jira: the versions of its CSCs' Jira projects, sorted by the version scheme below
+    DISP-SW   releases kept in cmtrack (the "manual" release source), sorted by the same scheme
 
 Both report tickets from the one Jira ticket source; a CI's CSCs map it onto Jira (project + Affected Product).
 Copy this file and change the settings below for your program.
@@ -36,26 +36,40 @@ TICKETS = dict(
     roles={"analysis": {"label": "Analysis"}, "verification": {"summary": "VER:"}},
 )
 
-# Quarterly releases: 2027.Q1 with builds 2027.Q1-b1, -b2, ..., patches 2027.Q1.P1 and emergencies 2027.Q1.ER1.
-LINE = r"(?P<line>\d{4}\.Q\d)"
-QUARTERLY = {"planned": LINE, "build": LINE + r"-b(?P<n>\d+)", "patch": LINE + r"\.P(?P<n>\d+)",
-             "emergency": LINE + r"\.ER(?P<n>\d+)"}
+# Quarterly releases with monthly drops:
+#   2026.01                  the quarter's release (only its last drop ships)
+#   2026.01.01.00 .. 03.00   the three monthly drops, builds of 2026.01; 2026.01.01.01 is a patch build of drop 01
+#   2026.01.ER01             an emergency release after the quarter shipped; its drops continue the count:
+#                            drop 04 (= 3 + 1) is ER01's, 2026.01.04.00, 2026.01.04.01, ...; ER09's is drop 12
+#   2026.01.00.00, 00.01     snapshot / one-off builds: tracked, but in no release
+LINE = r"(?P<line>\d{4}\.\d{2})"
+QUARTERLY = {
+    "patterns": {"planned": LINE,
+                 "build": LINE + r"\.(?P<n1>0[1-9]|[1-9]\d)\.(?P<n2>\d{2})",     # ordered by drop, then patch
+                 "emergency": LINE + r"\.ER(?P<n>\d+)",
+                 "snapshot": LINE + r"\.00\.(?P<n>\d{2})"},
+    "child_builds": {"kind": "emergency", "group": "n1", "after": 3},      # drop 3 + k belongs to ERk
+    "self_build": [],                                                    # an ER's version isn't one of its builds
+}
 
 CIS = [
     {"name": "NAV-SW", "description": "Navigation software",
-     "release_source": "jira", "source_params": {"patterns": QUARTERLY, "match": r"2\d{3}\..*"},
+     "release_source": "jira", "source_params": {**QUARTERLY, "match": r"\d{4}\.\d{2}(\.ER\d+|\.\d{2}\.\d{2})?"},
      "cscs": [{"name": "nav-core", "jira_project": "NAVL", "affected_product": "core", "team": "Nav"},
               {"name": "nav-maps", "jira_project": "NAVX", "affected_product": "maps", "team": "Maps"},
               {"name": "nav-io", "jira_project": "NAVL", "affected_product": "io", "team": "Nav"}]},
     {"name": "DISP-SW", "description": "Cockpit display software",
-     "release_source": "manual", "source_params": {"patterns": QUARTERLY},
+     "release_source": "manual", "source_params": QUARTERLY,
      "cscs": [{"name": "disp-render", "jira_project": "DSPL", "affected_product": "render", "team": "Display"},
               {"name": "disp-symbology", "jira_project": "DSPL", "affected_product": "symbology", "team": "Display"},
               {"name": "disp-input", "jira_project": "DSPI", "affected_product": "input", "team": "HMI"}],
      # the manual source's version list: releases and builds by name, sorted by the patterns above
-     "versions": [{"name": "2027.Q1", "date": "2027-03-15"},
-                  {"name": "2027.Q1-b1", "date": "2027-01-15"},
-                  {"name": "2027.Q1-b2", "date": "2027-02-15"}]},
+     "versions": [{"name": "2026.01", "date": "2026-03-31"},
+                  {"name": "2026.01.01.00", "date": "2026-01-30"},
+                  {"name": "2026.01.01.01", "date": "2026-02-06"},
+                  {"name": "2026.01.02.00", "date": "2026-02-27"},
+                  {"name": "2026.01.03.00", "date": "2026-03-27"},
+                  {"name": "2026.01.00.00", "date": "2026-02-12"}]},
 ]
 
 

@@ -330,8 +330,8 @@ def create_release(conn, ci_ref, name=None, kind="planned", target_date=None, pa
     builds on ``base_version`` (default: the line's effective version). Emergencies need a ``reason``.
     """
     ci = get_ci(conn, ci_ref)
-    if kind not in rsrc.KINDS:
-        raise CMError(f"kind must be one of {', '.join(rsrc.KINDS)}")
+    if kind not in rsrc.KINDS or kind == "snapshot":
+        raise CMError(f"kind must be one of planned, patch, emergency (snapshots come from a release source)")
     name, reason = (name or "").strip() or None, (reason or "").strip() or None
     root = base = None
     if kind == "planned":
@@ -529,6 +529,8 @@ def release_version(conn, version_id, released_at=None):
     ci = get_ci(conn, ver["ci_id"])
     if rel["status"] in ("released", "cancelled"):
         raise CMError(f"release {rel['name']} is already {rel['status']}")
+    if rel["kind"] == "snapshot":
+        raise CMError(f"{ver['name']} is a snapshot; snapshots are never released")
 
     allowed = ("tested",) if ci["require_tested"] else ("built", "tested")
     problems = [] if ver["status"] in allowed else \
@@ -572,7 +574,7 @@ def effective_version(conn, release_id):
     root = root_release(conn, release_id)
     return conn.execute(
         "SELECT v.* FROM release r JOIN version v ON v.id = r.released_version_id "
-        "WHERE (r.id = ? OR r.parent_id = ?) AND r.status = 'released' "
+        "WHERE (r.id = ? OR r.parent_id = ?) AND r.status = 'released' AND r.kind != 'snapshot' "
         "ORDER BY r.released_at DESC, r.id DESC LIMIT 1", (root["id"], root["id"])).fetchone()
 
 
@@ -671,7 +673,9 @@ def rebuild_lineage(conn, ci_id):
     - the first build of a patch/emergency builds on its base version;
     - the first build of a planned release builds on the previous planned release's head
       (cancelled releases are skipped, and so are ones gone from the release source that never got a real
-      build). External (scraped) versions have no lineage.
+      build). External (scraped) versions have no lineage;
+    - a snapshot hangs off its line: the latest build of the planned release dated on or before it (else where
+      that release's first build starts). Snapshots aren't chained, and nothing builds on them.
     """
     auto = {r[0] for r in conn.execute("SELECT id FROM version WHERE ci_id = ? AND lineage = 'auto'", (ci_id,))}
     by_release = {}
@@ -686,9 +690,10 @@ def rebuild_lineage(conn, ci_id):
                 edges.append((vid, prev))
             prev = vid
 
-    prev_head = None
+    prev_head, start = None, {}
     for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND kind = 'planned' "
                             "ORDER BY target_date IS NULL, target_date, id", (ci_id,)).fetchall():
+        start[rel["id"]] = prev_head
         chain(rel, prev_head)
         phantom = rel["source_state"] == "missing" and not conn.execute(
             "SELECT 1 FROM version WHERE release_id = ? AND status NOT IN ('planned', 'rejected')", (rel["id"],)).fetchone()
@@ -696,7 +701,17 @@ def rebuild_lineage(conn, ci_id):
             head = release_head(conn, rel)
             prev_head = head["id"] if head else prev_head
     for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND parent_id IS NOT NULL", (ci_id,)).fetchall():
-        chain(rel, rel["base_version_id"])
+        if rel["kind"] != "snapshot":
+            chain(rel, rel["base_version_id"])
+            continue
+        line = conn.execute("SELECT id, planned_date FROM version WHERE release_id = ? AND planned_date IS NOT NULL "
+                            "AND status != 'rejected' ORDER BY planned_date, seq", (rel["parent_id"],)).fetchall()
+        for v in conn.execute("SELECT id, planned_date FROM version WHERE release_id = ? ORDER BY seq", (rel["id"],)):
+            if v["id"] in auto:
+                before = [b["id"] for b in line if v["planned_date"] and b["planned_date"] <= v["planned_date"]]
+                parent = before[-1] if before else start.get(rel["parent_id"])
+                if parent is not None:
+                    edges.append((v["id"], parent))
 
     conn.execute("DELETE FROM version_parent WHERE version_id IN "
                  "(SELECT id FROM version WHERE ci_id = ? AND lineage = 'auto')", (ci_id,))
@@ -1048,7 +1063,7 @@ def _sync(conn, ci, records, summary):
 
     # a patch/emergency builds on its line's effective version, filled in once something there is released
     for rel in conn.execute("SELECT * FROM release WHERE ci_id = ? AND parent_id IS NOT NULL AND base_version_id IS NULL "
-                            "AND status != 'cancelled'", (ci["id"],)).fetchall():
+                            "AND status != 'cancelled' AND kind != 'snapshot'", (ci["id"],)).fetchall():
         if "base_version_id" in json.loads(rel["pinned"]):
             continue
         eff = effective_version(conn, rel["parent_id"])
@@ -1201,14 +1216,16 @@ def ci_attention(conn, ci_ref):
         add("danger", "missing_version", v["name"], f"build of {v['release']} no longer in the release source",
             version_id=v["id"])
     for r in conn.execute("SELECT id, name, kind, reason, base_version_id FROM release WHERE ci_id = ? "
-                          "AND parent_id IS NOT NULL AND status IN ('planned', 'active') ORDER BY id", (ci["id"],)):
+                          "AND parent_id IS NOT NULL AND kind != 'snapshot' AND status IN ('planned', 'active') ORDER BY id",
+                          (ci["id"],)):
         if r["base_version_id"] is None:
             add("warning", "no_base", r["name"], "no base version yet: nothing on its line is released, or set one",
                 release_id=r["id"])
         if r["kind"] == "emergency" and not r["reason"]:
             add("warning", "no_reason", r["name"], "emergency with no reason / change request", release_id=r["id"])
     for r in conn.execute("SELECT p.name, c.kind, COUNT(*) AS n FROM release c JOIN release p ON p.id = c.parent_id "
-                          "WHERE c.ci_id = ? AND c.status IN ('planned', 'active') GROUP BY p.id, c.kind HAVING n > 1",
+                          "WHERE c.ci_id = ? AND c.kind != 'snapshot' AND c.status IN ('planned', 'active') "
+                          "GROUP BY p.id, c.kind HAVING n > 1",
                           (ci["id"],)):
         add("warning", "open_children", r["name"], f"{r['n']} open {r['kind']} releases on this line")
     return out
