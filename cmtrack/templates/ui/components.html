@@ -49,7 +49,7 @@
 {%- endmacro %}
 
 {% macro logo(size=22) -%}
-<svg class="ui-icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 22 22" aria-hidden="true" fill="none" stroke="var(--ui-accent)" stroke-width="2" stroke-linecap="round">
+<svg class="ui-icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 22 22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
   <rect x="1.5" y="1.5" width="19" height="19" rx="3"/><path d="M6 15 L6 7 M6 11 L11 11 M11 7 L11 15 M15 7 L15 15"/>
 </svg>
 {%- endmacro %}
@@ -75,7 +75,24 @@
   </a>
   <nav class="ui-nav" aria-label="Primary">
     {%- for item in nav %}
+    {%- if item.menu %}
+    <div class="ui-nav__menu">
+      <a class="ui-nav__link" href="{{ item.href }}" aria-haspopup="true"{% if item.key == current %} aria-current="page"{% endif %}>{{ item.label }}
+        <svg class="ui-nav__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></a>
+      <div class="ui-nav__panel">
+        <ul class="ui-nav__list">
+          {%- for e in item.menu.entries %}
+          <li><a href="{{ e.href }}"><span class="ui-nav__entry">{{ e.label }}</span>{% if e.sub %}<span class="ui-nav__sub">{{ e.sub }}</span>{% endif %}</a></li>
+          {%- else %}
+          <li class="ui-nav__none">None yet</li>
+          {%- endfor %}
+        </ul>
+        <a class="ui-nav__all" href="{{ item.href }}">{{ item.menu.all }}</a>
+      </div>
+    </div>
+    {%- else %}
     <a class="ui-nav__link" href="{{ item.href }}"{% if item.key == current %} aria-current="page"{% endif %}>{{ item.label }}</a>
+    {%- endif %}
     {%- endfor %}
   </nav>
   <span class="ui-spacer"></span>

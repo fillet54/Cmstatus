@@ -12,11 +12,13 @@ Config (app.config, or the environment at startup):
 import datetime as dt
 import json
 import os
+import sqlite3
 
 from flask import current_app, g, url_for
 from werkzeug.routing import BuildError
 
 from . import graph, tickets
+from .db import get_db
 
 MARKING_COLORS = {"UNCLASSIFIED": ("#007A33", "#FFFFFF"), "CUI": ("#502B85", "#FFFFFF")}
 
@@ -24,12 +26,13 @@ GOOGLE_FONTS = ("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400
                 "&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600&display=swap")
 HTMX = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"
 
-# (key, label, endpoint) for the header nav; entries whose endpoint doesn't exist are skipped.
+# (key, label, endpoint[, menu]) for the header nav; entries whose endpoint doesn't exist are skipped.
+# menu names a key of NAV_MENUS: hovering the item opens a list of quick links (every IFC / managed CI).
 NAV = [
+    ("ifcs", "Capabilities", "ui.ifcs", "ifcs"),
+    ("cis", "Configuration items", "ui.cis", "cis"),
     ("overview", "Overview", "ui.dashboard"),
-    ("cis", "Configuration items", "ui.cis"),
     ("backlogs", "Backlogs", "backlog.backlogs"),
-    ("ifcs", "Capabilities", "ui.ifcs"),
     ("events", "Audit log", "ui.events"),
 ]
 
@@ -87,13 +90,35 @@ def pretty_json(value):
     return json.dumps(value, indent=2, ensure_ascii=False)
 
 
+def _ifc_menu(conn):
+    return [{"label": r["name"], "sub": r["description"], "href": url_for("ui.ifc", ref=r["name"])}
+            for r in conn.execute("SELECT name, description FROM ifc ORDER BY id")]
+
+
+def _ci_menu(conn):
+    return [{"label": r["name"], "sub": r["description"], "href": url_for("ui.ci", ref=r["name"])}
+            for r in conn.execute("SELECT name, description FROM ci WHERE managed = 1 ORDER BY name")]
+
+
+# name -> (label of the "all" link, loader(conn) -> [{label, sub, href}])
+NAV_MENUS = {"ifcs": ("All capabilities", _ifc_menu), "cis": ("All configuration items", _ci_menu)}
+
+
 def _nav():
     items = []
-    for key, label, endpoint in current_app.config["UI_NAV"]:
+    for key, label, endpoint, *menu in current_app.config["UI_NAV"]:
         try:
-            items.append({"key": key, "label": label, "href": url_for(endpoint)})
+            item = {"key": key, "label": label, "href": url_for(endpoint)}
         except BuildError:
             continue
+        if menu and menu[0] in NAV_MENUS:
+            all_label, load = NAV_MENUS[menu[0]]
+            try:
+                entries = load(get_db())
+            except (sqlite3.Error, BuildError):
+                entries = []
+            item["menu"] = {"all": all_label, "entries": entries}
+        items.append(item)
     return items
 
 
