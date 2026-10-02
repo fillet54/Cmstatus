@@ -1,0 +1,55 @@
+{#- The version list of a CI on the "manual" release source (manual_releases.py): add, edit and remove versions.
+    Each change syncs the CI, so the releases table follows. -#}
+{% import "ui/components.html" as ui %}
+{% set kinds = {"planned": "release", "build": "build", "patch": "patch", "emergency": "emergency"} %}
+{% call ui.card(flush=True, attrs={"aria-label": "Versions"}) %}
+  {% call ui.card_header("Versions", "kept in cmtrack (manual release source); the name patterns sort them into releases and builds") %}
+    {{ ui.badge(manual_versions | length) }}{{ ui.dialog_button("add-manual-version", "Add a version", icon="plus", variant="primary") }}
+  {% endcall %}
+  {% call ui.table(["Name", "Is a", "Date", "Description / CR", "Released", ""], dense=True) %}
+    {% for m in manual_versions %}
+    <tr>
+      <td class="ui-mono">{{ m.name }}</td>
+      <td>{% if m.kind %}{{ ui.release_kind(kinds[m.kind]) if m.kind in ("patch", "emergency") else kinds[m.kind] }}{% else %}{{ ui.badge("no pattern", "warning") }}{% endif %}
+        {%- if m.archived %} {{ ui.badge("archived", outline=True) }}{% endif %}</td>
+      <td class="ui-mono">{{ m.date or "—" }}</td>
+      <td>{{ m.description or "" }}</td>
+      <td>{% if m.released %}{{ ui.badge("released", "success") }}{% else %}<span class="ui-muted">no</span>{% endif %}</td>
+      <td class="ui-end">{{ ui.dialog_button("edit-manual-version-" ~ m.id, "Edit", icon="edit") }}</td>
+    </tr>
+    {% else %}{{ ui.empty_row("No versions yet. Add a release (e.g. 2027.Q1), then its builds (2027.Q1-b1, ...).", 6) }}{% endfor %}
+  {% endcall %}
+{% endcall %}
+
+{% call ui.dialog("add-manual-version", "Add a version to " ~ ci.name) %}
+  <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.add_manual_version', ref=ci.name) }}">
+    <input type="hidden" name="flags" value="">
+    <span class="ui-muted" style="font-size: 12px;">A release, build, patch or emergency: its name decides which (the CI's name patterns).</span>
+    <div class="ui-form-grid">
+      {% call ui.field("Name", "mv-name") %}{{ ui.input("name", id="mv-name", mono=True, required=True, placeholder="2027.Q1-b1") }}{% endcall %}
+      {% call ui.field("Date", "mv-date", hint="target or planned") %}{{ ui.input("date", type="date", id="mv-date") }}{% endcall %}
+      {% call ui.field("Description / CR", "mv-desc", hint="a patch's change request") %}{{ ui.input("description", id="mv-desc") }}{% endcall %}
+    </div>
+    {{ ui.checkbox("flags", "Already released", value="released") }}
+    <div class="ui-row">{{ ui.button("Add version", variant="primary", type="submit", icon="plus") }}</div>
+  </form>
+{% endcall %}
+
+{% for m in manual_versions %}
+{% call ui.dialog("edit-manual-version-" ~ m.id, "Edit " ~ m.name) %}
+  <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.edit_manual_version', mid=m.id) }}">
+    <input type="hidden" name="flags" value="">
+    <div class="ui-form-grid">
+      {% call ui.field("Name", "mv-name-" ~ m.id, hint="a rename here renames the release or build") %}{{ ui.input("name", m.name, id="mv-name-" ~ m.id, mono=True, required=True) }}{% endcall %}
+      {% call ui.field("Date", "mv-date-" ~ m.id) %}{{ ui.input("date", m.date, type="date", id="mv-date-" ~ m.id) }}{% endcall %}
+      {% call ui.field("Description / CR", "mv-desc-" ~ m.id) %}{{ ui.input("description", m.description, id="mv-desc-" ~ m.id) }}{% endcall %}
+    </div>
+    <div class="ui-row">{{ ui.checkbox("flags", "Released", checked=m.released, value="released") }}{{ ui.checkbox("flags", "Archived", checked=m.archived, value="archived") }}</div>
+    <div class="ui-row">{{ ui.button("Save", variant="primary", type="submit") }}</div>
+  </form>
+  <form class="ui-row ui-dialog__danger" style="--ui-gap: 8px; align-items: center;" method="post" hx-push-url="false" action="{{ url_for('ui.delete_manual_version', mid=m.id) }}">
+    <span class="ui-muted" style="font-size: 12px;">Removing it flags its release or build as missing, as deleting a Jira version would.</span>
+    {{ ui.button("Remove version", variant="danger", type="submit") }}
+  </form>
+{% endcall %}
+{% endfor %}

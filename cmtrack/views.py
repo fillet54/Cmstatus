@@ -10,7 +10,7 @@ import json
 
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
-from . import graph, service as svc, tickets, ui
+from . import graph, manual_releases as manual, service as svc, tickets, ui
 from .backlog import service as backlogs
 from .db import get_db
 
@@ -203,7 +203,12 @@ def render_ci(conn, ref, preview=None):
         (detail["id"],)))
     missing = any(a["kind"].startswith("missing") for a in detail["attention"])
     overview = ci_overview(conn, detail["releases"])
+    manual_versions = None
+    if detail["release_source"] == manual.NAME:
+        manual_versions = [{**svc.to_dict(r), "kind": manual.kind_of(detail, r["name"])}
+                           for r in manual.list_versions(conn, detail["id"])]
     return render_template("ci.html", ci=detail, table=release_table(detail["releases"], focus_id=overview["focus_id"]),
+                           manual_versions=manual_versions,
                            fielded=fielded, backlogs=backlogs.list_backlogs(conn, detail["id"]), overview=overview,
                            candidates=svc.remap_candidates(conn, detail["id"]) if missing else None,
                            source_configured=detail["release_source"] in (current_app.config["RELEASE_SOURCES"] or {}),
@@ -627,6 +632,41 @@ def create_release(ref):
     builds = [b.strip() for b in request.form.get("builds", "").split(",") if b.strip()]
     rel = _run(svc.create_release, ref, builds=builds or None, **{k: v for k, v in f.items() if v})
     return _back(url_for("ui.ci", ref=rel["ci"]))
+
+
+def _manual(fn, *args, **kwargs):
+    """Change a manual CI's version list, then sync it so its releases and builds follow."""
+    conn = get_db()
+    with conn:
+        row = fn(conn, *args, **kwargs)
+        manual.sync(conn, row["ci_id"], current_app.config["RELEASE_SOURCES"])
+    return svc.get_ci(conn, row["ci_id"])
+
+
+def _manual_form():
+    f = _form("name", "date", "description")
+    if "flags" in request.form:                       # the edit form: unchecked boxes clear the flag
+        f.update({k: k in request.form.getlist("flags") for k in ("released", "archived")})
+    return f
+
+
+@bp.post("/cis/<ref>/manual-versions")
+def add_manual_version(ref):
+    f = _manual_form()
+    ci = _manual(manual.add_version, ref, f.pop("name", None), **f)
+    return _back(url_for("ui.ci", ref=ci["name"]))
+
+
+@bp.post("/manual-versions/<int:mid>/edit")
+def edit_manual_version(mid):
+    ci = _manual(manual.update_version, mid, **_manual_form())
+    return _back(url_for("ui.ci", ref=ci["name"]))
+
+
+@bp.post("/manual-versions/<int:mid>/delete")
+def delete_manual_version(mid):
+    ci = _manual(manual.delete_version, mid)
+    return _back(url_for("ui.ci", ref=ci["name"]))
 
 
 @bp.post("/releases/<int:rid>/edit")

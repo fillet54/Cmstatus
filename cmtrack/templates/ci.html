@@ -73,6 +73,8 @@
 
     {% include "_release_table.html" %}
 
+    {% if manual_versions is not none %}{% include "_manual_versions.html" %}{% endif %}
+
     {% call ui.card(flush=True) %}
       {% call ui.card_header("Fielded in", "approved baselines (HSCMs) that list " ~ ci.name) %}{% endcall %}
       {% call ui.table(["Capability (IFC)", "Baseline", "Version", ""]) %}
@@ -102,6 +104,9 @@
       {% call ui.card_body() %}
         {% if ci.release_source %}
           <div class="ui-stack" style="--ui-gap: 8px;">
+            {% if manual_versions is not none %}
+              <span class="ui-muted">Versions are kept here in cmtrack: add them under Versions, and each change syncs.</span>
+            {% endif %}
             {% if not source_configured %}
               {% call ui.alert("danger", "Release source not configured") %}Nothing called “{{ ci.release_source }}” is set up; add it to CMTRACK_RELEASE_SOURCES.{% endcall %}
             {% endif %}
@@ -119,6 +124,7 @@
       {% if ci.last_sync and (ci.last_sync.created or ci.last_sync.updated or ci.last_sync.missing or ci.last_sync.pinned) %}
         {% call ui.disclosure("What the last sync did") %}{% with preview = ci.last_sync %}{% include "_sync_summary.html" %}{% endwith %}{% endcall %}
       {% endif %}
+      {% if manual_versions is none %}
       {% call ui.disclosure("Add a release", "by hand" if ci.release_source else None, open=not ci.releases and not ci.release_source) %}
         {% set planned = ci.releases | selectattr("kind", "equalto", "planned") | map(attribute="name") | list %}
         <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.create_release', ref=ci.name) }}">
@@ -133,6 +139,7 @@
           <div>{{ ui.button("Add release", type="submit", icon="plus") }}</div>
         </form>
       {% endcall %}
+      {% endif %}
     {% endcall %}
 
     {% call ui.card(flush=True) %}

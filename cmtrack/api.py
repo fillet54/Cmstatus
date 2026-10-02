@@ -7,7 +7,7 @@ import functools
 
 from flask import Blueprint, current_app, jsonify, request
 
-from . import service as svc, tickets
+from . import manual_releases as manual, service as svc, tickets
 from .db import get_db
 
 bp = Blueprint("api", __name__)
@@ -132,6 +132,51 @@ def create_release(conn, ref):
 @tx
 def list_releases(conn, ref):
     return jsonify(svc.list_releases(conn, ref))
+
+
+# ----------------------------------------------------------------------------- the manual release source
+
+def manual_row(conn, row):
+    ci = svc.get_ci(conn, row["ci_id"])
+    return {**svc.to_dict(row), "released": bool(row["released"]), "archived": bool(row["archived"]),
+            "kind": manual.kind_of(ci, row["name"])}
+
+
+def synced(conn, ci_ref, out, status=200):
+    """``out`` plus the sync that applied the change (versions -> releases and builds)."""
+    return jsonify({**out, "sync": manual.sync(conn, ci_ref, current_app.config["RELEASE_SOURCES"])}), status
+
+
+@bp.get("/cis/<ref>/manual-versions")
+@tx
+def list_manual_versions(conn, ref):
+    """A manual CI's version list, each with the pattern kind its name matches."""
+    return jsonify([manual_row(conn, r) for r in manual.list_versions(conn, ref)])
+
+
+@bp.post("/cis/<ref>/manual-versions")
+@tx
+def add_manual_version(conn, ref):
+    """{name, date?, description?, released?, archived?}: a release, build, patch or emergency, by name. Syncs."""
+    d = body()
+    row = manual.add_version(conn, ref, d.get("name"), **pick(d, "date", "description", "released", "archived"))
+    return synced(conn, ref, {"version": manual_row(conn, row)}, 201)
+
+
+@bp.patch("/manual-versions/<int:mid>")
+@tx
+def update_manual_version(conn, mid):
+    """{name, date, description, released, archived} (any of them). Syncs."""
+    row = manual.update_version(conn, mid, **pick(body(), *manual.FIELDS))
+    return synced(conn, row["ci_id"], {"version": manual_row(conn, row)})
+
+
+@bp.delete("/manual-versions/<int:mid>")
+@tx
+def delete_manual_version(conn, mid):
+    """Remove a version; its release or build is flagged missing by the sync, as a version deleted in Jira."""
+    row = manual.delete_version(conn, mid)
+    return synced(conn, row["ci_id"], {"deleted": svc.to_dict(row)})
 
 
 # ----------------------------------------------------------------------------- releases & versions

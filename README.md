@@ -121,6 +121,8 @@ version or release) or *ignore*. `analysis_rule` is an example, with an "Analysi
 For releases, [`cmtrack/jira_releases.py`](cmtrack/jira_releases.py) merges the versions of every Jira project a
 CI's CSCs map to and sorts them into releases and builds with the CI's name patterns
 (`CMTRACK_RELEASE_SOURCES=jira=cmtrack.jira_releases:from_env`).
+A CI without Jira versions can use the built-in `"manual"` release source instead: its versions are kept in
+cmtrack (added on the CI page or through `/api/cis/<ci>/manual-versions`) and sorted by the same name patterns.
 
 Or implement a `TicketSource` (and optionally a `ReleaseSource`) around your own Jira client and name it in the
 variables above. The docstrings at the top of [`cmtrack/tickets.py`](cmtrack/tickets.py) and

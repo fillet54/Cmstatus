@@ -51,6 +51,20 @@ CREATE TABLE IF NOT EXISTS csc (
     UNIQUE (jira_project, affected_product)     -- the Jira pair identifies exactly one CSC
 );
 
+-- The "manual" release source (manual_releases.py): a CI's flat version list kept in cmtrack, the way a Jira
+-- project keeps its versions. A sync sorts it into releases and builds by the CI's name patterns.
+CREATE TABLE IF NOT EXISTS manual_version (
+    id          INTEGER PRIMARY KEY,
+    ci_id       INTEGER NOT NULL REFERENCES ci(id),
+    name        TEXT NOT NULL,
+    date        TEXT,                           -- target / planned date (YYYY-MM-DD)
+    description TEXT,                           -- a patch's or emergency's change request
+    released    INTEGER NOT NULL DEFAULT 0,
+    archived    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (ci_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS release (
     id                  INTEGER PRIMARY KEY,
     ci_id               INTEGER NOT NULL REFERENCES ci(id),

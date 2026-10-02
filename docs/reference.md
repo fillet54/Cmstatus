@@ -200,6 +200,13 @@ name (key = name, latest release date, released/archived only when every project
 names matching `source_params.match`, and sorts them with the patterns above. With `"require_all": true`, a name
 missing from some projects is reported instead of used.
 
+`cmtrack/manual_releases.py` is the **manual** release source, always registered as `"manual"`: the CI's flat
+version list is kept in cmtrack (table `manual_version`) instead of a Jira project, and sorted by the same patterns.
+Add versions by name (`2027.Q1`, `2027.Q1-b1`, `2027.Q1.P1`, ...) on the CI page or through the API; every change
+syncs the CI. A version's key is its row id, so a rename renames the release or build, and removing one flags it
+missing. Names that match no pattern are refused. Switching a CI between `"manual"` and `"jira"` keeps its releases
+(same-named ones are adopted).
+
 ## Endpoints (`/api`, CI/IFC refs accept id or name; `GET /api/` lists them all)
 
 ```
@@ -212,6 +219,10 @@ GET  /admin/backup                 recent backups (started / done / failed); see
 GET  /release-sources              configured release sources
 POST /cis/<ci>/sync                {dry_run?}   reconcile with the release source → summary
 GET  /cis/<ci>/attention           unplaced, missing, no base, no reason, several open patches on a line
+GET  /cis/<ci>/manual-versions     a "manual" CI's version list, each with the pattern kind its name matches
+POST /cis/<ci>/manual-versions     {name, date?, description?, released?, archived?}  add one, then sync → {version, sync}
+PATCH  /manual-versions/<id>       {name, date, description, released, archived}  then sync → {version, sync}
+DELETE /manual-versions/<id>       remove it (its release or build is flagged missing) → {deleted, sync}
 POST /cis/<ci>/releases            {name?, kind, target_date?, parent?, base_version?, reason?, builds?}  by hand
 GET  /cis/<ci>/releases            (includes source vs hand-added version counts)
 GET  /releases/<id>                released_version, effective_version, baselines_behind, children

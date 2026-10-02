@@ -117,6 +117,17 @@
 
 {% if open_ %}
 {% call ui.dialog("add-build-" ~ r.id, "Add a build to " ~ r.name) %}
+  {% if ci_row.release_source == "manual" %}
+  <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.add_manual_version', ref=r.ci) }}">
+    <input type="hidden" name="next" value="{{ here }}">
+    <span class="ui-muted" style="font-size: 12px;">Added to {{ r.ci }}'s version list; the name must match its build pattern.</span>
+    <div class="ui-form-grid">
+      {% call ui.field("Name", "ab-name-" ~ r.id) %}{{ ui.input("name", id="ab-name-" ~ r.id, mono=True, required=True, placeholder=(r.versions | last).name if r.versions else r.name ~ "-b1") }}{% endcall %}
+      {% call ui.field("Planned date", "ab-date-" ~ r.id) %}{{ ui.input("date", type="date", id="ab-date-" ~ r.id) }}{% endcall %}
+    </div>
+    <div class="ui-row">{{ ui.button("Add build", variant="primary", type="submit", icon="plus") }}</div>
+  </form>
+  {% else %}
   <form class="ui-stack" style="--ui-gap: 12px;" method="post" hx-push-url="false" action="{{ url_for('ui.add_build', rid=r.id) }}">
     <input type="hidden" name="next" value="{{ here }}">
     {% if r.source_key %}<span class="ui-muted" style="font-size: 12px;">Added by hand: it shows as ad hoc next to the builds from {{ ci_row.release_source }}.</span>{% endif %}
@@ -126,6 +137,7 @@
     </div>
     <div class="ui-row">{{ ui.button("Add build", variant="primary", type="submit", icon="plus") }}</div>
   </form>
+  {% endif %}
 {% endcall %}
 {% endif %}
 

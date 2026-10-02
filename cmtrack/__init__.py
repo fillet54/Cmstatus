@@ -4,7 +4,7 @@ import sqlite3
 
 from flask import Flask, jsonify, render_template, request
 
-from . import backlog, db, tickets, ui
+from . import backlog, db, manual_releases, tickets, ui
 from .service import CMError
 
 
@@ -21,6 +21,7 @@ def create_app(config=None):
     if app.config["RELEASE_SOURCES"] is None:
         app.config["RELEASE_SOURCES"] = tickets.load_sources(os.environ.get("CMTRACK_RELEASE_SOURCES"),
                                                              "release source")
+    manual_releases.init_app(app)  # the "manual" release source: versions kept in cmtrack
     app.json.sort_keys = False
 
     conn = db.connect(app.config["DATABASE"])
