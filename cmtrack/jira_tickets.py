@@ -41,16 +41,16 @@ import importlib
 import json
 import os
 import re
+from collections import defaultdict
 from dataclasses import replace
-from typing import Iterable, List, Optional
-
 from urllib.parse import quote as quote_path
 
 import requests
 
 from .tickets import IDLE, ROLES, TicketRecord, TicketSource, normalize_state, rollup
 
-BATCH = 100            # keys per "key in (...)" query
+BATCH = 100                  # keys per "key in (...)" query
+PARENT_BATCH = BATCH // 2    # parent keys per children query (a text "parent" field needs one "~" test per key)
 
 
 class JiraError(RuntimeError):
@@ -60,38 +60,53 @@ class JiraError(RuntimeError):
 # ----------------------------------------------------------------------------- REST client
 
 class JiraClient:
-    """The two calls a ticket source needs, over Jira's REST API v2, with ``requests``. Auth: a personal access
-    token (Bearer), or a user and password / API token (Basic). ``verify`` is passed to requests (a CA bundle
-    path, or False); give your own ``session`` for proxies, client certificates and the like."""
+    """The calls a ticket or release source needs, over Jira's REST API v2, with ``requests``. Auth: a personal
+    access token (Bearer), or a user and password / API token (Basic). ``verify`` is passed to requests (a CA
+    bundle path, or False); give your own ``session`` for proxies, client certificates and the like."""
 
     def __init__(self, url, token=None, user=None, password=None, page_size=100, timeout=60, verify=True, session=None):
         if not (token or user):
             raise ValueError("JiraClient needs a token, or a user and password")
-        self.url, self.page_size, self.timeout = url.rstrip("/"), page_size, timeout
-        self.session = session or requests.Session()
+        self.url = url.rstrip("/")
+        self.page_size = page_size
+        self.timeout = timeout
+
         if session is None:
-            self.session.verify = verify
+            session = requests.Session()
+            session.verify = verify
+        self.session = session
         self.session.headers.update({"Accept": "application/json"})
         if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
         else:
             self.session.auth = (user, password or "")
 
+    @classmethod
+    def from_env(cls):
+        """A client from CMTRACK_JIRA_URL and CMTRACK_JIRA_TOKEN (or CMTRACK_JIRA_USER + CMTRACK_JIRA_PASSWORD)."""
+        env = os.environ.get
+        return cls(env("CMTRACK_JIRA_URL"), token=env("CMTRACK_JIRA_TOKEN"), user=env("CMTRACK_JIRA_USER"),
+                   password=env("CMTRACK_JIRA_PASSWORD"))
+
     def _request(self, method, path, payload=None):
-        r = self.session.request(method, self.url + path, json=payload, timeout=self.timeout)
-        if not r.ok:
-            raise JiraError(f"{method} {path} -> HTTP {r.status_code}: {r.text[:300]}")
-        return r.json() if r.content else None
+        response = self.session.request(method, self.url + path, json=payload, timeout=self.timeout)
+        if not response.ok:
+            raise JiraError(f"{method} {path} -> HTTP {response.status_code}: {response.text[:300]}")
+        return response.json() if response.content else None
 
     def search(self, jql, fields):
         """Every issue matching ``jql`` (all pages), with just ``fields``."""
-        out = []
+        issues = []
         while True:
-            page = self._request("POST", "/rest/api/2/search", {"jql": jql, "fields": fields, "startAt": len(out),
-                                                                "maxResults": self.page_size})
-            out += page["issues"]
-            if not page["issues"] or len(out) >= page["total"]:
-                return out
+            page = self._request("POST", "/rest/api/2/search", {
+                "jql": jql,
+                "fields": fields,
+                "startAt": len(issues),
+                "maxResults": self.page_size,
+            })
+            issues.extend(page["issues"])
+            if not page["issues"] or len(issues) >= page["total"]:
+                return issues
 
     def fields(self):
         """[{"id": "customfield_10500", "name": "Parent Ticket", "custom": true, ...}, ...]"""
@@ -102,16 +117,17 @@ class JiraClient:
         return self._request("GET", f"/rest/api/2/project/{quote_path(project, safe='')}/versions")
 
 
-# ----------------------------------------------------------------------------- fields
+# ----------------------------------------------------------------------------- field values and JQL
 
-def in_pairs(cscs):
-    """{(jira_project, affected_product)} for cmtrack CSC rows; None for no scope."""
-    return None if cscs is None else {(c["jira_project"], c["affected_product"]) for c in cscs if c.get("jira_project")}
+def jql_list(values):
+    """The inside of a JQL list: sorted, quoted and escaped. {"b", 'a"1'} -> '"a\\"1", "b"'."""
+    return ", ".join('"' + str(v).replace('"', '\\"') + '"' for v in sorted(values))
 
 
 def as_list(value):
     """A field value as a list: None -> [], "x" -> ["x"], a list unchanged (empty values dropped)."""
-    return [v for v in (value if isinstance(value, list) else [value]) if v not in (None, "")]
+    values = value if isinstance(value, list) else [value]
+    return [v for v in values if v not in (None, "")]
 
 
 def plain(value):
@@ -120,10 +136,22 @@ def plain(value):
     if isinstance(value, list):
         return [plain(v) for v in value]
     if isinstance(value, dict):
-        for k in ("value", "key", "displayName", "name"):
-            if k in value:
-                return value[k]
+        for key in ("value", "key", "displayName", "name"):
+            if key in value:
+                return value[key]
     return value
+
+
+def csc_pairs(cscs):
+    """{(jira_project, affected_product)} for cmtrack CSC rows; None when there's no scope."""
+    if cscs is None:
+        return None
+    return {(c["jira_project"], c["affected_product"]) for c in cscs if c.get("jira_project")}
+
+
+def _batches(items, size):
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
 
 
 class Fields:
@@ -138,52 +166,64 @@ class Fields:
     SYSTEM = {"summary", "issuetype", "status", "project", "fixVersions", "assignee", "updated", "labels", "parent"}
 
     def __init__(self, client, **names):
-        self.client, self.names, self._ids, self._types = client, dict(names), None, {}
+        self.client = client
+        self.names = dict(names)     # short name -> Jira field name (or id)
+        self._ids = None             # casefolded Jira field name -> id, loaded on first use
+        self._types = {}             # field id -> schema type ("string", "array", ...)
 
     def register(self, short, jira_name):
         self.names[short] = jira_name
         return self
 
+    def is_known(self, short):
+        """Registered, or a system field."""
+        return short in self.names or short in self.SYSTEM
+
     def id(self, short):
         name = self.names.get(short, short)
-        if name.startswith("customfield_") or (name in self.SYSTEM and short not in self.names):
-            return name
-        if self._ids is None:
-            self._ids = {}
-            for f in self.client.fields():
-                self._ids.setdefault(f["name"].casefold(), f["id"])
-                self._types[f["id"]] = (f.get("schema") or {}).get("type")
+        if name.startswith("customfield_"):
+            return name                                     # already an id
+        if name in self.SYSTEM and short not in self.names:
+            return name                                     # a system field, by its own name
         try:
-            return self._ids[name.casefold()]
+            return self._field_ids()[name.casefold()]
         except KeyError:
             raise JiraError(f"Jira has no field called {name!r} (registered as {short!r})") from None
 
+    def _field_ids(self):
+        if self._ids is None:
+            ids = {}
+            for f in self.client.fields():
+                ids.setdefault(f["name"].casefold(), f["id"])
+                self._types[f["id"]] = (f.get("schema") or {}).get("type")
+            self._ids = ids
+        return self._ids
+
     def jql(self, short):
-        fid = self.id(short)
-        return f"cf[{fid.split('_')[1]}]" if fid.startswith("customfield_") else fid
+        """How JQL refers to the field: "cf[10500]" for a custom field, the id for a system one."""
+        field_id = self.id(short)
+        if field_id.startswith("customfield_"):
+            return f"cf[{field_id.removeprefix('customfield_')}]"
+        return field_id
 
     def clause(self, short, values):
         """JQL that matches any of ``values`` in the field: ``~`` for text fields (which can't do ``=`` or ``in``),
         ``in (...)`` otherwise. Text matching is fuzzy, so check results exactly afterwards."""
-        fid, field = self.id(short), self.jql(short)
-        if self._types.get(fid) == "string":
-            return "(" + " OR ".join(f"{field} ~ {quote([v])}" for v in sorted(values)) + ")"
-        return f"{field} in ({quote(values)})"
+        field_id, field = self.id(short), self.jql(short)
+        if self._types.get(field_id) == "string":
+            tests = [f"{field} ~ {jql_list([value])}" for value in sorted(values)]
+            return "(" + " OR ".join(tests) + ")"
+        return f"{field} in ({jql_list(values)})"
 
     def get(self, issue, short):
         """The field's plain value on ``issue`` (None if the field isn't registered or isn't set)."""
-        if short not in self.names and short not in self.SYSTEM:
+        if not self.is_known(short):
             return None
         return plain(issue.get("fields", {}).get(self.id(short)))
 
     def ids(self, *shorts):
-        return [self.id(s) for s in shorts if s in self.names or s in self.SYSTEM]
-
-
-# ----------------------------------------------------------------------------- the ticket source
-
-def quote(values):
-    return ", ".join('"' + str(v).replace('"', '\\"') + '"' for v in sorted(values))
+        """Ids of the known fields among ``shorts`` (unknown ones are skipped)."""
+        return [self.id(short) for short in shorts if self.is_known(short)]
 
 
 # ----------------------------------------------------------------------------- states
@@ -236,17 +276,29 @@ ACTIVE = {"in_analysis", "in_progress", "peer_review", "verification", "blocked"
 DEFAULT_ROLES = {"analysis": {"label": "Analysis"}}
 
 
+def _state_and_reason(result):
+    """A rule's result as (state, reason): rules may return a bare state or a (state, reason) pair."""
+    return result if isinstance(result, tuple) else (result, None)
+
+
 def match_roles(roles):
     """A role rule from a dict, {role: {"label": ..., "summary": regex, "type": name(s)}}: the first role any of
     whose conditions matches, else None (work)."""
-    specs = [(role, as_list(spec.get("label")), re.compile(spec["summary"]) if spec.get("summary") else None,
-              set(as_list(spec.get("type")))) for role, spec in roles.items()]
+    specs = []
+    for role, spec in roles.items():
+        labels = as_list(spec.get("label"))
+        summary = re.compile(spec["summary"]) if spec.get("summary") else None
+        types = set(as_list(spec.get("type")))
+        specs.append((role, labels, summary, types))
 
     def rule(t):
         for role, labels, summary, types in specs:
-            if any(t.has_label(x) for x in labels) or (summary and summary.match(t.summary)) or t.type in types:
+            if (any(t.has_label(label) for label in labels)
+                    or (summary is not None and summary.match(t.summary))
+                    or t.type in types):
                 return role
         return None
+
     return rule
 
 
@@ -267,17 +319,31 @@ class JiraTicket:
     """
 
     def __init__(self, source, issue, record, scope=None):
-        f = issue.get("fields", {})
-        status = f.get("status") or {}
-        self.source, self.issue, self.record, self.scope = source, issue, record, scope
-        self.products = record.attributes.get("affected_products", [])
-        self.key, self.type, self.summary, self.is_top = record.key, record.type, record.summary or "", record.project is None
+        fields = issue.get("fields", {})
+        status = fields.get("status") or {}
+
+        self.source = source
+        self.issue = issue
+        self.record = record
+        self.scope = scope
+
+        self.key = record.key
+        self.type = record.type
+        self.summary = record.summary or ""
         self.role = record.role
-        self.cscs = [c for c in scope or [] if c["affected_product"] in self.products and   # top level: product only
-                     (self.is_top or c["jira_project"] == record.project)]
+        self.is_top = record.project is None
+        self.products = record.attributes.get("affected_products", [])
+        self.cscs = [csc for csc in scope or [] if self._names(csc)]
+
         self.status = str(status.get("name") or "")
         self.category = (status.get("statusCategory") or {}).get("key")
-        self.labels = [str(label) for label in f.get("labels") or []]
+        self.labels = [str(label) for label in fields.get("labels") or []]
+
+    def _names(self, csc):
+        """Whether this ticket names ``csc``: by Affected Product, and for a CSC ticket by Jira project too."""
+        if csc["affected_product"] not in self.products:
+            return False
+        return self.is_top or csc["jira_project"] == self.record.project
 
     def field(self, short):
         return self.source.fields.get(self.issue, short)
@@ -304,24 +370,46 @@ def work_rollup(t, own, children):
     - otherwise the parent's own state.
 
     Verification tickets never count (see records: they're summarized apart), nor do cancelled or ignored ones."""
-    if own[0] in ("error", "cancelled"):
+    own_state = own[0]
+    if own_state in ("error", "cancelled"):
         return own
-    live = [c for c in children if c.state not in IDLE]
-    work = [c for c in live if c.role == "work"]
-    analysis = [c for c in live if c.role == "analysis" and c.state in ACTIVE]
+
+    counted = [c for c in children if c.state not in IDLE]
+    work = [c for c in counted if c.role == "work"]
+    active_analysis = [c for c in counted if c.role == "analysis" and c.state in ACTIVE]
+
     if any(c.state in WORK_STARTED for c in work):
-        state = rollup([c.state for c in work])
-        if state == "done" and analysis:
-            return "in_progress", f"{analysis[0].key}: analysis reopened"
-        return state, _reason(work, state)
-    if analysis:
-        state = next((s for s in ("error", "blocked") if any(c.state == s for c in analysis)), "in_analysis")
-        return state, _reason(analysis, state)
+        state = rollup(c.state for c in work)
+        if state == "done" and active_analysis:
+            return "in_progress", f"{active_analysis[0].key}: analysis reopened"
+        return state, _first_reason(work, state)
+
+    if active_analysis:
+        states = {c.state for c in active_analysis}
+        state = "error" if "error" in states else "blocked" if "blocked" in states else "in_analysis"
+        return state, _first_reason(active_analysis, state)
+
     return own
 
 
-def _reason(children, state):
-    return next((f"{c.key}: {c.state_reason}" for c in children if c.state == state and c.state_reason), None)
+def _first_reason(children, state):
+    """"KEY: reason" for the first of ``children`` in ``state`` that gives a reason, or None."""
+    for child in children:
+        if child.state == state and child.state_reason:
+            return f"{child.key}: {child.state_reason}"
+    return None
+
+
+def _verification_summary(children):
+    """{"state", "total", "done"} over a parent's verification tickets, or None if it has none."""
+    verification = [c for c in children if c.role == "verification" and c.state not in IDLE]
+    if not verification:
+        return None
+    return {
+        "state": rollup(c.state for c in verification),
+        "total": len(verification),
+        "done": sum(c.state == "done" for c in verification),
+    }
 
 
 # An example of mixed rules (see the tests): register the field as fields={"analysis_state": "Analysis State"}
@@ -337,8 +425,10 @@ def analysis_rule(t):
     (role "analysis") in progress (or review/test) read as in analysis; done is done. Everything else: the Jira
     status."""
     status = t.status_state()
-    if t.is_top and status not in ("done", "cancelled") and t.field("analysis_state"):
-        value = str(t.field("analysis_state"))
+    analysis_state = t.field("analysis_state")
+
+    if t.is_top and status not in ("done", "cancelled") and analysis_state:
+        value = str(analysis_state)
         return ANALYSIS_STATES.get(value.casefold()) or ("error", f"Analysis State {value!r} isn't one cmtrack knows")
     if t.role == "analysis" and status:
         return ANALYSIS_WORK.get(status, status)
@@ -347,9 +437,11 @@ def analysis_rule(t):
 
 def load_function(spec):
     """"package.module:function" -> the function (for rules named in the JSON config)."""
-    module, _, name = spec.partition(":")
-    return getattr(importlib.import_module(module), name)
+    module_name, _, function_name = spec.partition(":")
+    return getattr(importlib.import_module(module_name), function_name)
 
+
+# ----------------------------------------------------------------------------- the ticket source
 
 class JiraTicketSource(TicketSource):
     """Features and discrepancies in ``top_projects``; CSC tickets in the CSCI projects (named on each CSC's
@@ -378,13 +470,16 @@ class JiraTicketSource(TicketSource):
         self.client = client
         self.top_projects = list(top_projects)
         self.fields = fields if isinstance(fields, Fields) else Fields(client, **(fields or {}))
-        self.status_map = {**STATUS_MAP, **{k.casefold(): v for k, v in (status_map or {}).items()}}
+        self.status_map = {**STATUS_MAP, **{status.casefold(): state for status, state in (status_map or {}).items()}}
         self.top_types = set(top_types or ())            # e.g. {"Feature", "Discrepancy"}; empty = any type
         self.browse = (browse_url or getattr(client, "url", "")).rstrip("/") + "/browse/"
-        self.state_rule, self.rollup = state_rule or status_rule, rollup
+        self.state_rule = state_rule or status_rule
+        self.rollup = rollup
         self.roles = roles
 
     # -- queries -------------------------------------------------------------------------------------------
+    #
+    # Every query re-checks its results in Python (see the module docstring), so fuzzy or loose JQL is fine.
 
     def search(self, jql):
         """Issues matching ``jql``, with the standard fields and every registered one (rules may read any)."""
@@ -394,45 +489,61 @@ class JiraTicketSource(TicketSource):
         """TicketRecords for API issues; top-level ones rolled up with their CSC tickets (one query per batch), and
         given their verification summary. With ``cscs`` (cmtrack CSC rows), the rollup only sees CSC tickets for
         those CSCs (verification tickets aren't filtered), and rules see the scope."""
-        recs = [self.record(i, cscs) for i in issues]
-        tops = [(i, r) for i, r in zip(issues, recs) if r.project is None]
-        if tops and "parent" in self.fields.names:
-            children = {}
-            for c in self.children_of([r.key for _, r in tops], cscs):
-                children.setdefault(c.parent_key, []).append(c)
-            for issue, r in tops:
-                kids = children.get(r.key, [])
-                verification = [c for c in kids if c.role == "verification" and c.state not in IDLE]
-                if verification:
-                    r.attributes["verification"] = {"state": rollup([c.state for c in verification]), "total": len(verification),
-                                                    "done": sum(c.state == "done" for c in verification)}
-                if self.rollup:
-                    out = self.rollup(JiraTicket(self, issue, r, cscs), (r.state, r.state_reason), kids)
-                    r.state, r.state_reason = normalize_state(*(out if isinstance(out, tuple) else (out, None)))
-        return recs
+        records = [self.record(issue, cscs) for issue in issues]
+        top_level = [(issue, rec) for issue, rec in zip(issues, records) if rec.project is None]
+        if not top_level or "parent" not in self.fields.names:
+            return records
+
+        children = defaultdict(list)
+        for child in self.children_of([rec.key for _, rec in top_level], cscs):
+            children[child.parent_key].append(child)
+
+        for issue, rec in top_level:
+            kids = children.get(rec.key, [])
+            verification = _verification_summary(kids)
+            if verification:
+                rec.attributes["verification"] = verification
+            if self.rollup:
+                ticket = JiraTicket(self, issue, rec, cscs)
+                result = self.rollup(ticket, (rec.state, rec.state_reason), kids)
+                rec.state, rec.state_reason = normalize_state(*_state_and_reason(result))
+        return records
 
     def children_of(self, keys, cscs=None):
         """The CSC tickets whose parent field names any of ``keys`` (their own states only, no rollup); with
         ``cscs``, only those naming one of these CSCs (and every verification ticket)."""
-        pairs = in_pairs(cscs)
-        out = []
-        for n in range(0, len(keys), BATCH // 2):
-            batch = set(keys[n:n + BATCH // 2])
-            out += [r for r in (self.record(i, cscs) for i in self.search(self.fields.clause("parent", batch) + " ORDER BY key"))
-                    if r.parent_key in batch and (pairs is None or r.role == "verification" or
-                                                  any((r.project, p) in pairs for p in r.attributes["affected_products"]))]
-        return out
+        pairs = csc_pairs(cscs)
+
+        def in_scope(rec):
+            if pairs is None or rec.role == "verification":
+                return True
+            return any((rec.project, product) in pairs for product in rec.attributes["affected_products"])
+
+        children = []
+        for batch in _batches(keys, PARENT_BATCH):
+            parents = set(batch)
+            for issue in self.search(self.fields.clause("parent", parents) + " ORDER BY key"):
+                rec = self.record(issue, cscs)
+                if rec.parent_key in parents and in_scope(rec):
+                    children.append(rec)
+        return children
 
     def query(self, projects, jql=None, cscs=None):
         """Every issue in ``projects``, optionally narrowed by more ``jql``: the building block for the rest."""
-        where = f"project in ({quote(projects)})" + (f" AND ({jql})" if jql else "")
-        return self.records([i for i in self.search(where + " ORDER BY key") if plain(i["fields"].get("project")) in projects],
-                            cscs)
+        where = f"project in ({jql_list(projects)})"
+        if jql:
+            where += f" AND ({jql})"
+        issues = [issue for issue in self.search(where + " ORDER BY key")
+                  if plain(issue["fields"].get("project")) in projects]
+        return self.records(issues, cscs)
 
     def by_keys(self, keys, cscs=None):
-        keys = list(dict.fromkeys(keys))
-        return self.records([i for n in range(0, len(keys), BATCH)
-                             for i in self.search(f"key in ({quote(keys[n:n + BATCH])})") if i["key"] in keys], cscs)
+        keys = list(dict.fromkeys(keys))                # de-duplicated, order kept
+        wanted = set(keys)
+        issues = []
+        for batch in _batches(keys, BATCH):
+            issues.extend(issue for issue in self.search(f"key in ({jql_list(batch)})") if issue["key"] in wanted)
+        return self.records(issues, cscs)
 
     # -- TicketSource ----------------------------------------------------------------------------------------
 
@@ -440,16 +551,25 @@ class JiraTicketSource(TicketSource):
         pairs = {(c["jira_project"], c["affected_product"]) for c in cscs if c["jira_project"]}
         if not pairs or not versions:
             return []
-        jql = f"fixVersion in ({quote(versions)})"
+        projects = sorted({project for project, _ in pairs})
+        products = {product for _, product in pairs}
+
+        jql = f"fixVersion in ({jql_list(versions)})"
         if "affected_product" in self.fields.names:
-            jql += " AND " + self.fields.clause("affected_product", {p for _, p in pairs})
-        wanted, out = set(versions), []
-        for r in self.query(sorted({p for p, _ in pairs}), jql, cscs):
-            if wanted & set(r.fix_versions or ()) and r.role != "verification":     # not work against a version
-                # one copy per requested CSC it names: a ticket for two CSCs shows under both
-                out += [replace(r, affected_product=p, attributes=dict(r.attributes))
-                        for p in r.attributes.get("affected_products", []) if (r.project, p) in pairs]
-        return out
+            jql += " AND " + self.fields.clause("affected_product", products)
+
+        wanted = set(versions)
+        found = []
+        for rec in self.query(projects, jql, cscs):
+            if rec.role == "verification":              # not work against a version
+                continue
+            if not wanted.intersection(rec.fix_versions or ()):
+                continue
+            # One copy per requested CSC it names: a ticket for two CSCs shows under both.
+            for product in rec.attributes.get("affected_products", []):
+                if (rec.project, product) in pairs:
+                    found.append(replace(rec, affected_product=product, attributes=dict(rec.attributes)))
+        return found
 
     def get_tickets(self, keys):
         return self.by_keys(keys)
@@ -465,14 +585,18 @@ class JiraTicketSource(TicketSource):
         products = {c["affected_product"] for c in cscs if c.get("affected_product")}
         if not products or not versions:
             return []
-        jql = f"fixVersion in ({quote(versions)})"
+
+        jql = f"fixVersion in ({jql_list(versions)})"
         if self.top_types:
-            jql += f" AND issuetype in ({quote(sorted(self.top_types))})"
+            jql += f" AND issuetype in ({jql_list(self.top_types)})"
         if "affected_product" in self.fields.names:
             jql += " AND " + self.fields.clause("affected_product", products)
-        return [r for r in self.query(self.top_projects, jql, cscs)
-                if set(versions) & set(r.fix_versions or ()) and products & set(r.attributes["affected_products"])
-                and (not self.top_types or r.type in self.top_types)]
+
+        wanted = set(versions)
+        return [rec for rec in self.query(self.top_projects, jql, cscs)
+                if wanted.intersection(rec.fix_versions or ())
+                and products.intersection(rec.attributes["affected_products"])
+                and (not self.top_types or rec.type in self.top_types)]
 
     def get_children(self, key):
         """The CSC tickets whose parent field names ``key`` (in any project)."""
@@ -481,34 +605,50 @@ class JiraTicketSource(TicketSource):
     def top_level_tickets(self, backlog, cis):
         """Open features and discrepancies for a backlog: those affecting any of its CIs (all, if it has none or
         the ``cis`` field isn't registered)."""
-        names = {c["name"] for c in cis}
-        found = self.query(self.top_projects, "statusCategory != Done")
-        return [r for r in found if r.state not in ("done", "cancelled") and
-                (not names or "cis" not in self.fields.names or names & set(r.cis or ()))]
+        open_tickets = [rec for rec in self.query(self.top_projects, "statusCategory != Done")
+                        if rec.state not in ("done", "cancelled")]
+
+        ci_names = {c["name"] for c in cis}
+        if not ci_names or "cis" not in self.fields.names:
+            return open_tickets
+        return [rec for rec in open_tickets if ci_names.intersection(rec.cis or ())]
 
     # -- extraction ------------------------------------------------------------------------------------------
 
     def record(self, issue, cscs=None):
         """An API issue -> TicketRecord, with its own state (``state``); rollup happens in ``records``."""
-        get = lambda short: self.fields.get(issue, short)
+        def get(short):
+            return self.fields.get(issue, short)
+
         project = get("project")
-        top = project in self.top_projects
-        cis = get("cis")
-        products = as_list(get("affected_product"))                 # a single or multi-select field
+        is_top = project in self.top_projects
+        products = as_list(get("affected_product"))     # a single or multi-select field
+
         rec = TicketRecord(
-            key=issue["key"], summary=get("summary"), type=get("issuetype"), status=get("status"),
-            parent_key=None if top else get("parent"),
-            project=None if top else project, affected_product=None if top or not products else products[0],
+            key=issue["key"],
+            summary=get("summary"),
+            type=get("issuetype"),
+            status=get("status"),
+            parent_key=None if is_top else get("parent"),
+            project=None if is_top else project,
+            affected_product=products[0] if products and not is_top else None,
+            fix_versions=get("fixVersions") or [],
+            cis=get("cis"),
+            url=self.browse + issue["key"],
+            assignee=get("assignee"),
+            updated=get("updated"),
             attributes={"affected_products": products},
-            fix_versions=get("fixVersions") or [], cis=[cis] if isinstance(cis, str) else cis,
-            url=self.browse + issue["key"], assignee=get("assignee"), updated=get("updated"), state="done")
+            state="done",                               # a placeholder; the real state is worked out just below
+        )
         rec.state, rec.state_reason = normalize_state(*self.state(issue, rec, cscs))
         return rec
 
     def role(self, t):
         """A CSC ticket's role from the role rule (``roles``): work, analysis, verification or ignore."""
+        if t.is_top:
+            return "work"
         rule = self.roles if callable(self.roles) else match_roles(self.roles or {})
-        role = None if t.is_top else rule(t)
+        role = rule(t)
         return role if role in ROLES or role == "ignore" else "work"
 
     def state(self, issue, rec, cscs=None):
@@ -516,43 +656,66 @@ class JiraTicketSource(TicketSource):
         ``error``. Sets ``rec.role`` as it goes."""
         t = JiraTicket(self, issue, rec, cscs)
         role = self.role(t)
-        rec.role = t.role = "work" if role == "ignore" else role
         if role == "ignore":
+            rec.role = t.role = "work"                  # records have no "ignore" role; the "ignored" state says it
             return "ignored", "left out by the role rules"
-        out = self.state_rule(t)
-        state, reason = out if isinstance(out, tuple) else (out, None)
-        if state is None:
-            state, reason = (lambda o: o if isinstance(o, tuple) else (o, None))(status_rule(t))
-        problem = None if state == "ignored" else self.check(t, state)
-        return ("error", problem) if problem else (state, reason)
+        rec.role = t.role = role
+
+        state, reason = _state_and_reason(self.state_rule(t))
+        if state is None:                               # the rule passed: fall back on the Jira status
+            state, reason = _state_and_reason(status_rule(t))
+
+        if state != "ignored":
+            problem = self.check(t, state)
+            if problem:
+                return "error", problem
+        return state, reason
 
     def check(self, t, state):
         """Why this ticket's Jira data doesn't add up (shown to users as an error), or None."""
         rec = t.record
-        if rec.project:                                               # a CSC ticket
-            if not rec.parent_key:
-                return f"no parent ticket in {self.fields.names.get('parent', 'parent')!r}"
-            if "affected_product" in self.fields.names and not rec.affected_product and rec.role != "verification":
-                return f"no {self.fields.names['affected_product']!r} set"
-            if state == "done" and not rec.fix_versions and rec.role == "work":
-                return "closed without a fix version"
-        elif self.top_types and rec.type not in self.top_types:
-            return f"{rec.type!r} isn't a top-level type ({', '.join(sorted(self.top_types))})"
+        names = self.fields.names
+
+        if not rec.project:                             # a top-level ticket
+            if self.top_types and rec.type not in self.top_types:
+                return f"{rec.type!r} isn't a top-level type ({', '.join(sorted(self.top_types))})"
+            return None
+
+        if not rec.parent_key:
+            return f"no parent ticket in {names.get('parent', 'parent')!r}"
+        if "affected_product" in names and not rec.affected_product and rec.role != "verification":
+            return f"no {names['affected_product']!r} set"
+        if state == "done" and not rec.fix_versions and rec.role == "work":
+            return "closed without a fix version"
         return None
 
 
 def from_env():
     """CMTRACK_TICKET_SOURCES=jira=cmtrack.jira_tickets:from_env (see the module docstring for the settings)."""
-    env = os.environ.get
     config = {}
-    if env("CMTRACK_JIRA_CONFIG"):
-        with open(env("CMTRACK_JIRA_CONFIG")) as f:
+    config_path = os.environ.get("CMTRACK_JIRA_CONFIG")
+    if config_path:
+        with open(config_path) as f:
             config = json.load(f)
-    client = JiraClient(env("CMTRACK_JIRA_URL"), env("CMTRACK_JIRA_TOKEN"), env("CMTRACK_JIRA_USER"),
-                        env("CMTRACK_JIRA_PASSWORD"))
-    rules = {k: load_function(config[k]) if config.get(k) else None for k in ("state_rule", "rollup")}
+
+    state_rule = load_function(config["state_rule"]) if config.get("state_rule") else status_rule
+    if "rollup" not in config:
+        rollup_rule = work_rollup
+    else:
+        rollup_rule = load_function(config["rollup"]) if config["rollup"] else None   # null: no rollup
+
     roles = config.get("roles", DEFAULT_ROLES)
-    return JiraTicketSource(client, config.get("top_projects", []), config.get("fields"), config.get("status_map"),
-                            config.get("top_types"), config.get("browse_url"), rules["state_rule"] or status_rule,
-                            rules["rollup"] if "rollup" in config else work_rollup,
-                            load_function(roles) if isinstance(roles, str) else roles)
+    if isinstance(roles, str):
+        roles = load_function(roles)
+
+    return JiraTicketSource(
+        JiraClient.from_env(),
+        top_projects=config.get("top_projects", []),
+        fields=config.get("fields"),
+        status_map=config.get("status_map"),
+        top_types=config.get("top_types"),
+        browse_url=config.get("browse_url"),
+        state_rule=state_rule,
+        rollup=rollup_rule,
+        roles=roles,
+    )

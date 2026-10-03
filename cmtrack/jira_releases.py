@@ -27,7 +27,6 @@ uses), then set the CI's release_source to "jira" and its source_params:
 
 The patterns, self_build and include_archived work as in releases.PatternSource.
 """
-import os
 import re
 
 from .jira_tickets import JiraClient
@@ -36,51 +35,77 @@ from .releases import PatternSource, SourceConfigError, SourceVersion, Unplaced
 
 class JiraReleaseSource(PatternSource):
     def __init__(self, client, name="jira"):
-        self.client, self.name = client, name
+        self.client = client
+        self.name = name
 
     def projects(self, ci, params):
         """The Jira projects to read: source_params.projects, else those of the CI's CSCs."""
-        projects = params.get("projects") or sorted({c["jira_project"] for c in ci.get("cscs") or [] if c.get("jira_project")})
+        projects = params.get("projects")
+        if not projects:
+            csc_projects = {csc["jira_project"] for csc in ci.get("cscs") or [] if csc.get("jira_project")}
+            projects = sorted(csc_projects)
         if not projects:
             raise SourceConfigError("no Jira projects: map the CI's CSCs to Jira projects, or set source_params.projects")
         return list(projects)
 
     def merged(self, ci, params):
         """(merged SourceVersions, Unplaced for names some projects lack when require_all is set)."""
-        try:
-            match = re.compile(params["match"]) if params.get("match") else None
-        except re.error as e:
-            raise SourceConfigError(f"bad match pattern {params['match']!r}: {e}") from None
+        name_filter = _compile_match(params.get("match"))
         projects = self.projects(ci, params)
-        by_name = {}
-        for p in projects:
-            for v in self.client.project_versions(p) or []:
-                if not match or match.fullmatch(v["name"]):
-                    by_name.setdefault(v["name"], {})[p] = v
-        out, unplaced = [], []
-        for name, vs in sorted(by_name.items()):
-            if params.get("require_all") and len(vs) < len(projects):
-                unplaced.append(Unplaced(name, name, f"not in {', '.join(p for p in projects if p not in vs)}"))
+        by_name = self._versions_by_name(projects, name_filter)
+
+        merged, unplaced = [], []
+        for name, by_project in sorted(by_name.items()):
+            missing_from = [p for p in projects if p not in by_project]
+            if params.get("require_all") and missing_from:
+                unplaced.append(Unplaced(name, name, f"not in {', '.join(missing_from)}"))
                 continue
-            ordered = [vs[p] for p in projects if p in vs]
-            dates = [v["releaseDate"] for v in ordered if v.get("releaseDate")]
-            out.append(SourceVersion(key=name, name=name, date=max(dates) if dates else None,
-                                     description=next((v["description"] for v in ordered if v.get("description")), None),
-                                     released=all(v.get("released") for v in ordered),
-                                     archived=all(v.get("archived") for v in ordered)))
-        return out, unplaced
+            in_project_order = [by_project[p] for p in projects if p in by_project]
+            merged.append(_merge(name, in_project_order))
+        return merged, unplaced
+
+    def _versions_by_name(self, projects, name_filter):
+        """{version name: {project: Jira version}} across ``projects``, for names passing ``name_filter``."""
+        by_name = {}
+        for project in projects:
+            for version in self.client.project_versions(project) or []:
+                if name_filter is None or name_filter.fullmatch(version["name"]):
+                    by_name.setdefault(version["name"], {})[project] = version
+        return by_name
 
     def versions(self, ci, params):
-        return self.merged(ci, params)[0]
+        versions, _ = self.merged(ci, params)
+        return versions
 
     def releases(self, ci, params):
         versions, unplaced = self.merged(ci, params)
         return self.place(versions, params) + unplaced
 
 
+def _compile_match(pattern):
+    if not pattern:
+        return None
+    try:
+        return re.compile(pattern)
+    except re.error as e:
+        raise SourceConfigError(f"bad match pattern {pattern!r}: {e}") from None
+
+
+def _merge(name, versions):
+    """One SourceVersion from the same-named Jira versions of several projects (see the module docstring)."""
+    dates = [v["releaseDate"] for v in versions if v.get("releaseDate")]
+    descriptions = [v["description"] for v in versions if v.get("description")]
+    return SourceVersion(
+        key=name,                                       # no single Jira id across projects
+        name=name,
+        date=max(dates, default=None),                  # ready when the last CSC is
+        description=descriptions[0] if descriptions else None,
+        released=all(v.get("released") for v in versions),
+        archived=all(v.get("archived") for v in versions),
+    )
+
+
 def from_env():
     """CMTRACK_RELEASE_SOURCES=jira=cmtrack.jira_releases:from_env, with CMTRACK_JIRA_URL and CMTRACK_JIRA_TOKEN
     (or CMTRACK_JIRA_USER + CMTRACK_JIRA_PASSWORD)."""
-    env = os.environ.get
-    return JiraReleaseSource(JiraClient(env("CMTRACK_JIRA_URL"), env("CMTRACK_JIRA_TOKEN"), env("CMTRACK_JIRA_USER"),
-                                        env("CMTRACK_JIRA_PASSWORD")))
+    return JiraReleaseSource(JiraClient.from_env())

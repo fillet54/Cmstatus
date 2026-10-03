@@ -37,8 +37,11 @@ no arguments, so read credentials from the environment there). Exceptions raised
 reported to the user (HTTP 502 / an alert in the page) rather than crashing the request.
 """
 import importlib
-from dataclasses import asdict, dataclass, field
+from collections import defaultdict
+from dataclasses import asdict, dataclass, field, fields
 from typing import Iterable, List, Optional
+
+# ----------------------------------------------------------------------------- states and roles
 
 # Workflow states, in order. The source decides a ticket's state, typically with domain logic over the
 # ticket and every issue linked to it, not a 1:1 map of one Jira status. cmtrack only stores and reports it.
@@ -56,40 +59,64 @@ STATES = {
                                                  # ticket): shown, but left out of rollups and progress totals
     "error":                "Error",             # something is off in the source data; state_reason says what
 }
+ERROR = "error"
+
+# Other spellings a source may send for a state.
 ALIASES = {"analysis_in_progress": "in_analysis", "merge_blocked": "blocked", "canceled": "cancelled"}
+
+# The forward path a ticket moves along (STATES minus the side states blocked, cancelled, ignored, error).
+WORKFLOW = ["analysis_required", "in_analysis", "ready_for_work", "in_progress", "peer_review", "verification", "done"]
+
+# CSC ticket states a parent's rollup doesn't count.
+IDLE = ("cancelled", "ignored")
+
 # What a CSC ticket is for. Only "work" (and "analysis") tickets count as work against a version; a "verification"
 # ticket is tracked separately, per parent, and never shows in a version's or release's work.
 ROLES = ("work", "analysis", "verification")
-IDLE = ("cancelled", "ignored")       # CSC ticket states a parent's rollup doesn't count
-WORKFLOW = ["analysis_required", "in_analysis", "ready_for_work", "in_progress", "peer_review", "verification", "done"]
 
 
-def rollup(states):
-    """A parent ticket's state from its CSC tickets' states: cancelled and ignored ones don't count (all cancelled:
-    cancelled);
-    any error or blocked wins; otherwise the least advanced, except that once any CSC has started work
-    (in progress or later) a parent still partly in analysis is in progress."""
-    live = [s for s in states if s not in IDLE]
-    if not live:
+def _has_started_work(state: str) -> bool:
+    """In progress or further along the workflow."""
+    return WORKFLOW.index(state) >= WORKFLOW.index("in_progress")
+
+
+def rollup(states: Iterable[str]) -> Optional[str]:
+    """A parent ticket's state from its CSC tickets' states.
+
+    - Cancelled and ignored tickets don't count. If nothing else is left: cancelled (if any were), else None.
+    - Any error, then any blocked, wins.
+    - Otherwise the least advanced state, except that once any CSC has started work (in progress or later),
+      a parent still partly in analysis counts as in progress.
+    """
+    states = list(states)
+    counted = [s for s in states if s not in IDLE]
+    if not counted:
         return "cancelled" if "cancelled" in states else None
-    for s in ("error", "blocked"):
-        if s in live:
-            return s
-    least = min(live, key=WORKFLOW.index)
-    started = any(WORKFLOW.index(s) >= WORKFLOW.index("in_progress") for s in live)
-    return "in_progress" if started and WORKFLOW.index(least) < WORKFLOW.index("in_progress") else least
-ERROR = "error"
+
+    for overriding in ("error", "blocked"):
+        if overriding in counted:
+            return overriding
+
+    least_advanced = min(counted, key=WORKFLOW.index)
+    if any(_has_started_work(s) for s in counted) and not _has_started_work(least_advanced):
+        return "in_progress"
+    return least_advanced
 
 
 def normalize_state(state, reason=None):
-    """(state, reason) with anything missing or unrecognized turned into 'error' plus an explanation."""
+    """(state, reason) with the state turned into a ``STATES`` key ("In Progress" -> "in_progress").
+
+    Anything missing or unrecognized becomes ``error``, with the reason saying why."""
     key = str(state or "").strip().lower().replace(" ", "_").replace("-", "_")
     key = ALIASES.get(key, key)
     if key in STATES:
         return key, reason
-    why = f"source sent unknown state {state!r}" if state else "source did not supply a state"
-    return ERROR, f"{why}; {reason}" if reason else why
 
+    problem = f"source sent unknown state {state!r}" if state else "source did not supply a state"
+    return ERROR, f"{problem}; {reason}" if reason else problem
+
+
+# ----------------------------------------------------------------------------- records
 
 @dataclass
 class TicketRecord:
@@ -122,15 +149,19 @@ class TicketRecord:
     role: str = "work"
 
     @classmethod
-    def from_dict(cls, d: dict) -> "TicketRecord":
-        if not isinstance(d, dict) or not str(d.get("key") or "").strip():
+    def from_dict(cls, data: dict) -> "TicketRecord":
+        """Build a record from a dict. Keys that aren't fields are kept in ``attributes``."""
+        if not isinstance(data, dict) or not str(data.get("key") or "").strip():
             raise ValueError("each ticket record needs a 'key'")
-        known = {k: d[k] for k in cls.__dataclass_fields__ if k in d}
-        extra = {k: v for k, v in d.items() if k not in cls.__dataclass_fields__}
-        rec = cls(**known)
-        rec.key = str(rec.key).strip()
-        rec.attributes = {**(rec.attributes or {}), **extra}
-        return rec
+
+        field_names = {f.name for f in fields(cls)}
+        known = {name: value for name, value in data.items() if name in field_names}
+        extra = {name: value for name, value in data.items() if name not in field_names}
+
+        record = cls(**known)
+        record.key = str(record.key).strip()
+        record.attributes = {**(record.attributes or {}), **extra}
+        return record
 
     def __post_init__(self):
         self.state, self.state_reason = normalize_state(self.state, self.state_reason)
@@ -144,6 +175,8 @@ class TicketRecord:
     def to_dict(self) -> dict:
         return asdict(self)
 
+
+# ----------------------------------------------------------------------------- sources
 
 class TicketSource:
     """Implement this for a ticket system. Called on every request; methods may return generators."""
@@ -183,6 +216,11 @@ class TicketSource:
         raise NotImplementedError(f"ticket source {self.name!r} can't list top-level tickets")
 
 
+def _get(record, name):
+    """A field of a TicketRecord or of a plain dict."""
+    return getattr(record, name) if isinstance(record, TicketRecord) else record.get(name)
+
+
 class StaticSource(TicketSource):
     """In-memory source (tests, demos, a JSON export): answers from a fixed list of records."""
 
@@ -191,20 +229,29 @@ class StaticSource(TicketSource):
         (``rollup``)."""
         self.name = name
         records = list(records)
-        kids = {}
-        for r in records:
-            parent = r.parent_key if isinstance(r, TicketRecord) else r.get("parent_key")
+
+        child_states = defaultdict(list)          # parent key -> its children's states
+        for record in records:
+            parent = _get(record, "parent_key")
             if parent:
-                kids.setdefault(parent, []).append(normalize_state(r.state if isinstance(r, TicketRecord) else r.get("state"))[0])
-        self.records = [r if isinstance(r, TicketRecord) else
-                        TicketRecord.from_dict({**r, "state": rollup(kids[r["key"]])} if not r.get("state") and r.get("key") in kids
-                                               else r) for r in records]
+                state, _ = normalize_state(_get(record, "state"))
+                child_states[parent].append(state)
+
+        self.records = [self._to_record(record, child_states) for record in records]
+
+    @staticmethod
+    def _to_record(record, child_states) -> TicketRecord:
+        if isinstance(record, TicketRecord):
+            return record
+        if not record.get("state") and record.get("key") in child_states:
+            record = {**record, "state": rollup(child_states[record["key"]])}
+        return TicketRecord.from_dict(record)
 
     def tickets_for_versions(self, ci, cscs, versions):
         pairs = {(c["jira_project"], c["affected_product"]) for c in cscs}
         wanted = set(versions)
         return [r for r in self.records
-                if (r.project, r.affected_product) in pairs and wanted & set(r.fix_versions or ())]
+                if (r.project, r.affected_product) in pairs and wanted.intersection(r.fix_versions or ())]
 
     def get_tickets(self, keys):
         keys = set(keys)
@@ -214,30 +261,42 @@ class StaticSource(TicketSource):
         return [r for r in self.records if r.parent_key == key]
 
     def top_level_tickets(self, backlog, cis):
-        names = {c["name"] for c in cis}
-        return [r for r in self.records if not r.parent_key and not r.project
-                and (not names or names & set(r.cis or ()))]
+        ci_names = {c["name"] for c in cis}
+        top_level = [r for r in self.records if not r.parent_key and not r.project]
+        if not ci_names:
+            return top_level
+        return [r for r in top_level if ci_names.intersection(r.cis or ())]
 
+
+# ----------------------------------------------------------------------------- configuration
 
 def pick_source(sources: Optional[dict], name: Optional[str] = None) -> Optional[TicketSource]:
     """The source called ``name``; with no name, the only (or first) configured source; None if none."""
     sources = sources or {}
-    if name:
-        if name not in sources:
-            raise KeyError(f"unknown ticket source {name!r}; configured: {sorted(sources)}")
-        return sources[name]
-    return next(iter(sources.values()), None)
+    if not name:
+        return next(iter(sources.values()), None)
+    if name not in sources:
+        raise KeyError(f"unknown ticket source {name!r}; configured: {sorted(sources)}")
+    return sources[name]
 
 
 def load_sources(spec: Optional[str], what: str = "ticket source") -> dict:
-    """Parse CMTRACK_TICKET_SOURCES (or CMTRACK_RELEASE_SOURCES): 'name=module:factory[,name=module:factory]'."""
+    """Parse CMTRACK_TICKET_SOURCES (or CMTRACK_RELEASE_SOURCES): 'name=module:factory[,name=module:factory]'.
+
+    Each factory is called with no arguments and the result is named ``name``."""
     sources = {}
-    for part in filter(None, (p.strip() for p in (spec or "").split(","))):
-        name, _, target = part.partition("=")
-        module, _, attr = target.partition(":")
-        if not (name and module and attr):
-            raise ValueError(f"bad {what} {part!r}; expected name=module:factory")
-        source = getattr(importlib.import_module(module), attr)()
+    for entry in (spec or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+
+        name, _, target = entry.partition("=")
+        module_name, _, factory_name = target.partition(":")
+        if not (name and module_name and factory_name):
+            raise ValueError(f"bad {what} {entry!r}; expected name=module:factory")
+
+        factory = getattr(importlib.import_module(module_name), factory_name)
+        source = factory()
         source.name = name
         sources[name] = source
     return sources
