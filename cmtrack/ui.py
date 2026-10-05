@@ -4,9 +4,13 @@ Config (app.config, or the environment at startup):
     UI_MARKING      {"text", "bg", "fg"} for the top/bottom marking banners.
                     CMTRACK_MARKING="CUI" (UNCLASSIFIED and CUI have standard colours; anything else also
                     needs CMTRACK_MARKING_COLORS="#bg,#fg"). Unset shows "[Marking not configured]" on purpose.
+    UI_BRAND        the wordmark in the header and the default page title (CMTRACK_UI_BRAND, default "cmtrack").
     UI_PROGRAM      program name in the header (CMTRACK_PROGRAM).
-    UI_FONTS_CSS    stylesheet that loads IBM Plex / Source Serif (CMTRACK_UI_FONTS_CSS). Defaults to Google
-                    Fonts; point it at self-hosted fonts on a closed network, or "" for system fonts.
+    UI_THEME        auto (follow the system, the default) | light | dark (CMTRACK_UI_THEME).
+    UI_DENSITY      comfortable (the default) | compact: tighter table rows, same text size (CMTRACK_UI_DENSITY).
+    UI_FONTS_CSS    stylesheet that loads Source Serif 4, Inter and IBM Plex Mono (CMTRACK_UI_FONTS_CSS). Defaults
+                    to Google Fonts; point it at self-hosted fonts on a closed network, or "" for the system
+                    fallbacks named in ui.css (the layout and hierarchy hold without the web fonts).
     UI_HTMX_JS      htmx script URL (CMTRACK_UI_HTMX_JS); self-host it the same way.
 """
 import datetime as dt
@@ -23,7 +27,9 @@ from .db import get_db
 MARKING_COLORS = {"UNCLASSIFIED": ("#007A33", "#FFFFFF"), "CUI": ("#502B85", "#FFFFFF")}
 
 GOOGLE_FONTS = ("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600"
-                "&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600&display=swap")
+                "&family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap")
+THEMES = ("auto", "light", "dark")
+DENSITIES = ("comfortable", "compact")
 HTMX = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"
 
 # (key, label, endpoint[, menu]) for the header nav; entries whose endpoint doesn't exist are skipped.
@@ -124,7 +130,13 @@ def _nav():
 
 def init_app(app):
     app.config.setdefault("UI_MARKING", marking_from_env())
+    app.config.setdefault("UI_BRAND", os.environ.get("CMTRACK_UI_BRAND") or "cmtrack")
     app.config.setdefault("UI_PROGRAM", os.environ.get("CMTRACK_PROGRAM") or None)
+    app.config.setdefault("UI_THEME", os.environ.get("CMTRACK_UI_THEME") or "auto")
+    app.config.setdefault("UI_DENSITY", os.environ.get("CMTRACK_UI_DENSITY") or "comfortable")
+    for key, allowed in (("UI_THEME", THEMES), ("UI_DENSITY", DENSITIES)):
+        if app.config[key] not in allowed:
+            raise ValueError(f"{key} must be one of {', '.join(allowed)}, not {app.config[key]!r}")
     app.config.setdefault("UI_FONTS_CSS", os.environ.get("CMTRACK_UI_FONTS_CSS", GOOGLE_FONTS))
     app.config.setdefault("UI_HTMX_JS", os.environ.get("CMTRACK_UI_HTMX_JS", HTMX))
     app.config.setdefault("UI_NAV", NAV)
@@ -137,7 +149,8 @@ def init_app(app):
     @app.context_processor
     def ui_shell():
         c = current_app.config
-        return {"ui_marking": c["UI_MARKING"], "ui_program": c["UI_PROGRAM"], "ui_fonts_css": c["UI_FONTS_CSS"],
+        return {"ui_marking": c["UI_MARKING"], "ui_brand": c["UI_BRAND"], "ui_program": c["UI_PROGRAM"],
+                "ui_theme": c["UI_THEME"], "ui_density": c["UI_DENSITY"], "ui_fonts_css": c["UI_FONTS_CSS"],
                 "ui_htmx_js": c["UI_HTMX_JS"], "ui_nav": _nav, "ui_user": g.get("ui_user")}
 
 

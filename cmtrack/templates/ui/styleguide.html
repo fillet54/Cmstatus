@@ -8,18 +8,18 @@
 <style>
   /* style-guide-only helpers */
   .sg-section { scroll-margin-top: 40px; }
-  .sg-h { font-size: 20px; font-weight: 600; margin: 8px 0 4px; }
+  .sg-h { font: 500 24px/1.25 var(--ui-font-heading); margin: 16px 0 4px; }
   .sg-lead { color: var(--ui-muted); margin: 0 0 8px; max-width: 80ch; }
   .sg-demo { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-  .sg-code { margin: 0; padding: 10px 14px; background: #F7F6F2; border-top: 1px solid var(--ui-line-soft); font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre; color: #3D4B59; }
-  .sg-swatch { width: 132px; border: 1px solid var(--ui-line); border-radius: var(--ui-radius); overflow: hidden; background: var(--ui-surface); font-size: 12px; }
+  .sg-code { margin: 0; padding: 10px 14px; background: var(--ui-soft); border-top: 1px solid var(--ui-rule); font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre; color: var(--ui-muted); }
+  .sg-swatch { width: 132px; border: 1px solid var(--ui-rule); border-radius: var(--ui-radius); overflow: hidden; background: var(--ui-paper); font-size: 12px; }
   .sg-swatch > div:first-child { height: 40px; }
   .sg-swatch > div:last-child { padding: 6px 8px; }
 </style>
 {% endblock %}
 
 {% macro example(title, code=None) -%}
-<section class="ui-card ui-card--flush">
+<section class="ui-card ui-card--boxed ui-card--flush">
   {{ ui.card_header(title, level=3) }}
   <div class="ui-card__body">{{ caller() }}</div>
   {%- if code %}<pre class="sg-code">{{ code | trim | forceescape }}</pre>{% endif %}
@@ -65,12 +65,17 @@
 {# ------------------------------------------------------------------------------------------ foundations #}
 <section class="sg-section ui-stack" id="foundations">
   <h2 class="sg-h">Foundations</h2>
-  <p class="sg-lead">Tokens live at the top of ui.css. Components only read tokens, so changing the look is a token edit.</p>
+  <p class="sg-lead">Warm paper, serif page headings, sans-serif working text, monospace identifiers and measurements, thin rules
+    instead of boxes, one restrained accent. Tokens live at the top of ui.css; components only read tokens, so a tool changes
+    the look by overriding tokens in a stylesheet loaded after it. Light and dark follow the system unless
+    <code>UI_THEME</code> pins one.</p>
   {% call example("Colour tokens") %}
     <div class="sg-demo">
-      {% for name, var in [("ground", "--ui-bg"), ("surface", "--ui-surface"), ("ink", "--ui-ink"), ("muted", "--ui-muted"),
-                           ("line", "--ui-line"), ("accent", "--ui-accent"), ("info", "--ui-info"), ("success", "--ui-success"),
-                           ("warning", "--ui-warning"), ("danger", "--ui-danger"), ("review", "--ui-review"), ("verify", "--ui-verify")] %}
+      {% for name, var in [("paper", "--ui-paper"), ("soft", "--ui-soft"), ("ink", "--ui-ink"), ("muted", "--ui-muted"),
+                           ("rule", "--ui-rule"), ("accent", "--ui-accent"), ("info", "--ui-info"), ("success", "--ui-success"),
+                           ("warning", "--ui-warning"), ("danger", "--ui-danger"), ("review", "--ui-review"), ("verify", "--ui-verify"),
+                           ("series 1", "--ui-series-1"), ("series 2", "--ui-series-2"), ("series 3", "--ui-series-3"),
+                           ("series 4", "--ui-series-4"), ("series 5", "--ui-series-5"), ("series 6", "--ui-series-6")] %}
       <div class="sg-swatch"><div style="background: var({{ var }});"></div><div><b>{{ name }}</b><br><code>{{ var }}</code></div></div>
       {% endfor %}
     </div>
@@ -78,12 +83,12 @@
   <div class="ui-grid">
     {% call example("Type") %}
       <div class="ui-stack" style="--ui-gap: 10px;">
-        <div class="ui-page-header__title">Page title 28/600</div>
-        <div class="ui-card__title">Card title 14/600</div>
+        <div class="ui-page-header__title">Page title: serif, 28 to 38px</div>
+        <div class="ui-card__title">Section and card title 15/600</div>
         <div>Body 14/400: descriptions, reasons and explanations. Sentence case, plain words.</div>
+        <div>{{ ui.text("Secondary context", "muted") }} · {{ ui.text("Caption / units", "caption") }}</div>
         <div class="ui-section-label">Section label</div>
-        <div class="ui-display" style="font-size: 28px;">Briefing title (display serif)</div>
-        <div class="ui-mono">2027.Q1-b2 · NAVL-106 · CR-1234</div>
+        <div>{{ ui.text("2027.Q1-b2 · NAVL-106 · CR-1234", "mono") }} · {{ ui.text("12.640 s", "number") }}</div>
       </div>
     {% endcall %}
     {% set code %}{% raw %}
@@ -135,6 +140,32 @@
   {% endcall %}
 
   {% set code %}{% raw %}
+{% call ui.grid(2) %}
+  {% call ui.section("Run details", "Controller FC-04") %}
+    {{ ui.dl([("Asset", "FC-04"), ("Sample rate", "100 Hz")]) }}
+  {% endcall %}
+  {% call ui.section("Actions") %}
+    {% call ui.toolbar("Run actions") %}{{ ui.button("Pause") }}{{ ui.link("Open logs", "/logs", "secondary") }}{% endcall %}
+  {% endcall %}
+{% endcall %}
+{# ui.stack("small" | "normal" | "large") for vertical rhythm; ui.divider() for a rule; ui.prose() for running text #}
+{% endraw %}{% endset %}
+  {% call example("section · grid · stack · toolbar · link · divider (sections are ruled, not boxed)", code) %}
+    {% call ui.grid(2) %}
+      {% call ui.section("Run details", "Controller FC-04") %}
+        {{ ui.dl([("Asset", "FC-04"), ("Sample rate", "100 Hz"), ("Clock", "UTC / since boot")]) }}
+      {% endcall %}
+      {% call ui.section("Actions") %}
+        {% call ui.stack("small") %}
+          {% call ui.toolbar("Run actions") %}{{ ui.button("Pause") }}{{ ui.link("Open logs", "#", "secondary") }}{{ ui.link("A plain link", "#") }}{% endcall %}
+          {{ ui.divider() }}
+          {{ ui.text("Controls sit in a toolbar; it wraps on narrow screens.", "caption") }}
+        {% endcall %}
+      {% endcall %}
+    {% endcall %}
+  {% endcall %}
+
+  {% set code %}{% raw %}
 {% call ui.card() %}
   {% call ui.card_header("Release 2027.Q1", "NAV-SW") %}{{ ui.badge("Active", "info", outline=True, strong=True) }}{% endcall %}
   {% call ui.card_section("Built from") %}...{% endcall %}
@@ -142,9 +173,9 @@
   {% call ui.card_footer() %}Last change · 2027.Q1-b2 built · j.doe · 2026-09-23 14:24Z{% endcall %}
 {% endcall %}
 {% endraw %}{% endset %}
-  {% call example("card · card_header · card_section · card_footer", code) %}
+  {% call example("card · card_header · card_section · card_footer (boxed in a side column, or with boxed=True)", code) %}
     <div style="max-width: 460px;">
-    {% call ui.card() %}
+    {% call ui.card(boxed=True) %}
       {% call ui.card_header("Release 2027.Q1", "NAV-SW") %}{{ ui.badge("Active", "info", outline=True, strong=True) }}{% endcall %}
       {% call ui.card_section("Built from") %}{{ ui.lineage([{"name": "2026.Q4-b4", "href": "#"}, {"name": "2026.Q4.ER1", "merge": True}]) }}{% endcall %}
       {% call ui.card_section("Details") %}{{ ui.dl([("Target", "2027-03-15"), ("Source", "jira")]) }}{% endcall %}
@@ -246,6 +277,18 @@
       {% call ui.alert("danger", "Couldn't get tickets") %}ticket source 'jira' failed in tickets_for_versions: timeout{% endcall %}
       {% call ui.alert("warning", icon="clock") %}Session ends in 4:59 for inactivity. {{ ui.button("Stay signed in", size="sm") }}{% endcall %}
     </div>
+  {% endcall %}
+  {% set code %}{% raw %}
+{{ ui.status("passed", "3 passed") }} {{ ui.status("failed") }} {{ ui.status("running") }}
+{{ ui.progress(4, 8, "Test sequence") }}
+{{ ui.code_block("assert recovery_time_ms <= 250", "transport/test_recovery.py:84") }}
+{% endraw %}{% endset %}
+  {% call example("status · progress · code_block (process states: a symbol and a word)", code) %}
+    {% call ui.stack() %}
+      {% call ui.toolbar("Process states") %}{% for st in ["passed", "failed", "running", "queued", "skipped", "paused", "cancelled", "warning"] %}{{ ui.status(st) }}{% endfor %}{% endcall %}
+      {{ ui.progress(4, 8, "Test sequence") }}
+      {{ ui.code_block("assert recovery_time_ms <= 250\n# observed: 640 ms", "transport/test_recovery.py:84") }}
+    {% endcall %}
   {% endcall %}
   {% set code %}{% raw %}
 {% call ui.empty("Nothing on this backlog yet.") %}{{ ui.button("Pull from Jira", variant="primary") }}{% endcall %}

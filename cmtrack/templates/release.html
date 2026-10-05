@@ -8,7 +8,7 @@
   {% if r.kind != "planned" %}{{ ui.release_kind(r.kind) }}{% endif %}{{ ui.version_status(r.status) }}
 {% endcall %}
 <section id="release-work" aria-label="Release, tickets and comparisons">
-  <div id="release-work-content" class="ui-stack">{% include "_work.html" %}</div>
+  <div id="release-work-content" class="ui-stack ui-gap-large">{% include "_work.html" %}</div>
 </section>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='picker.js') }}"></script>

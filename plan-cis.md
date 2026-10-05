@@ -2,11 +2,12 @@
 
 The shortest path from an empty directory to **finished CI pages**: the CI list, a CI's overview, its releases
 and builds (synced from Jira or kept by hand), every build's lineage, and the tickets each CSC implemented, with
-**capabilities (IFCs / HSCMs) present but empty**. About 6,700 lines to type, 690 of them the Jira modules.
+**capabilities (IFCs / HSCMs) present but empty**. About 6,900 lines to type, 690 of them the Jira modules.
 
 [`plan.md`](plan.md) is the full rebuild in feature order. This one is narrower and stubs far less: almost every
 file is typed exactly as it is on `main`, and whole line ranges are left out. Line numbers are those of `main` at
-commit `58d77f1`.
+commit `58d77f1`, except the Stage 4 files, which were restyled since (the research-notebook look) and are
+counted as they are now.
 
 This cut was built and run from `main`: every page under "Working when" below returned 200 with the dummy sources,
 and the only tests that fail are the ones that assert on capabilities, the backlog, the overview page or the style
@@ -112,16 +113,16 @@ Each manual-version change syncs the CI, which is what turns the names into a re
 Jira source gets its releases only when you sync it (`POST /cis/<ci>/sync`): the pages always read the stored
 releases, never the source.
 
-## Stage 4: the UI shell (1,513 lines)
+## Stage 4: the UI shell (1,707 lines)
 
 Nothing to check until Stage 5; these are what every page is built from.
 
 | File | Lines | Type | Leave out |
 |---|---|---|---|
-| `cmtrack/static/ui.css` | 525 | all of it | |
-| `cmtrack/templates/ui/components.html` | 607 | all of it | |
-| `cmtrack/templates/ui/layout.html` | 40 | all of it | |
-| `cmtrack/ui.py` | 142 | lines 1–142 | 144–180: `styleguide_samples` |
+| `cmtrack/static/ui.css` | 628 | all of it | |
+| `cmtrack/templates/ui/components.html` | 684 | all of it | |
+| `cmtrack/templates/ui/layout.html` | 41 | all of it | |
+| `cmtrack/ui.py` | 155 | lines 1–155 | 157–193: `styleguide_samples` |
 | `cmtrack/templates/error.html` | 10 | all of it | |
 | `cmtrack/static/timeline.js` | 30 | all of it | |
 | `cmtrack/static/picker.js` | 159 | all of it | |
@@ -266,7 +267,7 @@ Type these alongside the stage that makes them pass. All pass on this cut except
 | `tests/test_manual_releases.py` | 5 | the "Open releases" assertion on the overview page (line 82) |
 | `tests/test_work.py` | 6 | the HSCM `optgroup` assertion in `test_views` (line 264) |
 | `tests/test_views.py` | 6 | `test_baseline_staleness_and_diff`, `test_events_paging`; the IFC, baseline, `/events` and `/` URLs in `test_pages_render`, `test_fragments` and `test_every_page_uses_the_ui_layout`; the last assertion of `test_edit_pin_correct` |
-| `tests/test_ui.py` | 5 | `test_layout_markings_and_nav`, `test_styleguide_renders_everything`, `test_rank_item_keeps_drag_contract` |
+| `tests/test_ui.py` | 5 | `test_layout_markings_and_nav`, `test_styleguide_renders_everything`, `test_theme_density_and_brand`, `test_rank_item_keeps_drag_contract` |
 | `tests/test_jira_tickets.py` | 7 | the two backlog lines at the end of `test_in_cmtrack` (250–251) |
 | `tests/test_jira_releases.py`, `tests/test_bootstrap_example.py` | 7 | |
 

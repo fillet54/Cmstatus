@@ -76,6 +76,9 @@ Environment variables, all optional:
 | `CMTRACK_TICKETS_FILE` | `tickets.json` | The file `cmtrack.history:ticket_file` serves. |
 | `CMTRACK_MARKING`, `CMTRACK_PROGRAM` | unset | The marking banners and program name in the page header. |
 | `CMTRACK_UI_FONTS_CSS`, `CMTRACK_UI_HTMX_JS` | CDN URLs | Point at self-hosted copies on a closed network. |
+| `CMTRACK_UI_THEME` | `auto` | `auto` follows the system's light/dark setting; `light` or `dark` pins one. |
+| `CMTRACK_UI_DENSITY` | `comfortable` | `compact` tightens table rows (same text size). |
+| `CMTRACK_UI_BRAND` | `cmtrack` | The wordmark in the header. |
 
 `cmtrack --port 8000 --host 0.0.0.0 --debug` changes where the dev server listens.
 

@@ -3,7 +3,7 @@
 {% if not report['items'] %}
 {{ ui.empty("No CSC tickets are fixed in " ~ ("this version." if report.versions | length == 1 else "these versions.")) }}
 {% else %}
-<div class="ui-stack ui-work-report" style="--ui-gap: 8px;">
+<div class="ui-stack ui-work-report">
   <div class="ui-work-columns"><span>Ticket</span><span>Summary</span><span>State</span><span>Versions / progress</span></div>
   {% for item in report['items'] %}{{ ui.work_group(item, open=open_all) }}{% endfor %}
 </div>

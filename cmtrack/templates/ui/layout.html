@@ -5,18 +5,18 @@
     {% block title %}NAV-SW{% endblock %}
     {% block content %}...{% endblock %}
 
-    Blocks: title, head (extra <head> tags), header (replace the app header), content, scripts.
+    Blocks: title, head (extra <head> tags), header (replace the app header), content, footer, scripts.
     The marking banners top and bottom come from config (ui.py) and are not overridable per page.
 -#}
 {% import "ui/components.html" as ui %}
 <!doctype html>
-<html lang="en">
+<html lang="en"{% if ui_theme in ("light", "dark") %} data-ui-theme="{{ ui_theme }}"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   {#- htmx normally drops 4xx/5xx responses; swap them so a failed form post shows its error page #}
   <meta name="htmx-config" content='{"responseHandling": [{"code": "204", "swap": false}, {"code": "[2345]..", "swap": true, "error": false}]}'>
-  <title>{% block title %}cmtrack{% endblock %}{% if ui_marking %} · {{ ui_marking.text }}{% endif %}</title>
+  <title>{% block title %}{{ ui_brand }}{% endblock %}{% if ui_marking %} · {{ ui_marking.text }}{% endif %}</title>
   {%- if ui_fonts_css %}
   <link rel="stylesheet" href="{{ ui_fonts_css }}">
   {%- endif %}
@@ -26,13 +26,14 @@
   {%- endif %}
   {% block head %}{% endblock %}
 </head>
-<body class="ui" hx-boost="true">
+<body class="ui" hx-boost="true"{% if ui_density == "compact" %} data-ui-density="compact"{% endif %}>
   <a class="ui-skip" href="#main">Skip to content</a>
   {{ ui.marking_banner(ui_marking, "top") }}
-  {% block header %}{{ ui.app_header(ui_nav(), nav_current | default(None), ui_program, ui_user) }}{% endblock %}
+  {% block header %}{{ ui.app_header(ui_nav(), nav_current | default(None), ui_program, ui_user, brand=ui_brand) }}{% endblock %}
   <main id="main" class="ui-main">
     {% block content %}{% endblock %}
   </main>
+  {% block footer %}{% endblock %}
   {{ ui.marking_banner(ui_marking, "bottom") }}
   <div id="ui-toasts" class="ui-toasts" aria-live="polite"></div>
   {% block scripts %}{% endblock %}

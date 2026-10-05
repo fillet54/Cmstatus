@@ -16,7 +16,7 @@
 </div>
 
 <div class="ui-split">
-  <div class="ui-stack">
+  <div class="ui-stack ui-gap-large">
     {% call ui.card(flush=True) %}
       {% call ui.card_header("HSCM builds", "newest first · each starts from the one before; Build 1 from the spawn point") %}{{ ui.badge(ifc.baselines | length) }}{% endcall %}
       {% call ui.table(["Build", "Status", "Source", "Approved"], dense=True) %}

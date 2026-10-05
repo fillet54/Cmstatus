@@ -106,6 +106,34 @@ class UiTests(unittest.TestCase):
                        'data-move="top"', 'data-move="up"', 'data-move="down"', 'hx-post="/r"', "NAV-SW"):
             self.assertIn(needle, html)
 
+    def test_theme_density_and_brand(self):
+        self.app.config.update(UI_THEME="dark", UI_DENSITY="compact", UI_BRAND="Fieldnotes")
+        html = self.app.test_client().get("/ui").get_data(as_text=True)
+        for needle in ('data-ui-theme="dark"', 'data-ui-density="compact"', '<span class="ui-brand__name">Fieldnotes</span>'):
+            self.assertIn(needle, html)
+        self.app.config.update(UI_THEME="auto", UI_DENSITY="comfortable")          # the system decides: no attribute
+        html = self.app.test_client().get("/ui").get_data(as_text=True)
+        self.assertNotIn("data-ui-theme", html)
+        self.assertNotIn("data-ui-density", html)
+        with self.assertRaises(ValueError):
+            create_app({"DATABASE": os.path.join(self.tmp, "u.db"), "UI_THEME": "sepia"})
+
+    def test_shared_layout_and_status_macros(self):
+        html = self.render('{% call ui.section("Results", "8 tests", id="r") %}{% call ui.stack("small") %}'
+                           '{% call ui.toolbar("Summary") %}{{ ui.status("passed", "3 passed") }}{{ ui.status("failed") }}'
+                           '{% endcall %}{{ ui.progress(4, 8, "Sequence") }}{% endcall %}{% endcall %}')
+        for needle in ('<section class="ui-section" id="r">', 'class="ui-stack ui-gap-small"', 'role="group" aria-label="Summary"',
+                       "ui-tone-success", "3 passed", "Failed", 'max="8" value="4"', "4 / 8"):
+            self.assertIn(needle, html)
+        self.assertIn("ui-card--boxed", self.render("{% call ui.card(boxed=True) %}x{% endcall %}"))
+        self.assertNotIn("ui-card--boxed", self.render("{% call ui.card() %}x{% endcall %}"))
+        self.assertIn("&lt;b&gt;", self.render('{{ ui.code_block("<b>", "f.py") }}'))
+        self.assertIn('<a href="/x">Go</a>', self.render('{{ ui.link("Go", "/x") }}'))
+        self.assertIn("ui-btn--secondary", self.render('{{ ui.link("Go", "/x", "secondary") }}'))
+        html = self.render('{% call ui.page_header("T", "sub", eyebrow="Record") %}{% endcall %}')
+        self.assertIn('<div class="ui-eyebrow">Record</div>', html)
+        self.assertIn('<p class="ui-page-header__subtitle">sub</p>', html)
+
     def test_escaping(self):
         html = self.render("{{ ui.ident(x) }}{{ ui.badge(x) }}{{ ui.chip(x) }}", x="<script>")
         self.assertNotIn("<script>", html)

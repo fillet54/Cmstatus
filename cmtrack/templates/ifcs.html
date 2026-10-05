@@ -5,7 +5,7 @@
 {% block content %}
 {{ ui.page_header("Capabilities (IFCs)", "Each IFC's HSCM builds, and the IFCs they spawned") }}
 <div class="ui-split">
-  <div class="ui-stack">
+  <div class="ui-stack ui-gap-large">
     {% call ui.card(flush=True) %}
       {% call ui.card_header("IFCs", "in the order they were started") %}{{ ui.badge(ifcs | length) }}{% endcall %}
       {% call ui.table(["IFC", "Spawned from", "Builds", "Current HSCM", "State"]) %}
